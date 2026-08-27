@@ -1,0 +1,6 @@
+# PowerShell под Windows: держим CRLF и не даём Git трогать содержимое.
+# BOM в .ps1 обязателен — без него PowerShell 5.1 ломает кириллицу в меню.
+*.ps1 text eol=crlf working-tree-encoding=UTF-8
+*.cmd text eol=crlf
+*.md  text eol=crlf
+*.png binary
