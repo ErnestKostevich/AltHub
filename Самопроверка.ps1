@@ -767,6 +767,84 @@ Check 'Переменные не спорят с ValidateSet' {
     "проверено параметров с ограниченным набором: $seen, ни один не переписывается изнутри"
 }
 
+Check 'Графика не перетирается соседним запуском' {
+    # Файл настроек у Roblox один на все клиенты. Если запустить следующий
+    # аккаунт раньше, чем предыдущий клиент дочитает свои настройки, тот
+    # подхватит чужую графику. Так у основного и появлялась графика 1.
+    $keepInst  = $script:Instances
+    $keepQueue = $script:LaunchQueue
+    $keepAcc   = $script:Accounts
+    $keepFor   = $script:AwaitWindowFor
+    $keepUntil = $script:AwaitWindowUntil
+    try {
+        $main = New-RamAccount -Alias 'Основной' -Cookie 'x'
+        $main.Graphics = '10'; $main.Volume = '80'
+        $alt  = New-RamAccount -Alias 'Твинк' -Cookie 'x'
+        $alt.Graphics = '1'; $alt.Volume = '0'; $alt.FramerateCap = '30'
+        $alt2 = New-RamAccount -Alias 'Твинк 2' -Cookie 'x'
+        $alt2.Graphics = '1'; $alt2.Volume = '0'; $alt2.FramerateCap = '30'
+        $script:Accounts = @($main, $alt, $alt2)
+
+        # Слепки: одинаковые твинки должны совпадать, основной — отличаться.
+        if ((Get-RamClientSettingsKey -Account $alt) -ne (Get-RamClientSettingsKey -Account $alt2)) {
+            throw 'у одинаковых твинков разные слепки настроек'
+        }
+        if ((Get-RamClientSettingsKey -Account $main) -eq (Get-RamClientSettingsKey -Account $alt)) {
+            throw 'основной и твинк считаются одинаковыми'
+        }
+        if ((Get-RamClientSettingsKey -Account (New-RamAccount -Alias 'Пустой' -Cookie 'x')) -ne '') {
+            throw 'у аккаунта без настроек слепок не пустой'
+        }
+
+        $script:Instances  = @{}
+        $script:LaunchQueue = New-Object System.Collections.ArrayList
+
+        # Запустили основного, следующий в очереди твинк — настройки другие,
+        # значит надо дождаться окна основного.
+        $script:Instances[$main.Id] = [pscustomobject]@{ ProcessId = 999999; Handle = [IntPtr]::Zero; Started = (Get-Date) }
+        [void]$script:LaunchQueue.Add($alt.Id)
+        Set-RamSettingsWait -Launched $main
+        if ($script:AwaitWindowFor -ne $main.Id) { throw 'не стал ждать, хотя настройки разные' }
+        if (Test-RamSettingsFileFree) { throw 'разрешил писать файл, не дождавшись окна основного' }
+
+        # Окно появилось — можно писать.
+        $script:Instances[$main.Id].Handle = [IntPtr]::new(4242)
+        if (-not (Test-RamSettingsFileFree)) { throw 'окно есть, а всё ещё ждёт' }
+        if ($script:AwaitWindowFor -ne '') { throw 'ожидание не снялось' }
+
+        # Два одинаковых твинка подряд — ждать нечего, иначе очередь тормозит зря.
+        $script:Instances[$alt.Id] = [pscustomobject]@{ ProcessId = 999998; Handle = [IntPtr]::Zero; Started = (Get-Date) }
+        $script:LaunchQueue.Clear(); [void]$script:LaunchQueue.Add($alt2.Id)
+        Set-RamSettingsWait -Launched $alt
+        if ($script:AwaitWindowFor -ne '') { throw 'ждёт окна там, где настройки совпадают' }
+
+        # Очередь пуста — ждать тоже нечего.
+        $script:LaunchQueue.Clear()
+        Set-RamSettingsWait -Launched $main
+        if ($script:AwaitWindowFor -ne '') { throw 'ждёт окна с пустой очередью' }
+
+        # Окно так и не появилось — по истечении срока очередь идёт дальше.
+        $script:LaunchQueue.Clear(); [void]$script:LaunchQueue.Add($alt.Id)
+        Set-RamSettingsWait -Launched $main
+        $script:AwaitWindowUntil = (Get-Date).AddSeconds(-1)
+        $script:Instances[$main.Id].Handle = [IntPtr]::Zero
+        if (-not (Test-RamSettingsFileFree)) { throw 'висит после истечения срока ожидания' }
+
+        # Процесс пропал — ожидание должно сняться само.
+        $script:LaunchQueue.Clear(); [void]$script:LaunchQueue.Add($alt.Id)
+        Set-RamSettingsWait -Launched $main
+        $script:Instances.Remove($main.Id)
+        if (-not (Test-RamSettingsFileFree)) { throw 'ждёт клиента, которого уже нет' }
+    } finally {
+        $script:Instances       = $keepInst
+        $script:LaunchQueue     = $keepQueue
+        $script:Accounts        = $keepAcc
+        $script:AwaitWindowFor  = $keepFor
+        $script:AwaitWindowUntil = $keepUntil
+    }
+    'ждёт только когда настройки разные, не висит по таймауту и на пропавшем клиенте'
+}
+
 Check 'Раскладка ждёт появления окон' {
     $keepInst = $script:Instances
     $keepTile = $script:PendingTileUntil
@@ -912,6 +990,208 @@ Check 'Меню правого клика по карточке' {
     'пункты собираются по факту, аккаунт берётся из Tag, удалённый не открывается'
 }
 
+Check 'Цвет: перевод в строку и обратно' {
+    foreach ($hex in @('#00A2FF', '#000000', '#FFFFFF', '#8B6CFF')) {
+        $c = ConvertFrom-RamHex -Hex $hex
+        if ($null -eq $c) { throw "не разобрал $hex" }
+        if ((ConvertTo-RamHex -Color $c) -ne $hex) { throw "$hex не совпал после round-trip" }
+    }
+    # короткая форма и мусор
+    if ((ConvertTo-RamHex -Color (ConvertFrom-RamHex -Hex '#0af')) -ne '#00AAFF') { throw 'короткий hex разобран неверно' }
+    if ($null -ne (ConvertFrom-RamHex -Hex 'привет')) { throw 'мусор должен давать $null' }
+    if ($null -ne (ConvertFrom-RamHex -Hex '')) { throw 'пустая строка должна давать $null' }
+
+    # HSL round-trip — с допуском на округление
+    foreach ($hex in @('#00A2FF', '#10B981', '#F45E96')) {
+        $c = ConvertFrom-RamHex -Hex $hex
+        $hsl = ConvertTo-RamHsl -Color $c
+        $c2 = ConvertFrom-RamHsl -H $hsl.H -S $hsl.S -L $hsl.L
+        foreach ($ch in @('R','G','B')) {
+            if ([Math]::Abs($c.$ch - $c2.$ch) -gt 2) { throw "$hex не совпал в HSL round-trip по $ch" }
+        }
+    }
+    'hex и HSL переводятся туда-обратно, мусор не роняет'
+}
+
+Check 'Тема из акцента всегда читаемая' {
+    # Главная гарантия простого режима: какой цвет ни возьми, текст на фоне
+    # должен быть виден. Проверяем контраст по яркости на десятке акцентов
+    # и на всех трёх основах.
+    $accents = @('#00A2FF','#8B6CFF','#10B981','#F45E96','#FB7140','#F59E0B','#EF4444','#FFFFFF','#101010','#22C5D3')
+    foreach ($base in @('dark','light','black')) {
+        foreach ($hex in $accents) {
+            $pal = New-RamDerivedPalette -Accent (ConvertFrom-RamHex -Hex $hex) -Base $base
+            $bgL = (ConvertTo-RamHsl -Color $pal.Bg).L
+            $txL = (ConvertTo-RamHsl -Color $pal.Text).L
+            if ([Math]::Abs($txL - $bgL) -lt 0.45) {
+                throw "основа $base, акцент $hex — текст сливается с фоном (разница $([Math]::Round([Math]::Abs($txL-$bgL),2)))"
+            }
+            # карточка должна отличаться от фона, иначе не видно границ
+            $cardL = (ConvertTo-RamHsl -Color $pal.Card).L
+            if ([Math]::Abs($cardL - $bgL) -lt 0.015 -and $base -ne 'light') {
+                throw "основа $base, акцент $hex — карточка сливается с фоном"
+            }
+            # все 15 ключей должны быть цветами
+            foreach ($k in @('Bg','Panel','Card','CardHover','CardSel','Border','Text','Muted','Accent','AccentHov','Ok','Warn','Danger','DangerHov','LogBack')) {
+                if ($pal[$k] -isnot [System.Drawing.Color]) { throw "ключ $k не цвет при $base/$hex" }
+            }
+        }
+    }
+    'текст читается на фоне при любом акценте и любой основе'
+}
+
+Check 'Стоковые темы на месте' {
+    $stock = Get-RamStockThemeList
+    if ($stock.Count -lt 8) { throw "стоковых тем всего $($stock.Count), ждали хотя бы 8" }
+    foreach ($th in $stock) {
+        $pal = Set-RamTheme -Name $th.Key
+        if ($pal.Key -ne $th.Key) { throw "тема $($th.Key) собралась под ключом $($pal.Key)" }
+        if ($null -eq $pal.Accent -or $null -eq $pal.Bg) { throw "у темы $($th.Key) нет базовых цветов" }
+    }
+    # неизвестная тема откатывается на тёмную, а не роняет
+    if ((Set-RamTheme -Name 'нет-такой-темы').Key -ne 'dark') { throw 'неизвестная тема не откатилась на тёмную' }
+    Set-RamTheme -Name 'dark' | Out-Null
+    "стоковых тем: $($stock.Count), все собираются, неизвестная откатывается"
+}
+
+Check 'Свои темы: запись, чтение, файл' {
+    $keep = if ($script:Settings.PSObject.Properties.Name -contains 'CustomThemes') { $script:Settings.CustomThemes } else { @() }
+    try {
+        $script:Settings.CustomThemes = @()
+
+        # собрать из акцента, записать, прочитать обратно
+        $pal = New-RamDerivedPalette -Accent (ConvertFrom-RamHex -Hex '#8B6CFF') -Base 'dark'
+        $rec = ConvertTo-RamThemeRecord -Palette $pal -Key 'custom-test' -Title 'Проверочная'
+        if ($rec.Colors.Accent -ne '#8B6CFF') { throw "акцент записался как $($rec.Colors.Accent)" }
+
+        $script:Settings.CustomThemes = @($rec)
+
+        # появилась ли она в общем списке
+        $inList = Get-RamThemeList | Where-Object { $_.Key -eq 'custom-test' }
+        if ($null -eq $inList) { throw 'своя тема не попала в список' }
+        if (-not $inList.Custom) { throw 'своя тема не помечена как своя' }
+
+        # собирается ли палитра из записи
+        $back = Get-RamCustomPalette -Name 'custom-test'
+        if ($null -eq $back) { throw 'палитра своей темы не собралась' }
+        if ((ConvertTo-RamHex -Color $back.Accent) -ne '#8B6CFF') { throw 'акцент своей темы потерялся' }
+
+        # своя тема важнее стоковой с тем же ключом
+        $palByName = Get-RamPalette -Name 'custom-test'
+        if ($palByName.Title -ne 'Проверочная') { throw 'Get-RamPalette не отдал свою тему' }
+
+        # битый цвет в файле темы не роняет — подменяется запасным
+        $rec.Colors.Bg = 'не-цвет'
+        $script:Settings.CustomThemes = @($rec)
+        $back2 = Get-RamCustomPalette -Name 'custom-test'
+        if ($back2.Bg -isnot [System.Drawing.Color]) { throw 'битый цвет уронил сборку темы' }
+    } finally {
+        $script:Settings.CustomThemes = $keep
+    }
+    'тема пишется, читается, попадает в список и переживает битый цвет'
+}
+
+Check 'Приглашение althub:// туда-обратно' {
+    $keep = $script:Accounts
+    try {
+        $a = New-RamAccount -Alias 'Перенос' -Cookie ('_|WARNING:-DO-NOT-SHARE-THIS.--' + ('Z' * 90))
+        $a.PlaceId = '2753915549'; $a.GameName = 'Blox Fruits'; $a.LinkCode = 'srv1'
+        $a.Graphics = '1'; $a.Volume = '0'; $a.FramerateCap = '30'; $a.Group = 'Твины'; $a.Color = 'blue'; $a.Note = 'заметка'
+
+        $code = ConvertTo-RamInviteCode -Account $a
+        if (-not $code.StartsWith('althub://v1/')) { throw 'код без префикса althub://' }
+
+        $back = ConvertFrom-RamInviteCode -Code $code
+        if ($null -eq $back) { throw 'код не разобрался обратно' }
+        if ($back.cookie -ne $a.Cookie)   { throw 'кука не совпала' }
+        if ($back.gameName -ne 'Blox Fruits') { throw 'игра потерялась' }
+        if ($back.graphics -ne '1')       { throw 'графика потерялась' }
+        if ($back.group -ne 'Твины')      { throw 'набор потерялся' }
+
+        # мусор не роняет
+        foreach ($bad in @('просто строка', 'althub://v1/!!невалид', '', 'althub://v2/xxx')) {
+            if ($null -ne (ConvertFrom-RamInviteCode -Code $bad)) { throw "мусор '$bad' разобрался как код" }
+        }
+    } finally {
+        $script:Accounts = $keep
+    }
+    'аккаунт с игрой и настройками переживает упаковку в приглашение и обратно'
+}
+
+Check 'Пачка и брошенный файл не роняют на мусоре' {
+    $keep = $script:Accounts
+    try {
+        $script:Accounts = @()
+
+        # батч на пустом и мусоре: без исключений, ничего не добавлено
+        $sum = Import-RamAccountBatch -Text "`n`n   `nкороткая-строка`n"
+        if ($sum.Added -ne 0)   { throw "добавил из мусора: $($sum.Added)" }
+        if ($sum.Total -ne 1)   { throw "непустых строк насчитал $($sum.Total), ждали 1" }
+        if ($sum.Failed -lt 1)  { throw 'короткая строка должна была провалиться' }
+
+        # одиночная строка: пустая -> $null, короткая -> Ok=false без падения
+        if ($null -ne (Import-RamAccountLine -Line '   ')) { throw 'пустая строка должна давать $null' }
+        $r = Import-RamAccountLine -Line 'abc'
+        if ($r.Ok) { throw 'мусор не должен добавляться' }
+
+        # брошенный файл-настройки (без кук) не создаёт аккаунтов
+        $tmp = Join-Path $env:TEMP ('ram-drop-' + [guid]::NewGuid().ToString('N') + '.json')
+        try {
+            '{"app":"AltHub","games":[],"accounts":[]}' | Set-Content -LiteralPath $tmp -Encoding UTF8
+            $before = @($script:Accounts).Count
+            # Import-RamDroppedFile показывает окно — проверяем только, что путь
+            # к настройкам распознаётся и аккаунты не плодятся. Дёргаем разбор
+            # напрямую вместо диалога:
+            $j = Get-Content -LiteralPath $tmp -Raw | ConvertFrom-Json
+            $isSetup = ($j.PSObject.Properties.Name -contains 'games')
+            if (-not $isSetup) { throw 'файл настроек не распознан как настройки' }
+            if (@($script:Accounts).Count -ne $before) { throw 'разбор настроек наплодил аккаунты' }
+        } finally {
+            Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
+        }
+    } finally {
+        $script:Accounts = $keep
+    }
+    'пачка, одиночная строка и файл настроек не роняют и не плодят мусор'
+}
+
+Check 'Разбор популярных игр из Roblox' {
+    # Разбор ответа explore-api проверяем на заготовленном JSON, без сети:
+    # сеть капризна, а логика отбора должна работать одинаково.
+    $fake = @'
+{"sorts":[
+  {"contentType":"Filters","games":null},
+  {"contentType":"Games","sortDisplayName":"Top Trending","games":[
+     {"name":"Игра А","rootPlaceId":"111","playerCount":5000},
+     {"name":"Игра Б","rootPlaceId":"222","playerCount":9000},
+     {"name":"","rootPlaceId":"333","playerCount":1},
+     {"name":"Без ID","rootPlaceId":"","playerCount":2}
+  ]},
+  {"contentType":"Games","sortDisplayName":"Top Playing Now","games":[
+     {"name":"Игра Б","rootPlaceId":"222","playerCount":9000},
+     {"name":"Игра В","rootPlaceId":"444","playerCount":7000}
+  ]}
+]}
+'@ | ConvertFrom-Json
+
+    $g = @(ConvertFrom-RamExploreSorts -Data $fake -Limit 30)
+    if ($g.Count -ne 3) { throw "разобрано $($g.Count) игр вместо 3 (дубли/пустые не отсеялись)" }
+    if ($g[0].Title -ne 'Игра Б' -or $g[0].Players -ne 9000) { throw 'не отсортировано по числу игроков' }
+    if (($g | Where-Object { [string]::IsNullOrWhiteSpace($_.Title) }).Count -gt 0) { throw 'просочилась игра без названия' }
+    if (($g | Where-Object { [string]::IsNullOrWhiteSpace($_.PlaceId) }).Count -gt 0) { throw 'просочилась игра без ID' }
+    $ids = @($g | ForEach-Object { $_.PlaceId })
+    if (($ids | Select-Object -Unique).Count -ne $ids.Count) { throw 'остались дубли по ID' }
+
+    # предел соблюдается
+    if ((ConvertFrom-RamExploreSorts -Data $fake -Limit 2).Count -ne 2) { throw 'предел Limit не соблюдён' }
+
+    # пустой и битый ответ не роняют
+    if ((ConvertFrom-RamExploreSorts -Data $null).Count -ne 0) { throw 'null должен давать 0 игр' }
+    if ((ConvertFrom-RamExploreSorts -Data ([pscustomobject]@{ sorts = $null })).Count -ne 0) { throw 'пустые sorts должны давать 0' }
+
+    'отбор, дедуп, сортировка и пределы работают; пустой ответ не роняет'
+}
+
 Check 'Окна и оформление собираются' {
     $form = New-RamMainForm
     if ($form.Controls.Count -lt 5) { throw "в главном окне только $($form.Controls.Count) элементов" }
@@ -932,7 +1212,21 @@ Check 'Окна и оформление собираются' {
     if ($wiz.Controls.Count -lt 8) { throw "в мастере только $($wiz.Controls.Count) элементов" }
     $wiz.Dispose()
 
-    'главное окно, четыре раздела и мастер строятся без ошибок'
+    # конструктор тем — простой и подробный режим
+    $con = Show-RamThemeConstructor -BuildOnly
+    if ($con.Controls.Count -lt 10) { throw "в конструкторе только $($con.Controls.Count) элементов" }
+    $con.Dispose()
+
+    # диалоги добавления
+    $bd = Show-RamBatchAddDialog -BuildOnly
+    if ($bd.Controls.Count -lt 4) { throw "в пачечном добавлении только $($bd.Controls.Count) элементов" }
+    $bd.Dispose()
+
+    $bg = Show-RamBrowserGuide -BuildOnly
+    if ($bg.Controls.Count -lt 4) { throw "в браузерном гиде только $($bg.Controls.Count) элементов" }
+    $bg.Dispose()
+
+    'главное окно, разделы, мастер, конструктор тем и диалоги добавления строятся без ошибок'
 }
 
 Check 'Нижняя строка выровнена' {

@@ -16,10 +16,242 @@
 # Три темы на выбор. Меняется в Настройках, применяется при перезапуске окна.
 # Все цвета берутся ТОЛЬКО отсюда — по коду нигде нет вписанных вручную оттенков.
 
+# =========================================================== цвет: утилиты ===
+#
+# Всё, что нужно конструктору тем: перевод цвета в строку и обратно, работа
+# в HSL и вывод целой палитры из одного акцента. Держим это здесь, рядом с
+# палитрами, чтобы цвета всей программы задавались из одного места.
+
+function ConvertTo-RamHex {
+    <# Color -> '#RRGGBB'. #>
+    param([Parameter(Mandatory)][System.Drawing.Color]$Color)
+    '#{0:X2}{1:X2}{2:X2}' -f $Color.R, $Color.G, $Color.B
+}
+
+function ConvertFrom-RamHex {
+    <#
+      '#RRGGBB' (или 'RRGGBB', или короткое '#RGB') -> Color.
+      Возвращает $null, если строка не похожа на цвет — вызывающий решает,
+      что делать, а не получает исключение посреди отрисовки.
+    #>
+    param([string]$Hex)
+    if ([string]::IsNullOrWhiteSpace($Hex)) { return $null }
+    $h = $Hex.Trim().TrimStart('#')
+    if ($h.Length -eq 3) { $h = "$($h[0])$($h[0])$($h[1])$($h[1])$($h[2])$($h[2])" }
+    if ($h.Length -ne 6) { return $null }
+    $n = 0
+    if (-not [int]::TryParse($h, [System.Globalization.NumberStyles]::HexNumber,
+                             [System.Globalization.CultureInfo]::InvariantCulture, [ref]$n)) { return $null }
+    return [System.Drawing.Color]::FromArgb(($n -shr 16) -band 255, ($n -shr 8) -band 255, $n -band 255)
+}
+
+function ConvertTo-RamHsl {
+    <# Color -> @{ H = 0..360; S = 0..1; L = 0..1 }. #>
+    param([Parameter(Mandatory)][System.Drawing.Color]$Color)
+    $r = $Color.R / 255.0; $g = $Color.G / 255.0; $b = $Color.B / 255.0
+    $max = [Math]::Max($r, [Math]::Max($g, $b))
+    $min = [Math]::Min($r, [Math]::Min($g, $b))
+    $l = ($max + $min) / 2.0
+    $h = 0.0; $sat = 0.0
+    $d = $max - $min
+    if ($d -ne 0) {
+        $sat = if ($l -gt 0.5) { $d / (2.0 - $max - $min) } else { $d / ($max + $min) }
+        if     ($max -eq $r) { $h = (($g - $b) / $d) % 6.0 }
+        elseif ($max -eq $g) { $h = (($b - $r) / $d) + 2.0 }
+        else                 { $h = (($r - $g) / $d) + 4.0 }
+        $h *= 60.0
+        if ($h -lt 0) { $h += 360.0 }
+    }
+    return @{ H = $h; S = $sat; L = $l }
+}
+
+function ConvertFrom-RamHsl {
+    <# H (0..360), S/L (0..1) -> Color. #>
+    param([double]$H, [double]$S, [double]$L)
+    $S = [Math]::Max(0.0, [Math]::Min(1.0, $S))
+    $L = [Math]::Max(0.0, [Math]::Min(1.0, $L))
+    if ($S -eq 0) {
+        $v = [int][Math]::Round($L * 255)
+        return [System.Drawing.Color]::FromArgb($v, $v, $v)
+    }
+    $q = if ($L -lt 0.5) { $L * (1 + $S) } else { $L + $S - $L * $S }
+    $pp = 2 * $L - $q
+    $hk = ($H % 360) / 360.0
+    $conv = {
+        param($t)
+        if ($t -lt 0) { $t += 1 }
+        if ($t -gt 1) { $t -= 1 }
+        if ($t -lt 1.0/6) { return $pp + ($q - $pp) * 6 * $t }
+        if ($t -lt 1.0/2) { return $q }
+        if ($t -lt 2.0/3) { return $pp + ($q - $pp) * (2.0/3 - $t) * 6 }
+        return $pp
+    }
+    $r = & $conv ($hk + 1.0/3)
+    $g = & $conv $hk
+    $b = & $conv ($hk - 1.0/3)
+    return [System.Drawing.Color]::FromArgb(
+        [int][Math]::Round($r * 255),
+        [int][Math]::Round($g * 255),
+        [int][Math]::Round($b * 255))
+}
+
+function Get-RamPaletteColorKeys {
+    <#
+      Полный список цветовых ключей палитры с человеческими названиями —
+      для полного редактора тем. Порядок = порядок в редакторе.
+
+      Ok/Warn/Danger/DangerHov сюда НЕ входят: это цвета смысла (успех,
+      предупреждение, опасность), их нельзя перекрашивать в зелёный ради
+      красоты — красный должен читаться как красный. Их конструктор задаёт
+      сам, подгоняя под светлую или тёмную основу.
+    #>
+    @(
+        [pscustomobject]@{ Key = 'Bg';        Title = 'Фон окна' }
+        [pscustomobject]@{ Key = 'Panel';     Title = 'Панель (боковое меню, тулбар)' }
+        [pscustomobject]@{ Key = 'Card';      Title = 'Карточка аккаунта' }
+        [pscustomobject]@{ Key = 'CardHover'; Title = 'Карточка под мышью' }
+        [pscustomobject]@{ Key = 'CardSel';   Title = 'Выделение' }
+        [pscustomobject]@{ Key = 'Border';    Title = 'Границы и обводка' }
+        [pscustomobject]@{ Key = 'Text';      Title = 'Основной текст' }
+        [pscustomobject]@{ Key = 'Muted';     Title = 'Приглушённый текст' }
+        [pscustomobject]@{ Key = 'Accent';    Title = 'Акцент (кнопки, галочки)' }
+        [pscustomobject]@{ Key = 'AccentHov'; Title = 'Акцент под мышью' }
+        [pscustomobject]@{ Key = 'LogBack';   Title = 'Фон журнала' }
+    )
+}
+
+function New-RamDerivedPalette {
+    <#
+      Собирает ЦЕЛУЮ палитру из одного акцентного цвета и типа основы.
+      На этом держится «простой» режим конструктора: человек выбирает главный
+      цвет и светло/темно — остальные 15 оттенков считаются так, чтобы всё
+      гарантированно читалось.
+
+      Base: 'dark' | 'light' | 'black' (AMOLED-чёрный).
+
+      Нейтральные тона (фон, панель, карточка, текст) — это НЕ чистый серый,
+      а серый с лёгкой примесью акцентного тона: так тема выглядит цельной,
+      а не «цветная кнопка на сером». Насыщенность примеси маленькая, иначе
+      фон начинает давить на глаза.
+    #>
+    param(
+        [Parameter(Mandatory)][System.Drawing.Color]$Accent,
+        [ValidateSet('dark','light','black')][string]$Base = 'dark'
+    )
+
+    $hsl = ConvertTo-RamHsl -Color $Accent
+    $h   = $hsl.H
+    $tint = 0.10          # примесь тона в нейтральных
+    $mk = { param($sat, $lum) ConvertFrom-RamHsl -H $h -S $sat -L $lum }
+
+    if ($Base -eq 'light') {
+        return @{
+            Bg        = & $mk $tint 0.965
+            Panel     = & $mk 0.02  1.00
+            Card      = & $mk 0.02  1.00
+            CardHover = & $mk ($tint * 1.6) 0.945
+            CardSel   = & $mk 0.85  0.90
+            Border    = & $mk $tint 0.86
+            Text      = & $mk 0.22  0.13
+            Muted     = & $mk 0.14  0.44
+            Accent    = $Accent
+            AccentHov = & $mk ([Math]::Min(1.0, $hsl.S + 0.05)) ([Math]::Min(0.62, $hsl.L + 0.08))
+            Ok        = ConvertFrom-RamHsl -H 150 -S 0.72 -L 0.34
+            Warn      = ConvertFrom-RamHsl -H  35 -S 0.92 -L 0.38
+            Danger    = ConvertFrom-RamHsl -H   2 -S 0.66 -L 0.49
+            DangerHov = ConvertFrom-RamHsl -H   2 -S 0.72 -L 0.59
+            LogBack   = & $mk $tint 0.985
+        }
+    }
+
+    # Тёмная основа. 'black' — почти чёрный фон для AMOLED-экранов.
+    $bgL   = if ($Base -eq 'black') { 0.03 } else { 0.095 }
+    $panL  = if ($Base -eq 'black') { 0.07 } else { 0.135 }
+    $cardL = if ($Base -eq 'black') { 0.11 } else { 0.175 }
+    $logL  = if ($Base -eq 'black') { 0.02 } else { 0.075 }
+
+    return @{
+        Bg        = & $mk $tint $bgL
+        Panel     = & $mk $tint $panL
+        Card      = & $mk $tint $cardL
+        CardHover = & $mk ($tint * 1.3) ($cardL + 0.05)
+        CardSel   = & $mk 0.50 ($cardL + 0.06)
+        Border    = & $mk $tint ($cardL + 0.11)
+        Text      = & $mk 0.14 0.95
+        Muted     = & $mk 0.12 0.62
+        Accent    = $Accent
+        AccentHov = & $mk ([Math]::Min(1.0, $hsl.S + 0.04)) ([Math]::Min(0.80, $hsl.L + 0.10))
+        Ok        = ConvertFrom-RamHsl -H 145 -S 0.60 -L 0.53
+        Warn      = ConvertFrom-RamHsl -H  38 -S 0.90 -L 0.50
+        Danger    = ConvertFrom-RamHsl -H   0 -S 0.83 -L 0.60
+        DangerHov = ConvertFrom-RamHsl -H   0 -S 0.90 -L 0.68
+        LogBack   = & $mk $tint $logL
+    }
+}
+
+function Get-RamCustomThemes {
+    <# Свои темы пользователя из настроек. Пусто, если настроек ещё нет. #>
+    if ($null -eq $script:Settings) { return @() }
+    if (-not ($script:Settings.PSObject.Properties.Name -contains 'CustomThemes')) { return @() }
+    return @($script:Settings.CustomThemes | Where-Object { $_ -and $_.Key })
+}
+
+function Get-RamCustomPalette {
+    <#
+      Собирает палитру из сохранённой своей темы (цвета там строками '#RRGGBB').
+      $null, если темы с таким ключом нет.
+
+      Недостающие цвета достаём из тёмной темы, а не падаем: файл темы мог
+      прийти из будущей версии, где ключей больше, или из чужих рук.
+    #>
+    param([string]$Name)
+
+    $theme = Get-RamCustomThemes | Where-Object { $_.Key -eq $Name } | Select-Object -First 1
+    if ($null -eq $theme) { return $null }
+
+    $fallback = Get-RamPalette -Name 'dark'
+    $pal = @{ Key = [string]$theme.Key; Title = [string]$theme.Title }
+
+    $keys = @('Bg','Panel','Card','CardHover','CardSel','Border','Text','Muted',
+              'Accent','AccentHov','Ok','Warn','Danger','DangerHov','LogBack')
+    foreach ($k in $keys) {
+        $col = $null
+        if ($theme.Colors.PSObject.Properties.Name -contains $k) {
+            $col = ConvertFrom-RamHex -Hex ([string]$theme.Colors.$k)
+        }
+        $pal[$k] = if ($null -ne $col) { $col } else { $fallback[$k] }
+    }
+    return $pal
+}
+
+function ConvertTo-RamThemeRecord {
+    <#
+      Палитра (Color-объекты) -> запись для сохранения (цвета строками).
+      Именно это уходит в настройки и в файл темы для друга.
+    #>
+    param([Parameter(Mandatory)]$Palette, [Parameter(Mandatory)][string]$Key, [Parameter(Mandatory)][string]$Title)
+
+    $colors = [ordered]@{}
+    $keys = @('Bg','Panel','Card','CardHover','CardSel','Border','Text','Muted',
+              'Accent','AccentHov','Ok','Warn','Danger','DangerHov','LogBack')
+    foreach ($k in $keys) { $colors[$k] = ConvertTo-RamHex -Color $Palette[$k] }
+
+    [pscustomobject]@{
+        Key    = $Key
+        Title  = $Title
+        Colors = [pscustomobject]$colors
+    }
+}
+
 function Get-RamPalette {
-    param([ValidateSet('dark','midnight','light')][string]$Name = 'dark')
+    param([string]$Name = 'dark')
 
     $c = { param($r, $g, $b) [System.Drawing.Color]::FromArgb($r, $g, $b) }
+
+    # Свои темы из настроек — первыми: если человек назвал свою тему как
+    # стоковую, важнее его выбор.
+    $custom = Get-RamCustomPalette -Name $Name
+    if ($null -ne $custom) { return $custom }
 
     switch ($Name) {
 
@@ -67,6 +299,40 @@ function Get-RamPalette {
             }
         }
 
+        # --- Собранные из акцента одной строкой. Держим их так, а не таблицей
+        #     из 15 цветов: если поправить формулу вывода, все они обновятся
+        #     разом и останутся согласованными. Ручные — только три первых,
+        #     их трогать незачем.
+
+        'emerald' {  # Изумруд — тёмная с зелёным
+            $p = New-RamDerivedPalette -Accent ([System.Drawing.Color]::FromArgb(16, 185, 129)) -Base 'dark'
+            $p.Key = 'emerald'; $p.Title = 'Изумруд'; return $p
+        }
+        'sunset' {   # Закат — тёмная с оранжево-розовым
+            $p = New-RamDerivedPalette -Accent ([System.Drawing.Color]::FromArgb(251, 113, 64)) -Base 'dark'
+            $p.Key = 'sunset'; $p.Title = 'Закат'; return $p
+        }
+        'rose' {     # Роза — тёмная с розовым
+            $p = New-RamDerivedPalette -Accent ([System.Drawing.Color]::FromArgb(244, 94, 150)) -Base 'dark'
+            $p.Key = 'rose'; $p.Title = 'Роза'; return $p
+        }
+        'ocean' {    # Океан — тёмная с бирюзовым
+            $p = New-RamDerivedPalette -Accent ([System.Drawing.Color]::FromArgb(34, 197, 211)) -Base 'dark'
+            $p.Key = 'ocean'; $p.Title = 'Океан'; return $p
+        }
+        'grape' {    # Виноград — тёмная с сиреневым
+            $p = New-RamDerivedPalette -Accent ([System.Drawing.Color]::FromArgb(168, 120, 245)) -Base 'dark'
+            $p.Key = 'grape'; $p.Title = 'Виноград'; return $p
+        }
+        'amoled' {   # Чёрная — почти чёрный фон для AMOLED
+            $p = New-RamDerivedPalette -Accent ([System.Drawing.Color]::FromArgb(0, 162, 255)) -Base 'black'
+            $p.Key = 'amoled'; $p.Title = 'Чёрная'; return $p
+        }
+        'sky' {      # Небо — светлая с голубым
+            $p = New-RamDerivedPalette -Accent ([System.Drawing.Color]::FromArgb(14, 130, 233)) -Base 'light'
+            $p.Key = 'sky'; $p.Title = 'Небо'; return $p
+        }
+
         # Тёмная — по умолчанию, нейтральная под стиль Roblox
         default {
             return @{
@@ -91,19 +357,39 @@ function Get-RamPalette {
     }
 }
 
-function Get-RamThemeList {
+function Get-RamStockThemeList {
+    <# Встроенные темы. Порядок = порядок в меню выбора. #>
     @(
-        [pscustomobject]@{ Key = 'dark';     Title = 'Тёмная'  },
-        [pscustomobject]@{ Key = 'midnight'; Title = 'Полночь' },
-        [pscustomobject]@{ Key = 'light';    Title = 'Светлая' }
+        [pscustomobject]@{ Key = 'dark';     Title = 'Тёмная'   },
+        [pscustomobject]@{ Key = 'midnight'; Title = 'Полночь'  },
+        [pscustomobject]@{ Key = 'emerald';  Title = 'Изумруд'  },
+        [pscustomobject]@{ Key = 'ocean';    Title = 'Океан'    },
+        [pscustomobject]@{ Key = 'grape';    Title = 'Виноград' },
+        [pscustomobject]@{ Key = 'rose';     Title = 'Роза'     },
+        [pscustomobject]@{ Key = 'sunset';   Title = 'Закат'    },
+        [pscustomobject]@{ Key = 'amoled';   Title = 'Чёрная'   },
+        [pscustomobject]@{ Key = 'light';    Title = 'Светлая'  },
+        [pscustomobject]@{ Key = 'sky';      Title = 'Небо'     }
     )
+}
+
+function Get-RamThemeList {
+    <# Стоковые темы плюс свои из настроек. #>
+    $list = @(Get-RamStockThemeList)
+    foreach ($ct in Get-RamCustomThemes) {
+        $list += [pscustomobject]@{ Key = [string]$ct.Key; Title = [string]$ct.Title; Custom = $true }
+    }
+    return @($list)
 }
 
 function Set-RamTheme {
     <# Ставит палитру и добавляет к ней шрифты — шрифты общие для всех тем. #>
     param([string]$Name = 'dark')
 
-    if (@('dark','midnight','light') -notcontains $Name) { $Name = 'dark' }
+    # Если тема не нашлась (например, файл настроек ссылается на удалённую
+    # свою тему) — откатываемся на тёмную, а не падаем.
+    $known = @(Get-RamThemeList | ForEach-Object { $_.Key })
+    if ($known -notcontains $Name) { $Name = 'dark' }
     $p = Get-RamPalette -Name $Name
 
     $p.FontBig   = New-Object System.Drawing.Font('Segoe UI Semibold', 15)

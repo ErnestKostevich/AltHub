@@ -129,6 +129,25 @@ function Convert-RamGraphicsToLevels {
     }
 }
 
+function Get-RamClientSettingsKey {
+    <#
+      Слепок тех настроек, которые уходят в общий файл Roblox.
+
+      Нужен, чтобы понять, отличаются ли настройки двух соседних запусков.
+      Если одинаковые — перезапись файла тем же самым безвредна и ждать
+      перед следующим запуском незачем.
+    #>
+    param([Parameter(Mandatory)]$Account)
+
+    if (-not (Test-RamAccountHasClientSettings -Account $Account)) { return '' }
+
+    return ('g={0}|fps={1}|vol={2}|fs={3}' -f
+            [string]$Account.Graphics,
+            [string]$Account.FramerateCap,
+            [string]$Account.Volume,
+            [string]$Account.Fullscreen)
+}
+
 function Apply-RamAccountClientSettings {
     <#
       Записывает настройки конкретного аккаунта в файл настроек Roblox.

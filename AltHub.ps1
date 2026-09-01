@@ -4,7 +4,7 @@
  AltHub — менеджер аккаунтов Roblox
 ================================================================================
  Автор: Эрнест Костевич (Ernest Kostevich)
- Версия: 1.0
+ Версия: 1.1
  Лицензия: MIT — см. файл LICENSE рядом. Можно свободно передавать друзьям,
  менять под себя и распространять дальше, сохраняя это указание авторства.
 
@@ -74,6 +74,8 @@ $script:LastScheduleRun = ''
 $script:UndoStack       = New-Object System.Collections.ArrayList  # шаги для Ctrl+Z
 $script:StatusHoldUntil = [datetime]::MinValue                     # см. Set-RamStatus
 $script:PendingTileUntil = [datetime]::MinValue                    # см. Invoke-RamPendingTile
+$script:AwaitWindowFor   = ''                                      # см. Test-RamSettingsFileFree
+$script:AwaitWindowUntil = [datetime]::MinValue
 $script:SettingsTouched = $false   # трогали ли общий файл настроек Roblox
 $script:LastLaunchAt    = [datetime]::MinValue
 $script:RestartCount   = @{}      # Id аккаунта -> сколько раз перезапускали
@@ -86,7 +88,7 @@ $script:RestartCount   = @{}      # Id аккаунта -> сколько раз
 $script:ReadOnly = [bool]$NoAutoStart
 
 $script:AppName    = 'AltHub'
-$script:AppVersion = '1.0'
+$script:AppVersion = '1.1'
 $script:AppAuthor  = 'Эрнест Костевич'
 
 function Get-RamAvatarDir { Join-Path (Get-RamDataDir) 'avatars' }
@@ -646,6 +648,120 @@ function Save-RamState {
     }
 }
 
+function ConvertTo-RamInviteCode {
+    <#
+      Упаковывает аккаунт (вместе с игрой и настройками) в одну строку
+      althub://, которую удобно перенести на другой свой компьютер.
+
+      ВНУТРИ ЛЕЖИТ КУКА — то есть доступ к аккаунту. Это перенос СЕБЕ, а не
+      публичная раздача. В интерфейсе так и предупреждаем.
+    #>
+    param([Parameter(Mandatory)]$Account)
+
+    $payload = [ordered]@{
+        v        = 1
+        alias    = [string]$Account.Alias
+        cookie   = [string]$Account.Cookie
+        placeId  = [string]$Account.PlaceId
+        linkCode = [string]$Account.LinkCode
+        gameName = [string]$Account.GameName
+        graphics = [string]$Account.Graphics
+        volume   = [string]$Account.Volume
+        fps      = [string]$Account.FramerateCap
+        group    = [string]$Account.Group
+        color    = [string]$Account.Color
+        note     = [string]$Account.Note
+    }
+    $json  = ($payload | ConvertTo-Json -Compress)
+    $bytes = [System.Text.Encoding]::UTF8.GetBytes($json)
+    return 'althub://v1/' + [Convert]::ToBase64String($bytes)
+}
+
+function ConvertFrom-RamInviteCode {
+    <#
+      Разбирает строку althub://. Возвращает объект с полями аккаунта или
+      $null, если строка не похожа на приглашение.
+    #>
+    param([string]$Code)
+    if ([string]::IsNullOrWhiteSpace($Code)) { return $null }
+    $c = $Code.Trim()
+    if ($c -notmatch '^althub://v1/(.+)$') { return $null }
+    $b64 = $Matches[1].Trim()
+    try {
+        $bytes = [Convert]::FromBase64String($b64)
+        $json  = [System.Text.Encoding]::UTF8.GetString($bytes)
+        return ($json | ConvertFrom-Json)
+    } catch { return $null }
+}
+
+function Import-RamAccountLine {
+    <#
+      Добавляет один аккаунт из строки: это либо приглашение althub://, либо
+      голая кука .ROBLOSECURITY. Возвращает @{ Ok; New; Alias; Error }.
+
+      Сеть здесь ОБЯЗАТЕЛЬНА: без проверки куки у Roblox мы не знаем ни ника,
+      ни того, живой ли вообще вход. Пустые и мусорные строки отсекаем заранее,
+      чтобы не гонять запрос впустую.
+    #>
+    param([Parameter(Mandatory)][string]$Line)
+
+    $line = $Line.Trim()
+    if ([string]::IsNullOrWhiteSpace($line)) { return $null }
+
+    $invite = ConvertFrom-RamInviteCode -Code $line
+    try {
+        if ($null -ne $invite) {
+            $res = Add-RamAccountFromCookie -Cookie ([string]$invite.cookie) -PlaceId ([string]$invite.placeId)
+            $a = $res.Account
+            # приглашение несёт ещё игру и настройки — переносим их
+            foreach ($pair in @(
+                @('LinkCode', $invite.linkCode), @('GameName', $invite.gameName),
+                @('Graphics', $invite.graphics), @('Volume', $invite.volume),
+                @('FramerateCap', $invite.fps), @('Group', $invite.group),
+                @('Color', $invite.color), @('Note', $invite.note))) {
+                if (-not [string]::IsNullOrWhiteSpace([string]$pair[1])) { $a.($pair[0]) = [string]$pair[1] }
+            }
+            if (-not [string]::IsNullOrWhiteSpace([string]$invite.alias)) { $a.Alias = [string]$invite.alias }
+            Save-RamState
+            return @{ Ok = $true; New = $res.IsNew; Alias = $a.Alias; Error = '' }
+        }
+
+        # голая кука: отсекаем очевидный мусор до запроса
+        if ($line.Length -lt 50) { return @{ Ok = $false; New = $false; Alias = ''; Error = 'строка слишком короткая для куки' } }
+        $res = Add-RamAccountFromCookie -Cookie $line
+        return @{ Ok = $true; New = $res.IsNew; Alias = $res.Account.Alias; Error = '' }
+    } catch {
+        return @{ Ok = $false; New = $false; Alias = ''; Error = $_.Exception.Message }
+    }
+}
+
+function Import-RamAccountBatch {
+    <#
+      Добавляет пачку аккаунтов: по строке на аккаунт. Каждая строка — кука
+      или приглашение althub://. Возвращает сводку для показа человеку.
+    #>
+    param([Parameter(Mandatory)][string]$Text)
+
+    $lines = @($Text -split "`r?`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+    $added = 0; $updated = 0; $failed = 0; $names = @(); $errors = @()
+
+    foreach ($ln in $lines) {
+        $r = Import-RamAccountLine -Line $ln
+        if ($null -eq $r) { continue }
+        if ($r.Ok) {
+            if ($r.New) { $added++; $names += $r.Alias } else { $updated++ }
+        } else {
+            $failed++
+            $errors += $r.Error
+        }
+    }
+
+    return [pscustomobject]@{
+        Added = $added; Updated = $updated; Failed = $failed
+        Names = $names; Errors = $errors; Total = $lines.Count
+    }
+}
+
 function Add-RamAccountFromCookie {
     <# Создаёт аккаунт по куке, подтягивает ник и UserID. #>
     param(
@@ -813,6 +929,230 @@ function Resolve-RamGameInput {
 
 # ------------------------------------------- мастер добавления аккаунтов ----
 
+function Show-RamBatchAddDialog {
+    <#
+      Вставить сразу несколько аккаунтов: по строке на аккаунт. Каждая строка —
+      либо кука .ROBLOSECURITY, либо приглашение althub://. Порядок строк не
+      важен, пустые пропускаются.
+
+      Возвращает число реально добавленных — вызывающий обновляет список.
+    #>
+    param([switch]$BuildOnly)
+
+    $t = $Global:RamTheme
+    $dlg = New-Object System.Windows.Forms.Form
+    $dlg.Text            = 'Вставить пачкой'
+    $dlg.FormBorderStyle = 'FixedDialog'
+    $dlg.StartPosition   = 'CenterParent'
+    $dlg.MaximizeBox     = $false; $dlg.MinimizeBox = $false
+    $dlg.BackColor       = $t.Bg
+    $dlg.ForeColor       = $t.Text
+    $dlg.Font            = $t.FontBody
+    $dlg.ClientSize      = New-Object System.Drawing.Size(600, 460)
+
+    $stripe = New-Object System.Windows.Forms.Panel
+    $stripe.Size = New-Object System.Drawing.Size(600, 4); $stripe.BackColor = $t.Accent
+    $dlg.Controls.Add($stripe)
+
+    $dlg.Controls.Add((New-RamLabel -Text 'Вставить пачкой' -X 28 -Y 22 -Width 400 -Height 30 -Font $t.FontBig))
+    $dlg.Controls.Add((New-RamLabel -Text 'По одному аккаунту на строку. Строка — это либо кука (.ROBLOSECURITY целиком), либо приглашение althub://. Пустые строки пропускаются.' `
+                                    -X 28 -Y 58 -Width 544 -Height 40 -Font $t.FontSmall -Color $t.Muted))
+
+    $box = New-Object System.Windows.Forms.TextBox
+    $box.Multiline   = $true
+    $box.ScrollBars  = 'Vertical'
+    $box.WordWrap    = $false
+    $box.Location    = New-Object System.Drawing.Point(28, 104)
+    $box.Size        = New-Object System.Drawing.Size(544, 250)
+    $box.BackColor   = $t.LogBack
+    $box.ForeColor   = $t.Text
+    $box.BorderStyle = 'FixedSingle'
+    $box.Font        = $t.FontMono
+    $dlg.Controls.Add($box)
+
+    $lblResult = New-RamLabel -Text '' -X 28 -Y 366 -Width 544 -Height 40 -Font $t.FontSmall -Color $t.Muted
+    $dlg.Controls.Add($lblResult)
+
+    $added = 0
+
+    $btnGo = New-RamButton -Text 'Добавить все' -Width 180 -Height 36 -Kind 'primary' -OnClick ({
+        $text = $box.Text
+        if ([string]::IsNullOrWhiteSpace($text)) { Show-RamInfo 'Вставь хотя бы одну куку или приглашение.'; return }
+
+        $this.FindForm().Cursor = [System.Windows.Forms.Cursors]::WaitCursor
+        $sum = Import-RamAccountBatch -Text $text
+        $this.FindForm().Cursor = [System.Windows.Forms.Cursors]::Default
+
+        $script:RamBatchAdded = $sum.Added
+        $parts = @()
+        if ($sum.Added -gt 0)   { $parts += "добавлено: $($sum.Added)" }
+        if ($sum.Updated -gt 0) { $parts += "обновлено: $($sum.Updated)" }
+        if ($sum.Failed -gt 0)  { $parts += "не вышло: $($sum.Failed)" }
+        $msg = if ($parts.Count -gt 0) { $parts -join ', ' } else { 'ничего не разобрал' }
+        if ($sum.Failed -gt 0 -and $sum.Errors.Count -gt 0) {
+            $msg += "  ·  первая причина: $($sum.Errors[0])"
+        }
+        $lblResult.Text = $msg
+        $lblResult.ForeColor = if ($sum.Failed -gt 0 -and $sum.Added -eq 0) { $t.Danger } else { $t.Ok }
+
+        if ($sum.Added -gt 0 -or $sum.Updated -gt 0) {
+            Build-RamCards
+            Update-RamHeaderCounts
+            Write-RamLog "Пачкой: добавлено $($sum.Added), обновлено $($sum.Updated), не вышло $($sum.Failed)." 'ok'
+        }
+    }.GetNewClosure())
+    $btnGo.Location = New-Object System.Drawing.Point(28, 410)
+    $dlg.Controls.Add($btnGo)
+
+    $btnClose = New-RamButton -Text 'Закрыть' -Width 120 -Height 36 -OnClick { $this.FindForm().Close() }
+    $btnClose.Location = New-Object System.Drawing.Point(452, 410)
+    $dlg.Controls.Add($btnClose)
+
+    if ($BuildOnly) { return $dlg }
+
+    $script:RamBatchAdded = 0
+    [void]$dlg.ShowDialog()
+    $dlg.Dispose()
+    return $script:RamBatchAdded
+}
+
+function Show-RamBrowserGuide {
+    <#
+      Добавить аккаунт из БРАУЗЕРА безопасным способом.
+
+      ВАЖНО. Мы НЕ лезем в хранилище кук браузера — это ровно то, что делают
+      стилеры, и на новых Chrome/Edge оно всё равно закрыто app-bound
+      шифрованием. Вместо этого открываем roblox.com и показываем, как забрать
+      свою куку руками через DevTools. Работает в любом браузере, ничего не
+      расшифровывается за спиной.
+
+      Возвращает $true, если аккаунт добавили.
+    #>
+    param([switch]$BuildOnly)
+
+    $t = $Global:RamTheme
+    $dlg = New-Object System.Windows.Forms.Form
+    $dlg.Text            = 'Из браузера'
+    $dlg.FormBorderStyle = 'FixedDialog'
+    $dlg.StartPosition   = 'CenterParent'
+    $dlg.MaximizeBox     = $false; $dlg.MinimizeBox = $false
+    $dlg.BackColor       = $t.Bg
+    $dlg.ForeColor       = $t.Text
+    $dlg.Font            = $t.FontBody
+    $dlg.ClientSize      = New-Object System.Drawing.Size(620, 470)
+
+    $stripe = New-Object System.Windows.Forms.Panel
+    $stripe.Size = New-Object System.Drawing.Size(620, 4); $stripe.BackColor = $t.Accent
+    $dlg.Controls.Add($stripe)
+
+    $dlg.Controls.Add((New-RamLabel -Text 'Добавить из браузера' -X 28 -Y 22 -Width 460 -Height 30 -Font $t.FontBig))
+
+    $steps = @'
+Куку берём руками из самого браузера — AltHub в его хранилище не лезет.
+Это безопасно и работает в любом браузере.
+
+  1. Нажми «Открыть Roblox» ниже и войди под нужным аккаунтом.
+  2. Нажми F12 — откроются инструменты разработчика.
+  3. Вкладка Application (или «Приложение»)  ->  слева Cookies  ->  https://www.roblox.com
+  4. Найди строку .ROBLOSECURITY, скопируй её значение (двойной клик по Value, Ctrl+C).
+  5. Вставь сюда, в поле ниже, и нажми «Добавить».
+
+Значение длинное и начинается с _|WARNING:-DO-NOT-SHARE-THIS... — это нормально,
+так и должно быть. Никому его не показывай: это ключ от аккаунта.
+'@
+    $lbl = New-Object System.Windows.Forms.Label
+    $lbl.Text = $steps
+    $lbl.Location = New-Object System.Drawing.Point(28, 58)
+    $lbl.Size = New-Object System.Drawing.Size(564, 210)
+    $lbl.Font = $t.FontBody
+    $lbl.ForeColor = $t.Text
+    $lbl.BackColor = [System.Drawing.Color]::Transparent
+    $dlg.Controls.Add($lbl)
+
+    $btnOpen = New-RamButton -Text 'Открыть Roblox в браузере' -Width 260 -Height 34 -Kind 'ghost' -OnClick {
+        try { Start-Process 'https://www.roblox.com/home' } catch { Show-RamError 'Не получилось открыть браузер.' }
+    }
+    $btnOpen.Location = New-Object System.Drawing.Point(28, 276)
+    $dlg.Controls.Add($btnOpen)
+
+    $box = New-RamTextBox -Width 564 -Height 30
+    $box.Location = New-Object System.Drawing.Point(28, 326)
+    $dlg.Controls.Add($box)
+    $dlg.Controls.Add((New-RamLabel -Text 'Сюда вставь значение .ROBLOSECURITY' -X 28 -Y 360 -Width 400 -Height 18 -Font $t.FontSmall -Color $t.Muted))
+
+    $ok = $false
+    $btnAdd = New-RamButton -Text 'Добавить' -Width 160 -Height 36 -Kind 'primary' -OnClick ({
+        $val = ([string]$box.Text).Trim()
+        if ($val.Length -lt 50) { Show-RamError 'Похоже, вставилось не всё. Значение .ROBLOSECURITY длинное.'; return }
+        $this.FindForm().Cursor = [System.Windows.Forms.Cursors]::WaitCursor
+        $r = Import-RamAccountLine -Line $val
+        $this.FindForm().Cursor = [System.Windows.Forms.Cursors]::Default
+        if ($r.Ok) {
+            $script:RamBrowserAdded = $true
+            Build-RamCards; Update-RamHeaderCounts
+            Write-RamLog "Из браузера добавлен «$($r.Alias)»." 'ok'
+            Show-RamInfo "Готово, добавлен «$($r.Alias)»."
+            $this.FindForm().Close()
+        } else {
+            Show-RamError "Не вышло: $($r.Error)"
+        }
+    }.GetNewClosure())
+    $btnAdd.Location = New-Object System.Drawing.Point(28, 410)
+    $dlg.Controls.Add($btnAdd)
+
+    $btnClose = New-RamButton -Text 'Закрыть' -Width 120 -Height 36 -OnClick { $this.FindForm().Close() }
+    $btnClose.Location = New-Object System.Drawing.Point(472, 410)
+    $dlg.Controls.Add($btnClose)
+
+    if ($BuildOnly) { return $dlg }
+
+    $script:RamBrowserAdded = $false
+    [void]$dlg.ShowDialog()
+    $dlg.Dispose()
+    return $script:RamBrowserAdded
+}
+
+function Import-RamDroppedFile {
+    <#
+      Обрабатывает файл, бросённый на окно. Это либо выгрузка настроек
+      (althub-setup.json — там НЕТ кук, только игры и раскладка), либо
+      текстовый список кук/приглашений (по строке на аккаунт).
+
+      Решаем по содержимому, а не по расширению: у людей файлы называются
+      как попало.
+    #>
+    param([Parameter(Mandatory)][string]$Path)
+
+    if (-not (Test-Path -LiteralPath $Path)) { return }
+
+    $raw = ''
+    try { $raw = Get-Content -LiteralPath $Path -Raw -ErrorAction Stop } catch {
+        Show-RamError 'Не получилось прочитать файл.'; return
+    }
+
+    # Файл настроек? У него в JSON есть "app" и "accounts" без кук.
+    $looksLikeSetup = $false
+    try {
+        $j = $raw | ConvertFrom-Json
+        if ($j.PSObject.Properties.Name -contains 'games' -or $j.PSObject.Properties.Name -contains 'accounts') { $looksLikeSetup = $true }
+    } catch { }
+
+    if ($looksLikeSetup) {
+        try {
+            $r = Import-RamSetup -Path $Path
+            Show-RamInfo "Из файла применено: настроек $($r.Settings), игр $($r.Games).`n`nАккаунты по нему не создаются — в выгрузке настроек кук нет."
+        } catch { Show-RamError $_.Exception.Message }
+        return
+    }
+
+    # Иначе — список кук/приглашений.
+    $sum = Import-RamAccountBatch -Text $raw
+    if ($sum.Total -eq 0) { Show-RamInfo 'В файле не нашлось ни куки, ни приглашения.'; return }
+    Build-RamCards; Update-RamHeaderCounts
+    Show-RamInfo "Из файла: добавлено $($sum.Added), обновлено $($sum.Updated), не вышло $($sum.Failed)."
+    Write-RamLog "Из брошенного файла: добавлено $($sum.Added), обновлено $($sum.Updated)." 'ok'
+}
+
 function Show-RamAddWizard {
     <#
       Главный способ добавить аккаунты для того, кто не хочет лезть в F12.
@@ -950,6 +1290,39 @@ function Show-RamAddWizard {
             Show-RamError $_.Exception.Message
         }
     })
+
+    # --- ещё способы добавить: пачкой / из браузера / из файла
+    $refreshAdded = {
+        param($n, $how)
+        if ($n -gt 0) {
+            $w.Added += "аккаунтов $n ($how)"
+            $lblAdded.Text = ($w.Added | ForEach-Object { '  ✓  ' + $_ }) -join [Environment]::NewLine
+        }
+    }.GetNewClosure()
+
+    $btnMore = New-RamButton -Text 'Ещё способы  ▾' -Width 180 -Height 38 -Kind 'ghost' `
+                             -Tooltip 'Вставить несколько кук сразу, забрать из браузера или из файла'
+    $btnMore.Location = New-Object System.Drawing.Point(28, 596)
+    $dlg.Controls.Add($btnMore)
+
+    $moreMenu = New-RamContextMenu
+    [void](Add-RamMenuItem -Menu $moreMenu -Text 'Вставить пачкой (несколько кук сразу)' -OnClick ({
+        $n = Show-RamBatchAddDialog
+        & $refreshAdded $n 'пачкой'
+    }.GetNewClosure()))
+    [void](Add-RamMenuItem -Menu $moreMenu -Text 'Из браузера (Chrome, Edge, ...)' -OnClick ({
+        if (Show-RamBrowserGuide) { & $refreshAdded 1 'из браузера' }
+    }.GetNewClosure()))
+    [void](Add-RamMenuItem -Menu $moreMenu -Separator)
+    [void](Add-RamMenuItem -Menu $moreMenu -Text 'Из файла (список кук или приглашений)...' -OnClick {
+        $ofd = New-Object System.Windows.Forms.OpenFileDialog
+        $ofd.Filter = 'Текст или JSON (*.txt;*.json)|*.txt;*.json|Все файлы (*.*)|*.*'
+        if ($ofd.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { Import-RamDroppedFile -Path $ofd.FileName }
+    })
+    $btnMore.Add_Click({ $moreMenu.Show($this, (New-Object System.Drawing.Point(0, $this.Height))) }.GetNewClosure())
+
+    $dlg.Controls.Add((New-RamLabel -Text 'Подсказка: список кук или файл настроек можно просто перетащить на главное окно.' `
+                                    -X 220 -Y 606 -Width 300 -Height 40 -Font $t.FontSmall -Color $t.Muted))
 
     $btnDone = New-RamButton -Text 'Готово' -Width 130 -Height 38 -Kind 'primary' -OnClick {
         $this.FindForm().Close()
@@ -1386,6 +1759,402 @@ function Show-RamAccountDialog {
 
 # ------------------------------------------------- диалог: настройки --------
 
+function Save-RamCustomTheme {
+    <#
+      Кладёт свою тему в настройки. Если тема с таким ключом уже есть —
+      заменяет её (это редактирование), иначе добавляет новую.
+    #>
+    param([Parameter(Mandatory)]$Record)
+
+    $list = @($script:Settings.CustomThemes | Where-Object { $_ -and $_.Key -ne $Record.Key })
+    $list += $Record
+    $script:Settings.CustomThemes = @($list)
+    Save-RamSettings -Settings $script:Settings
+}
+
+function Remove-RamCustomTheme {
+    <# Удаляет свою тему по ключу. #>
+    param([Parameter(Mandatory)][string]$Key)
+    $script:Settings.CustomThemes = @($script:Settings.CustomThemes | Where-Object { $_ -and $_.Key -ne $Key })
+    Save-RamSettings -Settings $script:Settings
+}
+
+function Draw-RamThemePreview {
+    <#
+      Рисует уменьшенный макет главного окна в переданных цветах. Нужен, чтобы
+      конструктор показывал результат сразу, не перезапуская программу.
+      Палитра лежит в $Panel.Tag.Palette (хэш Color-значений).
+    #>
+    param($Panel, $Graphics)
+
+    $pal = $Panel.Tag.Palette
+    if ($null -eq $pal) { return }
+    $g = $Graphics
+    $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
+    $W = $Panel.Width; $H = $Panel.Height
+
+    $brush = { param($col) New-Object System.Drawing.SolidBrush($col) }
+    $round = {
+        param($x, $y, $w, $h, $r, $col)
+        $rect = New-Object System.Drawing.Rectangle($x, $y, $w, $h)
+        $path = New-RamRoundRect -Rect $rect -Radius $r
+        $b = & $brush $col
+        $g.FillPath($b, $path); $b.Dispose(); $path.Dispose()
+    }
+
+    # фон
+    $bg = & $brush $pal.Bg; $g.FillRectangle($bg, 0, 0, $W, $H); $bg.Dispose()
+    # боковая панель
+    $sb = & $brush $pal.Panel; $g.FillRectangle($sb, 0, 0, 108, $H); $sb.Dispose()
+
+    $fTitle = New-Object System.Drawing.Font('Segoe UI Semibold', 10)
+    $fSmall = New-Object System.Drawing.Font('Segoe UI', 7.5)
+    $fBody  = New-Object System.Drawing.Font('Segoe UI', 8)
+
+    # логотип
+    $tb = & $brush $pal.Text
+    $g.DrawString('AltHub', $fTitle, $tb, 14, 12)
+    # активный пункт меню
+    & $round 12 40 84 26 6 $pal.Accent
+    $wb = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::White)
+    $g.DrawString('Аккаунты', $fSmall, $wb, 22, 46); $wb.Dispose()
+    $mb = & $brush $pal.Muted
+    foreach ($pair in @(@('Игры', 74), @('Профили', 96), @('Статистика', 118))) {
+        $g.DrawString($pair[0], $fSmall, $mb, 22, $pair[1])
+    }
+    $mb.Dispose(); $tb.Dispose()
+
+    # верхние кнопки
+    & $round 122 12 74 24 6 $pal.Accent
+    $wb = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::White)
+    $g.DrawString('Добавить', $fSmall, $wb, 132, 18); $wb.Dispose()
+    foreach ($bx in @(202, 262, 322)) {
+        & $round $bx 12 52 24 6 $pal.Card
+        $bb = & $brush $pal.Border
+        $pen = New-Object System.Drawing.Pen($pal.Border, 1)
+        $g.DrawRectangle($pen, $bx, 12, 52, 24); $pen.Dispose(); $bb.Dispose()
+    }
+
+    # карточки
+    $cardX = 122; $cardW = $W - $cardX - 12
+    $tb = & $brush $pal.Text; $mb = & $brush $pal.Muted; $ab = & $brush $pal.Accent
+    $y = 48
+    $labelCols = @($pal.Ok, $pal.Accent, $pal.Warn)
+    for ($i = 0; $i -lt 3; $i++) {
+        $ch = 52
+        & $round $cardX $y $cardW $ch 8 $pal.Card
+        # цветная метка слева
+        & $round ($cardX + 3) ($y + 8) 4 ($ch - 16) 2 $labelCols[$i]
+        # аватар-кружок
+        $ell = & $brush $pal.CardHover
+        $g.FillEllipse($ell, ($cardX + 14), ($y + 10), 30, 30); $ell.Dispose()
+        # имя + ник
+        $name = @('Основной', 'Твинк 1', 'Твинк 2')[$i]
+        $g.DrawString($name, $fBody, $tb, ($cardX + 54), ($y + 9))
+        $g.DrawString('@demo · ID 000', $fSmall, $mb, ($cardX + 54), ($y + 28))
+        # статус-точка
+        $dotCol = if ($i -eq 0) { $pal.Ok } else { $pal.Muted }
+        $dot = & $brush $dotCol
+        $g.FillEllipse($dot, ($cardX + $cardW - 118), ($y + 22), 8, 8); $dot.Dispose()
+        # кнопка play
+        & $round ($cardX + $cardW - 92) ($y + 12) 26 26 6 $pal.Accent
+        # галочка (выделение) у второй карточки
+        if ($i -eq 1) {
+            & $round ($cardX + 12) ($y + 18) 16 16 5 $pal.Accent
+        } else {
+            $pen = New-Object System.Drawing.Pen($pal.Muted, 1.4)
+            $rr = New-Object System.Drawing.Rectangle(($cardX + 12), ($y + 18), 16, 16)
+            $pp = New-RamRoundRect -Rect $rr -Radius 5
+            $g.DrawPath($pen, $pp); $pen.Dispose(); $pp.Dispose()
+        }
+        $y += $ch + 8
+    }
+    $tb.Dispose(); $mb.Dispose(); $ab.Dispose()
+
+    # нижняя строка + семафор Ok/Warn/Danger как три точки
+    $mb = & $brush $pal.Muted
+    $g.DrawString('отмечено: 1 из 3', $fSmall, $mb, 122, ($H - 22)); $mb.Dispose()
+    $sx = $W - 92
+    foreach ($sem in @($pal.Ok, $pal.Warn, $pal.Danger)) {
+        $sb2 = & $brush $sem; $g.FillEllipse($sb2, $sx, ($H - 20), 10, 10); $sb2.Dispose(); $sx += 16
+    }
+
+    $fTitle.Dispose(); $fSmall.Dispose(); $fBody.Dispose()
+}
+
+function Show-RamThemeConstructor {
+    <#
+      Конструктор своих тем.
+
+      Простой режим: главный цвет + светлая/тёмная/чёрная основа — остальные
+      15 оттенков считаются сами (New-RamDerivedPalette), результат всегда
+      читаемый. Кнопка «Подробно» раскрывает ручную правку каждого цвета для
+      тех, кому надо.
+
+      Всё видно сразу в живом превью справа — перезапуск нужен только чтобы
+      применить готовую тему к самому окну.
+
+      $EditKey — ключ своей темы, которую открыли на редактирование.
+      $BuildOnly — только для Самопроверки: собрать окно и вернуть, не показывая.
+    #>
+    param([string]$EditKey = '', [switch]$BuildOnly)
+
+    $t = $Global:RamTheme
+
+    # --- рабочее состояние
+    $existing = $null
+    if ($EditKey) { $existing = Get-RamCustomThemes | Where-Object { $_.Key -eq $EditKey } | Select-Object -First 1 }
+
+    $state = @{
+        Base    = 'dark'
+        Accent  = (ConvertFrom-RamHex -Hex '#00A2FF')
+        Palette = $null
+        Manual  = @{}     # ключ -> Color: ручные переопределения
+        Detailed = $false
+    }
+    if ($null -ne $existing) {
+        $pal = Get-RamCustomPalette -Name $EditKey
+        $state.Palette = $pal
+        $state.Accent  = $pal.Accent
+        # тёмная или светлая основа — по яркости фона
+        $state.Base = if ((ConvertTo-RamHsl -Color $pal.Bg).L -gt 0.5) { 'light' }
+                      elseif ((ConvertTo-RamHsl -Color $pal.Bg).L -lt 0.05) { 'black' }
+                      else { 'dark' }
+        foreach ($k in @('Bg','Panel','Card','CardHover','CardSel','Border','Text','Muted','Accent','AccentHov','Ok','Warn','Danger','DangerHov','LogBack')) {
+            $state.Manual[$k] = $pal[$k]
+        }
+    }
+
+    function Script:Rebuild-Palette {
+        param($st)
+        # Базовая палитра из акцента и основы, поверх — ручные переопределения.
+        $auto = New-RamDerivedPalette -Accent $st.Accent -Base $st.Base
+        foreach ($k in @($st.Manual.Keys)) { $auto[$k] = $st.Manual[$k] }
+        $st.Palette = $auto
+    }
+    if ($null -eq $state.Palette) { Rebuild-Palette $state }
+
+    $dlg = New-Object System.Windows.Forms.Form
+    $dlg.Text            = 'Конструктор тем'
+    $dlg.FormBorderStyle = 'FixedDialog'
+    $dlg.StartPosition   = 'CenterParent'
+    $dlg.MaximizeBox     = $false; $dlg.MinimizeBox = $false
+    $dlg.BackColor       = $t.Bg
+    $dlg.ForeColor       = $t.Text
+    $dlg.Font            = $t.FontBody
+    $dlg.ClientSize      = New-Object System.Drawing.Size(880, 640)
+
+    $stripe = New-Object System.Windows.Forms.Panel
+    $stripe.Size = New-Object System.Drawing.Size(880, 4); $stripe.BackColor = $t.Accent
+    $dlg.Controls.Add($stripe)
+
+    $dlg.Controls.Add((New-RamLabel -Text 'Конструктор тем' -X 28 -Y 22 -Width 400 -Height 30 -Font $t.FontBig))
+
+    # --- превью справа
+    $preview = New-Object System.Windows.Forms.Panel
+    $preview.Location = New-Object System.Drawing.Point(430, 64)
+    $preview.Size     = New-Object System.Drawing.Size(422, 300)
+    $preview.Tag      = [pscustomobject]@{ Palette = $state.Palette }
+    Set-RamDoubleBuffered $preview
+    $preview.Add_Paint({ param($src, $e) Draw-RamThemePreview -Panel $src -Graphics $e.Graphics })
+    $dlg.Controls.Add($preview)
+    $dlg.Controls.Add((New-RamLabel -Text 'Так будет выглядеть окно' -X 430 -Y 372 -Width 422 -Height 20 -Font $t.FontSmall -Color $t.Muted))
+
+    $refreshPreview = {
+        Rebuild-Palette $state
+        $preview.Tag.Palette = $state.Palette
+        $preview.Invalidate()
+    }.GetNewClosure()
+
+    # Кнопки-образцы подробной правки. Объявляем ЗДЕСЬ, до пресетов акцента:
+    # их клики зовут $refreshSwatches, а замыкание запоминает переменную в
+    # момент создания. $swatchButtons — хэш, поэтому заполнить его можно и
+    # позже: замыкание держит ссылку на тот же объект.
+    $swatchButtons = @{}
+    $refreshSwatches = {
+        foreach ($k in @($swatchButtons.Keys)) { $swatchButtons[$k].BackColor = $state.Palette[$k] }
+    }.GetNewClosure()
+
+    # --- имя
+    $dlg.Controls.Add((New-RamLabel -Text 'Название темы' -X 28 -Y 70 -Width 200 -Height 20 -Font $t.FontSmall -Color $t.Muted))
+    $tbName = New-RamTextBox -Width 360 -Height 30
+    $tbName.Location = New-Object System.Drawing.Point(28, 92)
+    $tbName.Text = if ($null -ne $existing) { [string]$existing.Title } else { 'Моя тема' }
+    $dlg.Controls.Add($tbName)
+
+    # --- основа
+    $dlg.Controls.Add((New-RamLabel -Text 'Основа' -X 28 -Y 132 -Width 200 -Height 20 -Font $t.FontSmall -Color $t.Muted))
+    $baseButtons = @{}
+    $baseDefs = @(@('dark','Тёмная'), @('light','Светлая'), @('black','Чёрная'))
+    $bx = 28
+    foreach ($bd in $baseDefs) {
+        $key = $bd[0]
+        $btn = New-RamButton -Text $bd[1] -Width 116 -Height 32 -Kind $(if ($state.Base -eq $key) { 'primary' } else { 'ghost' }) -OnClick ({
+            $state.Base = $this.Tag.BaseKey
+            foreach ($k in $baseButtons.Keys) { Set-RamButtonKind -Button $baseButtons[$k] -Kind $(if ($k -eq $state.Base) { 'primary' } else { 'ghost' }) }
+            & $refreshPreview
+        }.GetNewClosure())
+        $btn.Tag | Add-Member -NotePropertyName BaseKey -NotePropertyValue $key -Force
+        $btn.Location = New-Object System.Drawing.Point($bx, 154)
+        $dlg.Controls.Add($btn)
+        $baseButtons[$key] = $btn
+        $bx += 124
+    }
+
+    # --- акцент: пресеты + свой
+    $dlg.Controls.Add((New-RamLabel -Text 'Главный цвет' -X 28 -Y 198 -Width 200 -Height 20 -Font $t.FontSmall -Color $t.Muted))
+    $presets = @('#00A2FF','#8B6CFF','#10B981','#22C5D3','#A878F5','#F45E96','#FB7140','#F59E0B','#EF4444','#16A34A')
+    $px = 28; $py = 220
+    foreach ($hex in $presets) {
+        $sw = New-Object System.Windows.Forms.Panel
+        $sw.Size = New-Object System.Drawing.Size(32, 32)
+        $sw.Location = New-Object System.Drawing.Point($px, $py)
+        $sw.BackColor = (ConvertFrom-RamHex -Hex $hex)
+        $sw.Cursor = [System.Windows.Forms.Cursors]::Hand
+        $sw.Tag = $hex
+        $sw.Add_Click({
+            $state.Accent = (ConvertFrom-RamHex -Hex $this.Tag)
+            # смена акцента сбрасывает ручную правку акцентных ключей, но не
+            # трогает то, что человек уже поменял руками в других местах
+            $state.Manual.Remove('Accent'); $state.Manual.Remove('AccentHov')
+            & $refreshPreview
+            if ($state.Detailed) { & $refreshSwatches }
+        }.GetNewClosure())
+        $dlg.Controls.Add($sw)
+        $px += 38
+        if ($px -gt 28 + 38 * 5 - 1) { $px = 28; $py += 38 }
+    }
+
+    $btnCustomAccent = New-RamButton -Text 'Свой цвет...' -Width 140 -Height 30 -Kind 'ghost' -OnClick {
+        $cd = New-Object System.Windows.Forms.ColorDialog
+        $cd.FullOpen = $true
+        $cd.Color = $state.Accent
+        if ($cd.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
+            $state.Accent = $cd.Color
+            $state.Manual.Remove('Accent'); $state.Manual.Remove('AccentHov')
+            & $refreshPreview
+            if ($state.Detailed) { & $refreshSwatches }
+        }
+        $cd.Dispose()
+    }.GetNewClosure()
+    $btnCustomAccent.Location = New-Object System.Drawing.Point(232, 258)
+    $dlg.Controls.Add($btnCustomAccent)
+
+    # --- подробная правка (по кнопке)
+    $detailHost = New-Object System.Windows.Forms.Panel
+    $detailHost.Location = New-Object System.Drawing.Point(28, 300)
+    $detailHost.Size     = New-Object System.Drawing.Size(384, 272)
+    $detailHost.BackColor = $t.Bg
+    $detailHost.Visible = $false
+    $dlg.Controls.Add($detailHost)
+
+    $keyDefs = Get-RamPaletteColorKeys
+    $ry = 0
+    foreach ($kd in $keyDefs) {
+        $key = $kd.Key
+        $lbl = New-RamLabel -Text $kd.Title -X 44 -Y ($ry + 4) -Width 250 -Height 18 -Font $t.FontSmall -Color $t.Text
+        $detailHost.Controls.Add($lbl)
+        $sw = New-Object System.Windows.Forms.Panel
+        $sw.Size = New-Object System.Drawing.Size(28, 20)
+        $sw.Location = New-Object System.Drawing.Point(0, ($ry + 2))
+        $sw.BackColor = $state.Palette[$key]
+        $sw.Cursor = [System.Windows.Forms.Cursors]::Hand
+        $sw.Tag = $key
+        $sw.Add_Click({
+            $cd = New-Object System.Windows.Forms.ColorDialog
+            $cd.FullOpen = $true
+            $cd.Color = $state.Palette[$this.Tag]
+            if ($cd.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
+                $state.Manual[$this.Tag] = $cd.Color
+                & $refreshPreview
+                & $refreshSwatches
+            }
+            $cd.Dispose()
+        }.GetNewClosure())
+        $detailHost.Controls.Add($sw)
+        $swatchButtons[$key] = $sw
+        $ry += 24
+    }
+
+    $btnDetail = New-RamButton -Text 'Подробно  ▾' -Width 150 -Height 30 -Kind 'ghost' -OnClick ({
+        $state.Detailed = -not $state.Detailed
+        $detailHost.Visible = $state.Detailed
+        Set-RamButtonText -Button $this -Text $(if ($state.Detailed) { 'Свернуть  ▴' } else { 'Подробно  ▾' })
+        if ($state.Detailed) { & $refreshSwatches }
+    }.GetNewClosure())
+    # Правее пресетов, над detailHost (тот появляется ниже, y=300).
+    $btnDetail.Location = New-Object System.Drawing.Point(300, 220)
+    $dlg.Controls.Add($btnDetail)
+
+    # --- низ: файл + сохранить/отмена
+    $btnToFile = New-RamButton -Text 'В файл...' -Width 130 -Height 34 -Kind 'ghost' -OnClick ({
+        $sfd = New-Object System.Windows.Forms.SaveFileDialog
+        $sfd.Filter = 'Тема AltHub (*.althub-theme.json)|*.althub-theme.json'
+        $sfd.FileName = ((($tbName.Text) -replace '[^\w\-]', '_') + '.althub-theme.json')
+        if ($sfd.ShowDialog() -ne [System.Windows.Forms.DialogResult]::OK) { return }
+        $rec = ConvertTo-RamThemeRecord -Palette $state.Palette -Key ('custom-tmp') -Title ([string]$tbName.Text)
+        $payload = [pscustomobject]@{ app = $script:AppName; kind = 'theme'; theme = $rec }
+        ($payload | ConvertTo-Json -Depth 6) | Set-Content -LiteralPath $sfd.FileName -Encoding UTF8
+        Show-RamInfo "Тема сохранена в файл. Можешь отдать её другу — он откроет её кнопкой «Из файла...»."
+    }.GetNewClosure())
+    $btnToFile.Location = New-Object System.Drawing.Point(28, 588)
+    $dlg.Controls.Add($btnToFile)
+
+    $btnFromFile = New-RamButton -Text 'Из файла...' -Width 130 -Height 34 -Kind 'ghost' -OnClick ({
+        $ofd = New-Object System.Windows.Forms.OpenFileDialog
+        $ofd.Filter = 'Тема AltHub (*.althub-theme.json)|*.althub-theme.json|JSON (*.json)|*.json'
+        if ($ofd.ShowDialog() -ne [System.Windows.Forms.DialogResult]::OK) { return }
+        try {
+            $data = Get-Content -LiteralPath $ofd.FileName -Raw | ConvertFrom-Json
+            $th = if ($data.PSObject.Properties.Name -contains 'theme') { $data.theme } else { $data }
+            if (-not ($th.PSObject.Properties.Name -contains 'Colors')) { throw 'в файле нет цветов темы' }
+            $tbName.Text = [string]$th.Title
+            $state.Manual = @{}
+            foreach ($k in @('Bg','Panel','Card','CardHover','CardSel','Border','Text','Muted','Accent','AccentHov','Ok','Warn','Danger','DangerHov','LogBack')) {
+                if ($th.Colors.PSObject.Properties.Name -contains $k) {
+                    $col = ConvertFrom-RamHex -Hex ([string]$th.Colors.$k)
+                    if ($null -ne $col) { $state.Manual[$k] = $col }
+                }
+            }
+            if ($state.Manual.ContainsKey('Accent')) { $state.Accent = $state.Manual['Accent'] }
+            & $refreshPreview
+            if ($state.Detailed) { & $refreshSwatches }
+        } catch { Show-RamError "Не получилось прочитать файл темы: $($_.Exception.Message)" }
+    }.GetNewClosure())
+    $btnFromFile.Location = New-Object System.Drawing.Point(164, 588)
+    $dlg.Controls.Add($btnFromFile)
+
+    $btnSave = New-RamButton -Text 'Сохранить тему' -Width 180 -Height 34 -Kind 'primary' -OnClick ({
+        $title = ([string]$tbName.Text).Trim()
+        if ([string]::IsNullOrWhiteSpace($title)) { Show-RamError 'Дай теме название.'; return }
+
+        # ключ: у редактируемой — прежний, у новой — из имени + случайный хвост,
+        # чтобы две темы с одинаковым именем не столкнулись
+        $key = if ($EditKey) { $EditKey } else {
+            'custom-' + ([guid]::NewGuid().ToString('N').Substring(0, 8))
+        }
+        $rec = ConvertTo-RamThemeRecord -Palette $state.Palette -Key $key -Title $title
+        Save-RamCustomTheme -Record $rec
+        Write-RamLog "Тема «$title» сохранена." 'ok'
+        $dlg.Tag = $key
+        $dlg.Close()
+    }.GetNewClosure())
+    $btnSave.Location = New-Object System.Drawing.Point(548, 588)
+    $dlg.Controls.Add($btnSave)
+
+    $btnCancel = New-RamButton -Text 'Отмена' -Width 120 -Height 34 -OnClick { $this.FindForm().Close() }
+    $btnCancel.Location = New-Object System.Drawing.Point(736, 588)
+    $dlg.Controls.Add($btnCancel)
+
+    $dlg.Tag = $null
+    if ($BuildOnly) { return $dlg }
+
+    [void]$dlg.ShowDialog()
+    $key = $dlg.Tag
+    $dlg.Dispose()
+    return $key
+}
+
 function Show-RamSettingsDialog {
     param(
         # Только для Самопроверка.ps1: собрать окно и вернуть, не показывая.
@@ -1465,13 +2234,71 @@ function Show-RamSettingsDialog {
     $cbTheme.SelectedItem = $(if ($currentTheme) { $currentTheme.Title } else { 'Тёмная' })
     $dlg.Controls.Add($cbTheme)
 
+    # --- конструктор своих тем
+    $btnNewTheme = New-RamButton -Text '＋ Своя тема' -Width 132 -Height 28 -Kind 'ghost' -Tooltip 'Собрать свою тему: выбрать цвет и основу' -OnClick {
+        $key = Show-RamThemeConstructor
+        if ($key) {
+            $dlg2 = $this.FindForm()
+            $cb = $dlg2.Controls['ramThemeCombo']
+            if ($null -ne $cb) {
+                $cb.Items.Clear()
+                foreach ($th in Get-RamThemeList) { [void]$cb.Items.Add($th.Title) }
+                $picked = Get-RamThemeList | Where-Object { $_.Key -eq $key } | Select-Object -First 1
+                if ($picked) { $cb.SelectedItem = $picked.Title }
+            }
+        }
+    }
+    $btnNewTheme.Location = New-Object System.Drawing.Point(400, 124)
+    $dlg.Controls.Add($btnNewTheme)
+    $cbTheme.Name = 'ramThemeCombo'
+
+    $btnEditTheme = New-RamButton -Text 'Изменить' -Width 92 -Height 28 -Kind 'ghost' -Tooltip 'Изменить выбранную свою тему' -OnClick {
+        $dlg2 = $this.FindForm()
+        $cb = $dlg2.Controls['ramThemeCombo']
+        $picked = Get-RamThemeList | Where-Object { $_.Title -eq [string]$cb.SelectedItem } | Select-Object -First 1
+        if ($null -eq $picked -or -not $picked.Custom) {
+            Show-RamInfo 'Менять можно только свои темы. Стоковые используй как основу: открой «＋ Своя тема» и настрой под себя.'
+            return
+        }
+        $key = Show-RamThemeConstructor -EditKey $picked.Key
+        if ($key) {
+            $cb.Items.Clear()
+            foreach ($th in Get-RamThemeList) { [void]$cb.Items.Add($th.Title) }
+            $again = Get-RamThemeList | Where-Object { $_.Key -eq $key } | Select-Object -First 1
+            if ($again) { $cb.SelectedItem = $again.Title }
+        }
+    }
+    $btnEditTheme.Location = New-Object System.Drawing.Point(400, 158)
+    $dlg.Controls.Add($btnEditTheme)
+
+    $btnDelTheme = New-RamButton -Text 'Удалить' -Width 92 -Height 28 -Kind 'ghost' -Tooltip 'Удалить выбранную свою тему' -OnClick {
+        $dlg2 = $this.FindForm()
+        $cb = $dlg2.Controls['ramThemeCombo']
+        $picked = Get-RamThemeList | Where-Object { $_.Title -eq [string]$cb.SelectedItem } | Select-Object -First 1
+        if ($null -eq $picked -or -not $picked.Custom) {
+            Show-RamInfo 'Удалять можно только свои темы. Стоковые встроены и никуда не денутся.'
+            return
+        }
+        if (-not (Confirm-Ram "Удалить свою тему «$($picked.Title)»?")) { return }
+        Remove-RamCustomTheme -Key $picked.Key
+        $cb.Items.Clear()
+        foreach ($th in Get-RamThemeList) { [void]$cb.Items.Add($th.Title) }
+        $cb.SelectedItem = 'Тёмная'
+        Write-RamLog "Тема «$($picked.Title)» удалена." 'ok'
+    }
+    $btnDelTheme.Location = New-Object System.Drawing.Point(500, 158)
+    $dlg.Controls.Add($btnDelTheme)
+
     # --- галочки
     $mk = {
         param($text, $y, $checked)
         $cb = New-RamCheckBox -X 28 -Y $y
         $dlg.Controls.Add($cb)
         $cb.Tag.Checked = $checked
-        $lb = New-RamLabel -Text $text -X 56 -Y ($y - 1) -Width 480 -Height 22
+        # 340, а не 480: справа от X=400 идёт колонка темы с кнопками
+        # конструктора, и широкая метка залезала прямо на них. Самая длинная
+        # подпись занимает 336 px, так что текст помещается целиком.
+        $lb = New-RamLabel -Text $text -X 56 -Y ($y - 1) -Width 340 -Height 22
         $lb.Cursor = [System.Windows.Forms.Cursors]::Hand
         $dlg.Controls.Add($lb)
         $lb.Tag = $cb
@@ -2248,6 +3075,19 @@ function Build-RamCardMenuItems {
 
     [void](Add-RamMenuItem -Menu $m -Separator)
 
+    [void](Add-RamMenuItem -Menu $m -Text 'Скопировать приглашение (для переноса себе)' -Tag $id -OnClick {
+        $acc2 = Get-RamAccountById -Id ([string]$this.Tag)
+        if ($null -eq $acc2) { return }
+        if ([string]::IsNullOrWhiteSpace($acc2.Cookie)) { Show-RamInfo 'У этого аккаунта нет сохранённого входа.'; return }
+        $code = ConvertTo-RamInviteCode -Account $acc2
+        try { [System.Windows.Forms.Clipboard]::SetText($code) } catch { }
+        Show-RamInfo ("Приглашение скопировано в буфер обмена.`n`nВнутри — доступ к аккаунту, поэтому это для переноса СЕБЕ на другой компьютер, а не для раздачи. " +
+                      "На другом компьютере открой «Добавить» -> «Ещё способы» -> «Вставить пачкой» и вставь его.")
+        Write-RamLog "Создано приглашение для «$($acc2.Alias)» (в буфер обмена)." 'info'
+    })
+
+    [void](Add-RamMenuItem -Menu $m -Separator)
+
     [void](Add-RamMenuItem -Menu $m -Text 'Убрать из менеджера' -Tag $id -Color $t.Danger -OnClick {
         Invoke-RamDeleteSelected -Accounts @((Get-RamAccountById -Id ([string]$this.Tag)))
     })
@@ -2645,6 +3485,73 @@ function Restore-RamOwnClientSettings {
     }
 }
 
+function Test-RamSettingsFileFree {
+    <#
+      Можно ли уже переписывать общий файл настроек Roblox.
+
+      ГЛАВНОЕ ПРО ГРАФИКУ, ЧИТАТЬ ЦЕЛИКОМ.
+
+      Файл GlobalBasicSettings_13.xml у Roblox ОДИН на все клиенты. Настройки
+      аккаунта пишутся в него прямо перед запуском этого аккаунта, а клиент
+      читает файл не мгновенно — где-то в первые секунды загрузки. Пока он не
+      прочитал, переписывать файл под следующий аккаунт нельзя: предыдущий
+      клиент подхватит чужие настройки.
+
+      Именно так ловился баг «у основного иногда графика 1 вместо 10»: твинк
+      запускался через 8 секунд и перетирал файл раньше, чем основной успевал
+      его прочитать. Когда машина шустрее — основной успевал, и всё было
+      нормально. Отсюда «иногда».
+
+      Признак того, что клиент дочитал настройки — появилось его окно. Его и
+      ждём, но не дольше отведённого времени: клиент может и не дойти до окна,
+      и держать из-за него всю очередь незачем.
+
+      Ждём ТОЛЬКО когда настройки следующего аккаунта отличаются — иначе пять
+      одинаковых твинков запускались бы втрое дольше без всякой пользы.
+    #>
+    if ([string]::IsNullOrEmpty($script:AwaitWindowFor)) { return $true }
+
+    $inst = $script:Instances[$script:AwaitWindowFor]
+    if ($null -eq $inst) { $script:AwaitWindowFor = ''; return $true }
+
+    if ($inst.Handle -eq [IntPtr]::Zero) {
+        $inst.Handle = Get-RamRobloxWindow -ProcessId $inst.ProcessId -TimeoutSec 0
+    }
+    if ($inst.Handle -ne [IntPtr]::Zero) {
+        $script:AwaitWindowFor = ''
+        return $true
+    }
+
+    if ((Get-Date) -ge $script:AwaitWindowUntil) {
+        $prev = Get-RamAccountById -Id $script:AwaitWindowFor
+        $who  = if ($null -ne $prev) { $prev.Alias } else { 'предыдущий' }
+        Write-RamLog "'$who': окно не появилось вовремя. Запускаю следующего — настройки графики могли не успеть примениться." 'warn'
+        $script:AwaitWindowFor = ''
+        return $true
+    }
+
+    return $false
+}
+
+function Set-RamSettingsWait {
+    <#
+      Решает, надо ли дождаться окна только что запущенного клиента, прежде
+      чем писать настройки следующего. Подробности — в Test-RamSettingsFileFree.
+    #>
+    param([Parameter(Mandatory)]$Launched)
+
+    $script:AwaitWindowFor = ''
+    if ($script:LaunchQueue.Count -eq 0) { return }
+
+    $next = Get-RamAccountById -Id $script:LaunchQueue[0]
+    if ($null -eq $next) { return }
+
+    if ((Get-RamClientSettingsKey -Account $next) -eq (Get-RamClientSettingsKey -Account $Launched)) { return }
+
+    $script:AwaitWindowFor   = $Launched.Id
+    $script:AwaitWindowUntil = (Get-Date).AddSeconds(60)
+}
+
 function Invoke-RamNextLaunch {
     if ($script:LaunchQueue.Count -eq 0) {
         $script:UI.LaunchTimer.Stop()
@@ -2662,6 +3569,10 @@ function Invoke-RamNextLaunch {
     }
     if ((Get-Date) -lt $script:NextLaunchTime) { return }
 
+    # Пока предыдущий клиент не прочитал свои настройки графики, общий файл
+    # трогать нельзя — иначе он подхватит чужие. См. Test-RamSettingsFileFree.
+    if (-not (Test-RamSettingsFileFree)) { return }
+
     $id = $script:LaunchQueue[0]
     $script:LaunchQueue.RemoveAt(0)
 
@@ -2676,6 +3587,7 @@ function Invoke-RamNextLaunch {
         # Настройки клиента пишутся в общий файл Roblox прямо сейчас — клиент
         # прочитает их при старте. Поэтому это делается перед каждым запуском,
         # а не один раз.
+        $applied = @()
         try {
             $applied = Apply-RamAccountClientSettings -Account $a
             if ($applied.Count -gt 0) {
@@ -2698,6 +3610,8 @@ function Invoke-RamNextLaunch {
         $a.LaunchCount = [int]$a.LaunchCount + 1
         $script:RestartCount[$a.Id] = 0
         Write-RamLog "'$($a.Alias)' стартовал (PID $($proc.Id))." 'ok'
+
+        Set-RamSettingsWait -Launched $a
     } catch {
         $msg = $_.Exception.Message
         Write-RamLog "'$($a.Alias)': $msg" 'err'
@@ -2705,6 +3619,7 @@ function Invoke-RamNextLaunch {
         # Запуск сорвался, а настройки графики мы в общий файл уже записали.
         # Оставлять их нельзя: откроешь Roblox вручную — и получишь графику
         # твина вместо своей.
+        $script:AwaitWindowFor = ''
         Restore-RamOwnClientSettings -Reason 'запуск не состоялся'
 
         # Кука умерла — попробуем починить её из приложения Roblox молча.
@@ -3726,6 +4641,95 @@ function Format-RamDuration {
     return ('{0} с' -f $ts.Seconds)
 }
 
+function Show-RamPopularGamesDialog {
+    <#
+      Показывает популярные сейчас игры из Roblox и даёт добавить выбранные в
+      «Мои игры». Список тянется вживую (Get-RamPopularGames); если интернета
+      нет — честно об этом говорим и не притворяемся.
+    #>
+    param([switch]$BuildOnly)
+
+    $t = $Global:RamTheme
+    $dlg = New-Object System.Windows.Forms.Form
+    $dlg.Text            = 'Популярные игры Roblox'
+    $dlg.FormBorderStyle = 'FixedDialog'
+    $dlg.StartPosition   = 'CenterParent'
+    $dlg.MaximizeBox     = $false; $dlg.MinimizeBox = $false
+    $dlg.BackColor       = $t.Bg
+    $dlg.ForeColor       = $t.Text
+    $dlg.Font            = $t.FontBody
+    $dlg.ClientSize      = New-Object System.Drawing.Size(560, 560)
+
+    $stripe = New-Object System.Windows.Forms.Panel
+    $stripe.Size = New-Object System.Drawing.Size(560, 4); $stripe.BackColor = $t.Accent
+    $dlg.Controls.Add($stripe)
+
+    $dlg.Controls.Add((New-RamLabel -Text 'Популярные сейчас' -X 24 -Y 20 -Width 400 -Height 30 -Font $t.FontBig))
+    $dlg.Controls.Add((New-RamLabel -Text 'Список берётся прямо из Roblox. Отметь нужные и добавь в «Мои игры».' `
+                                    -X 24 -Y 54 -Width 500 -Height 20 -Font $t.FontSmall -Color $t.Muted))
+
+    $listHost = New-RamScrollPanel -Width 512 -Height 400
+    $listHost.Location = New-Object System.Drawing.Point(24, 84)
+    $dlg.Controls.Add($listHost)
+
+    $rowChecks = @{}
+
+    $fill = {
+        $listHost.Controls.Clear()
+        $rowChecks.Clear()
+        $listHost.Cursor = [System.Windows.Forms.Cursors]::WaitCursor
+        $games = @(Get-RamPopularGames -Limit 30)
+        $listHost.Cursor = [System.Windows.Forms.Cursors]::Default
+
+        if ($games.Count -eq 0) {
+            $listHost.Controls.Add((New-RamLabel -Text 'Roblox не ответил — проверь интернет и нажми «Обновить».' `
+                                                 -X 8 -Y 12 -Width 480 -Height 40 -Font $t.FontBody -Color $t.Muted))
+            return
+        }
+        $y = 0
+        foreach ($g in $games) {
+            $card = New-RamCard -Width 492 -Height 48
+            $card.Location = New-Object System.Drawing.Point(0, $y)
+            $listHost.Controls.Add($card)
+
+            $chk = New-RamCheckBox -X 14 -Y 14
+            $card.Controls.Add($chk)
+            $card.Controls.Add((New-RamLabel -Text ([string]$g.Title) -X 48 -Y 6 -Width 320 -Height 20 -Font $t.FontTitle -Truncatable))
+            $players = if ($g.Players -ge 1000) { "$([math]::Round($g.Players/1000.0,1))K играют" } else { "$($g.Players) играют" }
+            $card.Controls.Add((New-RamLabel -Text "$players   ·   ID $($g.PlaceId)" -X 48 -Y 26 -Width 320 -Height 18 -Font $t.FontSmall -Color $t.Muted))
+
+            $rowChecks[$g.PlaceId] = [pscustomobject]@{ Check = $chk; Game = $g }
+            $y += 56
+        }
+    }.GetNewClosure()
+
+    $btnRefresh = New-RamButton -Text 'Обновить' -Width 130 -Height 34 -Kind 'ghost' -OnClick ({ & $fill }.GetNewClosure())
+    $btnRefresh.Location = New-Object System.Drawing.Point(24, 500)
+    $dlg.Controls.Add($btnRefresh)
+
+    $btnAdd = New-RamButton -Text 'Добавить отмеченные' -Width 220 -Height 34 -Kind 'primary' -OnClick ({
+        $picked = @($rowChecks.Values | Where-Object { $_.Check.Tag.Checked })
+        if ($picked.Count -eq 0) { Show-RamInfo 'Отметь галочками нужные игры.'; return }
+        foreach ($row in $picked) { Add-RamSavedGame -PlaceId $row.Game.PlaceId -LinkCode '' -Title $row.Game.Title }
+        Save-RamSettings -Settings $script:Settings
+        Write-RamLog "В «Мои игры» добавлено из популярных: $($picked.Count)." 'ok'
+        Show-RamInfo "Добавлено игр: $($picked.Count). Они теперь в разделе «Игры» и в списке при назначении."
+        $this.FindForm().Close()
+    }.GetNewClosure())
+    $btnAdd.Location = New-Object System.Drawing.Point(200, 500)
+    $dlg.Controls.Add($btnAdd)
+
+    $btnClose = New-RamButton -Text 'Закрыть' -Width 100 -Height 34 -OnClick { $this.FindForm().Close() }
+    $btnClose.Location = New-Object System.Drawing.Point(436, 500)
+    $dlg.Controls.Add($btnClose)
+
+    if ($BuildOnly) { return $dlg }
+
+    $dlg.Add_Shown({ & $fill }.GetNewClosure())
+    [void]$dlg.ShowDialog()
+    $dlg.Dispose()
+}
+
 function Update-RamGamesPanel {
     <# Раздел «Игры»: сохранённые игры, назначить отмеченным, удалить. #>
     if (-not $script:UI.ContainsKey('GamesHost')) { return }
@@ -3791,6 +4795,43 @@ function Update-RamGamesPanel {
     } finally {
         $h.ResumeLayout()
     }
+}
+
+function Get-RamStarterProfiles {
+    <#
+      Готовые профили запуска для старта. Все — на «все аккаунты» (набор пустой),
+      поэтому работают у любого сразу, без настройки наборов. Игры — известные
+      и стабильные по placeId, так что ссылки не протухают.
+
+      Это шаблоны: выбранный превращается в обычный профиль пользователя,
+      который дальше можно править и удалять как свой.
+    #>
+    @(
+        [pscustomobject]@{ Name = 'Все в Blox Fruits';       Group = ''; PlaceId = '2753915549'; GameName = 'Blox Fruits';       LinkCode = '' }
+        [pscustomobject]@{ Name = 'Все в Brookhaven';        Group = ''; PlaceId = '4924922222'; GameName = 'Brookhaven RP';     LinkCode = '' }
+        [pscustomobject]@{ Name = 'Все в Adopt Me!';         Group = ''; PlaceId = '920587237';  GameName = 'Adopt Me!';         LinkCode = '' }
+        [pscustomobject]@{ Name = 'Все в Murder Mystery 2';  Group = ''; PlaceId = '142823291';  GameName = 'Murder Mystery 2';  LinkCode = '' }
+        [pscustomobject]@{ Name = 'Все в Pet Simulator 99';  Group = ''; PlaceId = '8737899170'; GameName = 'Pet Simulator 99';  LinkCode = '' }
+        [pscustomobject]@{ Name = 'Все в Grow a Garden';     Group = ''; PlaceId = '126884695634066'; GameName = 'Grow a Garden'; LinkCode = '' }
+        [pscustomobject]@{ Name = 'Все просто в Roblox';     Group = ''; PlaceId = '';           GameName = '';                  LinkCode = '' }
+    )
+}
+
+function Add-RamStarterProfile {
+    <# Кладёт готовый профиль в список пользователя (как обычный сохранённый). #>
+    param([Parameter(Mandatory)]$Profile)
+
+    $entry = [pscustomobject]@{
+        Name     = [string]$Profile.Name
+        Group    = [string]$Profile.Group
+        PlaceId  = [string]$Profile.PlaceId
+        GameName = [string]$Profile.GameName
+        LinkCode = [string]$Profile.LinkCode
+    }
+    $rest = @(Get-RamProfiles | Where-Object { $_.Name -ne $entry.Name })
+    $script:Settings.Profiles = @(@($entry) + $rest | Select-Object -First 20)
+    Save-RamSettings -Settings $script:Settings
+    Write-RamLog "Готовый профиль «$($entry.Name)» добавлен." 'ok'
 }
 
 function Update-RamProfilesPanel {
@@ -3908,6 +4949,24 @@ function New-RamMainForm {
     $form.Font          = $t.FontBody
     Set-RamDoubleBuffered $form
     $form.Add_HandleCreated({ Set-RamDarkTitleBar $this })
+
+    # Перетаскивание файла на окно: список кук/приглашений или файл настроек.
+    # Курсор «копировать» показываем только для файлов — на текст и прочее не
+    # реагируем, чтобы не сбивать с толку.
+    $form.AllowDrop = $true
+    $form.Add_DragEnter({
+        param($src, $e)
+        if ($e.Data.GetDataPresent([System.Windows.Forms.DataFormats]::FileDrop)) {
+            $e.Effect = [System.Windows.Forms.DragDropEffects]::Copy
+        } else {
+            $e.Effect = [System.Windows.Forms.DragDropEffects]::None
+        }
+    })
+    $form.Add_DragDrop({
+        param($src, $e)
+        $files = @($e.Data.GetData([System.Windows.Forms.DataFormats]::FileDrop))
+        foreach ($f in $files) { Import-RamDroppedFile -Path $f }
+    })
 
     $script:UI.Panels     = @{}
     $script:UI.NavButtons = @{}
@@ -4129,6 +5188,15 @@ function New-RamMainForm {
     $pGames.Controls.Add((New-RamLabel -Text 'Отметь аккаунты в разделе «Аккаунты», потом нажми «Назначить отмеченным» у нужной игры' `
                                        -X 0 -Y 32 -Width 900 -Height 22 -Font $t.FontSmall -Color $t.Muted))
 
+    $btnPopular = New-RamButton -Text 'Популярные из Roblox' -Width 220 -Height 36 -Kind 'primary' `
+                                -Tooltip 'Показать игры, в которые сейчас играют больше всего, и добавить их в список' -OnClick {
+        Show-RamPopularGamesDialog
+        Update-RamGamesPanel
+    }
+    $btnPopular.Location = New-Object System.Drawing.Point(900, 8)
+    $btnPopular.Anchor   = 'Top,Right'
+    $pGames.Controls.Add($btnPopular)
+
     $gamesHost = New-RamScrollPanel -Width 1120 -Height 670
     $gamesHost.Location = New-Object System.Drawing.Point(0, 66)
     $gamesHost.Anchor   = 'Top,Left,Right,Bottom'
@@ -4149,10 +5217,24 @@ function New-RamMainForm {
     $pProf.Controls.Add((New-RamLabel -Text 'Связка «набор аккаунтов + игра». Одной кнопкой ставит игру всем и запускает.' `
                                       -X 0 -Y 32 -Width 900 -Height 22 -Font $t.FontSmall -Color $t.Muted))
 
+    $bStarter = New-RamButton -Text '＋ Готовый профиль  ▾' -Width 220 -Height 32 -Kind 'primary' `
+                              -Tooltip 'Добавить готовый профиль с популярной игрой — работает сразу' -OnClick {
+        $menu = New-RamContextMenu
+        foreach ($sp in Get-RamStarterProfiles) {
+            [void](Add-RamMenuItem -Menu $menu -Text $sp.Name -Tag $sp -OnClick {
+                Add-RamStarterProfile -Profile $this.Tag
+                Update-RamProfilesPanel
+            })
+        }
+        $menu.Show($this, (New-Object System.Drawing.Point(0, $this.Height)))
+    }
+    $bStarter.Location = New-Object System.Drawing.Point(560, 2)
+    $pProf.Controls.Add($bStarter)
+
     $bSaveProf = New-RamButton -Text 'Сохранить текущее как профиль' -Width 280 -Height 32 -Kind 'ghost' -OnClick {
         Invoke-RamSaveProfile
     }
-    $bSaveProf.Location = New-Object System.Drawing.Point(620, 2)
+    $bSaveProf.Location = New-Object System.Drawing.Point(790, 2)
     $pProf.Controls.Add($bSaveProf)
 
     $profHost = New-RamScrollPanel -Width 1120 -Height 670

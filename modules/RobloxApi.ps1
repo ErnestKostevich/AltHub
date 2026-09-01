@@ -355,6 +355,63 @@ function Get-RamAuthenticatedUser {
 
 # ---------------------------------------------------------------- игра ------
 
+function ConvertFrom-RamExploreSorts {
+    <#
+      Достаёт список игр из ответа explore-api get-sorts. Вынесено отдельно от
+      сетевого вызова, чтобы разбор можно было проверить без интернета.
+
+      Берём сорта с играми (contentType = 'Games'), предпочитая «сейчас играют»
+      и «в тренде». Склеиваем, убираем повторы по rootPlaceId, сортируем по
+      числу игроков. Всё — терпимо к пропущенным полям: формат чужой и может
+      меняться.
+    #>
+    param($Data, [int]$Limit = 30)
+
+    if ($null -eq $Data -or $null -eq $Data.sorts) { return @() }
+
+    # порядок предпочтения сортов
+    $rank = @{ 'Top Playing Now' = 0; 'Top Trending' = 1; 'Popular' = 2 }
+    $sorts = @($Data.sorts | Where-Object { $_ -and $_.contentType -eq 'Games' -and $_.games })
+    $sorts = @($sorts | Sort-Object @{ Expression = { if ($rank.ContainsKey([string]$_.sortDisplayName)) { $rank[[string]$_.sortDisplayName] } else { 99 } } })
+
+    $seen = @{}
+    $out  = @()
+    foreach ($sort in $sorts) {
+        foreach ($g in $sort.games) {
+            if ($null -eq $g) { continue }
+            $place = [string]$g.rootPlaceId          # НЕ $pid: это автопеременная (PID процесса), только чтение
+            $name = [string]$g.name
+            if ([string]::IsNullOrWhiteSpace($place) -or [string]::IsNullOrWhiteSpace($name)) { continue }
+            if ($seen.ContainsKey($place)) { continue }
+            $seen[$place] = $true
+            $players = 0; [void][int]::TryParse([string]$g.playerCount, [ref]$players)
+            $out += [pscustomobject]@{ Title = $name; PlaceId = $place; Players = $players }
+        }
+    }
+    $out = @($out | Sort-Object -Property Players -Descending)
+    if ($out.Count -gt $Limit) { $out = @($out[0..($Limit - 1)]) }
+    return @($out)
+}
+
+function Get-RamPopularGames {
+    <#
+      Тянет популярные сейчас игры из Roblox (тот же список, что и на главной
+      странице «Discover»). Без авторизации. При любой сетевой беде возвращает
+      пустой список — вызывающий покажет понятное сообщение, а не свалится.
+    #>
+    param([int]$Limit = 30)
+
+    try {
+        $sid = [guid]::NewGuid().ToString()
+        $r = Invoke-RamRequest -Method GET -Url "https://apis.roblox.com/explore-api/v1/get-sorts?sessionId=$sid"
+        if ($r.Status -ne 200) { return @() }
+        $data = $r.Body | ConvertFrom-Json
+        return @(ConvertFrom-RamExploreSorts -Data $data -Limit $Limit)
+    } catch {
+        return @()
+    }
+}
+
 function Get-RamPlaceName {
     <# Название игры по placeId. Без авторизации, чисто для удобства списка. #>
     param([Parameter(Mandatory)][string]$PlaceId)

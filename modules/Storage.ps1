@@ -353,7 +353,8 @@ function Get-RamDefaultSettings {
     [pscustomobject]@{
         LaunchDelaySec  = 8      # пауза между запусками аккаунтов
         Locale          = 'ru_ru'
-        Theme           = 'dark' # dark | midnight | light
+        Theme           = 'dark' # ключ темы (стоковой или своей)
+        CustomThemes    = @()    # свои темы: @{ Key; Title; Colors=@{Bg;...} }
         Games           = @()    # сохранённые игры: @{ Title; PlaceId; LinkCode }
         TileMode        = 'grid' # grid | cascade | columns | rows | main
         Section         = 'accounts'  # какой раздел бокового меню открыть
