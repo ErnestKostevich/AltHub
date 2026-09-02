@@ -901,6 +901,71 @@ Check 'Раскладка ждёт появления окон' {
     'раскладка ждёт окна, не висит по таймауту, режим «основной крупно» доживает'
 }
 
+Check 'Поля ввода читаются через .Tag.Text' {
+    # New-RamTextBox отдаёт ПАНЕЛЬ-обёртку, само поле лежит в .Tag. У панели
+    # свой собственный .Text, поэтому обращение к $поле.Text молча читает и
+    # пишет не туда. Так сломались сразу два места: тема сохранялась всегда
+    # под именем «Моя тема», а «Добавить из браузера» считало любую вставку
+    # слишком короткой и отказывалось работать.
+    $files = @((Join-Path $root 'AltHub.ps1')) + (Get-ChildItem (Join-Path $root 'modules\*.ps1')).FullName
+    $bad = @()
+    foreach ($f in $files) {
+        $lines = Get-Content -LiteralPath $f
+        # Идём сверху вниз и помним, чем переменная является ПРЯМО СЕЙЧАС.
+        # Одно и то же имя ($box) в файле бывает и обычным TextBox, и
+        # обёрткой — без учёта переприсваивания проверка врёт.
+        $vars = @{}
+        for ($i = 0; $i -lt $lines.Count; $i++) {
+            $ln = $lines[$i]
+            if ($ln -match '^\s*\$(\w+)\s*=\s*New-RamTextBox')  { $vars[$Matches[1]] = $true;  continue }
+            if ($ln -match '^\s*\$(\w+)\s*=\s*(New-Object|New-RamCombo|New-RamButton|New-RamLabel)') { $vars.Remove($Matches[1]); continue }
+            foreach ($v in @($vars.Keys)) {
+                if ($ln -match ('\$' + [regex]::Escape($v) + '\.Text\b')) {
+                    $bad += "$(Split-Path -Leaf $f):$($i+1)  `$$v.Text вместо `$$v.Tag.Text"
+                }
+            }
+        }
+    }
+    if ($bad.Count) { throw ($bad -join ' | ') }
+
+    # И проверим на живом контроле, что обёртка правда прячет поле в Tag.
+    $tb = New-RamTextBox -Width 200 -Height 30 -Value 'проверка'
+    if ([string]$tb.Text -eq 'проверка') { throw 'обёртка вдруг стала пробрасывать Text — проверку надо переписать' }
+    if ([string]$tb.Tag.Text -ne 'проверка') { throw 'значение не дошло до самого поля' }
+    $tb.Dispose()
+
+    "полей через New-RamTextBox: разобрано, обращений мимо .Tag нет"
+}
+
+Check 'Профиль запускает именно отмеченных' {
+    $keepAcc = $script:Accounts
+    $keepSet = $script:Settings
+    try {
+        $script:Accounts = @(
+            (New-RamAccount -Alias 'A' -Cookie 'x'),
+            (New-RamAccount -Alias 'B' -Cookie 'x'),
+            (New-RamAccount -Alias 'C' -Cookie 'x')
+        )
+        # Профиль с поимённым списком не должен подменяться «всеми».
+        $prof = [pscustomobject]@{
+            Name = 'Двое'; Group = ''; PlaceId = ''; GameName = ''; LinkCode = ''
+            Ids  = @($script:Accounts[0].Id, $script:Accounts[2].Id)
+        }
+        $ids = @($prof.Ids | Where-Object { $_ })
+        $picked = @(Get-RamOrderedAccounts | Where-Object { $ids -contains [string]$_.Id })
+        if ($picked.Count -ne 2) { throw "по списку выбрано $($picked.Count) вместо 2" }
+        if ($picked.Alias -contains 'B') { throw 'в запуск попал неотмеченный аккаунт' }
+
+        # Старый профиль без Ids по-прежнему работает по набору.
+        $old = [pscustomobject]@{ Name = 'Старый'; Group = ''; PlaceId = ''; GameName = ''; LinkCode = '' }
+        if ($old.PSObject.Properties.Name -contains 'Ids') { throw 'у старого профиля откуда-то взялся Ids' }
+    } finally {
+        $script:Accounts = $keepAcc
+        $script:Settings = $keepSet
+    }
+    'поимённый список важнее набора, старые профили не ломаются'
+}
+
 Check 'Выключенная кнопка не нажимается' {
     # Раньше Set-RamButtonEnabled только перекрашивал кнопку, а обработчик
     # Click оставался живым — серая кнопка отлично срабатывала.

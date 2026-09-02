@@ -520,6 +520,9 @@ function Show-RamBrowserGuide {
     $btnOpen.Location = New-Object System.Drawing.Point(28, $yOpen)
     $dlg.Controls.Add($btnOpen)
 
+    # $box — это ПАНЕЛЬ-обёртка, само поле лежит в .Tag. Читать надо
+    # $box.Tag.Text: у панели свой пустой .Text, и проверка «длина меньше 50»
+    # срабатывала всегда, сколько бы куку ни вставляли.
     $box = New-RamTextBox -Width 564 -Height 30
     $box.Location = New-Object System.Drawing.Point(28, $yBox)
     $dlg.Controls.Add($box)
@@ -528,7 +531,7 @@ function Show-RamBrowserGuide {
     # То же самое: хэш вместо $script:-флага, иначе результат не дойдёт.
     $result = @{ Ok = $false }
     $btnAdd = New-RamButton -Text 'Добавить' -Width 160 -Height 36 -Kind 'primary' -OnClick ({
-        $val = ([string]$box.Text).Trim()
+        $val = ([string]$box.Tag.Text).Trim()
         if ($val.Length -lt 50) { Show-RamError 'Похоже, вставилось не всё. Значение .ROBLOSECURITY длинное.'; return }
         $this.FindForm().Cursor = [System.Windows.Forms.Cursors]::WaitCursor
         $r = Import-RamAccountLine -Line $val
@@ -596,6 +599,61 @@ function Import-RamDroppedFile {
     Build-RamCards; Update-RamHeaderCounts
     Show-RamInfo "Из файла: добавлено $($sum.Added), обновлено $($sum.Updated), не вышло $($sum.Failed)."
     Write-RamLog "Из брошенного файла: добавлено $($sum.Added), обновлено $($sum.Updated)." 'ok'
+}
+
+function Update-RamAddedList {
+    <#
+      Перерисовывает список «Добавлено за этот заход» и раздвигает окно под
+      его настоящую высоту.
+
+      Раньше это была подпись жёсткой высоты 56 px: три строки влезали,
+      четвёртая и дальше просто обрезались, и человек не видел, что аккаунт
+      добавился. Теперь высота меряется по тексту, а нижний ряд кнопок и само
+      окно съезжают на разницу.
+
+      Всё ищется по именам через форму: обработчики живут дольше, чем вызов
+      Show-RamAddWizard, и локалы им уже недоступны.
+    #>
+    param(
+        $Form,
+        [AllowNull()][AllowEmptyCollection()][object[]]$Names
+    )
+    if ($null -eq $Form) { return }
+
+    $lbl = $Form.Controls.Find('ramAddedList', $true) | Select-Object -First 1
+    if ($null -eq $lbl) { return }
+
+    if ($null -eq $Names) { $Names = @() }
+    $list = @($Names)
+
+    # Больше десятка строк окно бы вытолкнуло за экран — остаток сворачиваем
+    # в одну строку, но счёт остаётся честным.
+    $maxRows = 10
+    if ($list.Count -eq 0) {
+        $text = '— пока ничего —'
+    } elseif ($list.Count -le $maxRows) {
+        $text = ($list | ForEach-Object { '  ✓  ' + $_ }) -join [Environment]::NewLine
+    } else {
+        $head = $list[0..($maxRows - 1)] | ForEach-Object { '  ✓  ' + $_ }
+        $text = ($head -join [Environment]::NewLine) +
+                [Environment]::NewLine + ('     и ещё {0}' -f ($list.Count - $maxRows))
+    }
+    $lbl.Text = $text
+
+    $need = (Measure-RamText -Text $text -Font $lbl.Font -MaxWidth $lbl.Width).Height + 4
+    $min  = [int][Math]::Round(56 * $Global:RamTheme.M.Scale)
+    if ($need -lt $min) { $need = $min }
+
+    $delta = $need - $lbl.Height
+    if ($delta -eq 0) { return }
+    $lbl.Height = $need
+
+    foreach ($n in @('ramAddMore', 'ramAddHint', 'ramAddDone')) {
+        $c = $Form.Controls.Find($n, $true) | Select-Object -First 1
+        if ($null -ne $c) { $c.Top = $c.Top + $delta }
+    }
+    $Form.ClientSize = New-Object System.Drawing.Size(
+        $Form.ClientSize.Width, ($Form.ClientSize.Height + $delta))
 }
 
 function Show-RamAddWizard {
@@ -700,7 +758,11 @@ function Show-RamAddWizard {
     $dlg.Controls.Add((New-RamLabel -Text 'Добавлено за этот заход:' -X 28 -Y $yAdd -Width 300 -Height 22 `
                                     -Font $t.FontSmall -Color $t.Muted))
 
+    # Высота этого списка ФИКСИРОВАННОЙ быть не может: сколько аккаунтов
+    # добавят за заход, столько строк и будет. С жёсткими 56 px помещалось
+    # ровно три, четвёртый и дальше просто обрезались.
     $lblAdded = New-Object System.Windows.Forms.Label
+    $lblAdded.Name      = 'ramAddedList'
     $lblAdded.Text      = '— пока ничего —'
     $lblAdded.Location  = New-Object System.Drawing.Point(28, ($yAdd + 24))
     $lblAdded.Size      = New-Object System.Drawing.Size(624, 56)
@@ -758,12 +820,13 @@ function Show-RamAddWizard {
         param($n, $how)
         if ($n -gt 0) {
             $w.Added += "аккаунтов $n ($how)"
-            $lblAdded.Text = ($w.Added | ForEach-Object { '  ✓  ' + $_ }) -join [Environment]::NewLine
+            Update-RamAddedList -Form $lblAdded.FindForm() -Names $w.Added
         }
     }.GetNewClosure()
 
     $btnMore = New-RamButton -Text 'Ещё способы  ▾' -Width 180 -Height 38 -Kind 'ghost' `
                              -Tooltip 'Вставить несколько кук сразу, забрать из браузера или из файла'
+    $btnMore.Name = 'ramAddMore'
     $btnMore.Location = New-Object System.Drawing.Point(28, $yBot)
     $moreW = (Measure-RamControl -Control $btnMore).Width
     $dlg.Controls.Add($btnMore)
@@ -784,12 +847,15 @@ function Show-RamAddWizard {
     })
     $btnMore.Add_Click({ $moreMenu.Show($this, (New-Object System.Drawing.Point(0, $this.Height))) }.GetNewClosure())
 
-    $dlg.Controls.Add((New-RamLabel -Text 'Подсказка: список кук или файл настроек можно просто перетащить на главное окно.' `
-                                    -X (28 + $moreW + 12) -Y ($yBot + 2) -Width 260 -Height 72 -Font $t.FontSmall -Color $t.Muted))
+    $lblDropHint = New-RamLabel -Text 'Подсказка: список кук или файл настроек можно просто перетащить на главное окно.' `
+                                -X (28 + $moreW + 12) -Y ($yBot + 2) -Width 260 -Height 72 -Font $t.FontSmall -Color $t.Muted
+    $lblDropHint.Name = 'ramAddHint'
+    $dlg.Controls.Add($lblDropHint)
 
     $btnDone = New-RamButton -Text 'Готово' -Width 130 -Height 38 -Kind 'primary' -OnClick {
         $this.FindForm().Close()
     }
+    $btnDone.Name = 'ramAddDone'
     $btnDone.Location = New-Object System.Drawing.Point(($dlgW - 28 - (Measure-RamControl -Control $btnDone).Width), $yBot)
     $dlg.Controls.Add($btnDone)
 
@@ -868,7 +934,7 @@ function Show-RamAddWizard {
                 if ($w.Added -notcontains ($name + ' (обновлён)')) { $w.Added += ($name + ' (обновлён)') }
             }
 
-            $lblAdded.Text = ($w.Added | ForEach-Object { '  ✓  ' + $_ }) -join [Environment]::NewLine
+            Update-RamAddedList -Form $lblAdded.FindForm() -Names $w.Added
             Set-RamButtonEnabled $btnAdd $false
 
             $lblWho2.Text = 'Готово. Теперь нажми «Сменить аккаунт (безопасно)» внизу — и войди под следующим. Кнопку «Выйти» в самом Roblox не трогай.'
@@ -887,7 +953,7 @@ function Show-RamAddWizard {
             $script:Accounts = @($script:Accounts) + $acc
             Save-RamState
             $w.Added += ($acc.Alias + ' (вручную)')
-            $lblAdded.Text = ($w.Added | ForEach-Object { '  ✓  ' + $_ }) -join [Environment]::NewLine
+            Update-RamAddedList -Form $lblAdded.FindForm() -Names $w.Added
             Build-RamCards
             Update-RamHeaderCounts
             Write-RamLog "Добавлен аккаунт '$($acc.Alias)' вручную." 'ok'
@@ -1540,9 +1606,13 @@ function Show-RamThemeConstructor {
 
     # --- имя
     $dlg.Controls.Add((New-RamLabel -Text 'Название темы' -X 28 -Y 70 -Width 200 -Height 20 -Font $t.FontSmall -Color $t.Muted))
-    $tbName = New-RamTextBox -Width 360 -Height 30
+    # Значение задаём через -Value и читаем через .Tag.Text: у панели-обёртки
+    # свой собственный .Text, и запись в него не доходила до поля, а чтение
+    # возвращало старое значение. Из-за этого тема всегда сохранялась под
+    # именем «Моя тема», как бы её ни назвали.
+    $tbName = New-RamTextBox -Width 360 -Height 30 -Value $(
+        if ($null -ne $existing) { [string]$existing.Title } else { 'Моя тема' })
     $tbName.Location = New-Object System.Drawing.Point(28, 92)
-    $tbName.Text = if ($null -ne $existing) { [string]$existing.Title } else { 'Моя тема' }
     $dlg.Controls.Add($tbName)
 
     # --- основа
@@ -1658,9 +1728,9 @@ function Show-RamThemeConstructor {
     $btnToFile = New-RamButton -Text 'В файл...' -Width 130 -Height 34 -Kind 'ghost' -OnClick ({
         $sfd = New-Object System.Windows.Forms.SaveFileDialog
         $sfd.Filter = 'Тема AltHub (*.althub-theme.json)|*.althub-theme.json'
-        $sfd.FileName = ((($tbName.Text) -replace '[^\w\-]', '_') + '.althub-theme.json')
+        $sfd.FileName = ((($tbName.Tag.Text) -replace '[^\w\-]', '_') + '.althub-theme.json')
         if ($sfd.ShowDialog() -ne [System.Windows.Forms.DialogResult]::OK) { return }
-        $rec = ConvertTo-RamThemeRecord -Palette $state.Palette -Key ('custom-tmp') -Title ([string]$tbName.Text)
+        $rec = ConvertTo-RamThemeRecord -Palette $state.Palette -Key ('custom-tmp') -Title ([string]$tbName.Tag.Text)
         $payload = [pscustomobject]@{ app = $appName; kind = 'theme'; theme = $rec }
         ($payload | ConvertTo-Json -Depth 6) | Set-Content -LiteralPath $sfd.FileName -Encoding UTF8
         Show-RamInfo "Тема сохранена в файл. Можешь отдать её другу — он откроет её кнопкой «Из файла...»."
@@ -1676,7 +1746,7 @@ function Show-RamThemeConstructor {
             $data = Get-Content -LiteralPath $ofd.FileName -Raw | ConvertFrom-Json
             $th = if ($data.PSObject.Properties.Name -contains 'theme') { $data.theme } else { $data }
             if (-not ($th.PSObject.Properties.Name -contains 'Colors')) { throw 'в файле нет цветов темы' }
-            $tbName.Text = [string]$th.Title
+            $tbName.Tag.Text = [string]$th.Title
             $state.Manual = @{}
             foreach ($k in @('Bg','Panel','Card','CardHover','CardSel','Border','Text','Muted','Accent','AccentHov','Ok','Warn','Danger','DangerHov','LogBack')) {
                 if ($th.Colors.PSObject.Properties.Name -contains $k) {
@@ -1693,7 +1763,7 @@ function Show-RamThemeConstructor {
     $dlg.Controls.Add($btnFromFile)
 
     $btnSave = New-RamButton -Text 'Сохранить тему' -Width 180 -Height 34 -Kind 'primary' -OnClick ({
-        $title = ([string]$tbName.Text).Trim()
+        $title = ([string]$tbName.Tag.Text).Trim()
         if ([string]::IsNullOrWhiteSpace($title)) { Show-RamError 'Дай теме название.'; return }
 
         # ключ: у редактируемой — прежний, у новой — из имени + случайный хвост,

@@ -304,6 +304,30 @@ function Get-RamAnyCookie {
     return ''
 }
 
+function Get-RamKnownGameName {
+    <#
+      Название игры, которое уже где-то известно менеджеру: в сохранённых
+      играх или у любого аккаунта с тем же placeId.
+
+      Нужно как запасной вариант к Get-RamPlaceName: тот ходит в сеть и при
+      любой заминке возвращает пустую строку. Пустая строка, записанная в
+      аккаунт, стирала нормальное название, и на карточке вместо
+      «Elemental Dungeons» появлялся голый «ID 10515146389».
+    #>
+    param([string]$PlaceId)
+    if ([string]::IsNullOrWhiteSpace($PlaceId)) { return '' }
+
+    foreach ($g in @($script:Settings.Games)) {
+        if ($null -ne $g -and [string]$g.PlaceId -eq $PlaceId -and $g.Title) {
+            return (([string]$g.Title) -replace ' \(приватный сервер\)$', '')
+        }
+    }
+    foreach ($a in @($script:Accounts)) {
+        if ($null -ne $a -and [string]$a.PlaceId -eq $PlaceId -and $a.GameName) { return [string]$a.GameName }
+    }
+    return ''
+}
+
 function Resolve-RamGameInput {
     <#
       Принимает что угодно и возвращает @{ PlaceId; LinkCode; GameName }:
@@ -328,6 +352,7 @@ function Resolve-RamGameInput {
         $res.PlaceId  = $Matches[1]
         $res.LinkCode = $Matches[2]
         $res.GameName = Get-RamPlaceName -PlaceId $res.PlaceId
+        if (-not $res.GameName) { $res.GameName = Get-RamKnownGameName -PlaceId $res.PlaceId }
         return $res
     }
 
@@ -342,6 +367,7 @@ function Resolve-RamGameInput {
         $res.LinkCode = $r.LinkCode
         $res.GameName = $r.GameName
         if (-not $res.GameName) { $res.GameName = Get-RamPlaceName -PlaceId $res.PlaceId }
+        if (-not $res.GameName) { $res.GameName = Get-RamKnownGameName -PlaceId $res.PlaceId }
         return $res
     }
 
@@ -362,6 +388,7 @@ function Resolve-RamGameInput {
     $res.PlaceId  = $placeId
     $res.LinkCode = ConvertTo-RamLinkCode -Value $Value
     $res.GameName = Get-RamPlaceName -PlaceId $placeId
+    if (-not $res.GameName) { $res.GameName = Get-RamKnownGameName -PlaceId $placeId }
     return $res
 }
 
@@ -1673,8 +1700,23 @@ function Invoke-RamRunProfile {
     #>
     param([Parameter(Mandatory)]$Profile)
 
-    $targets = if ([string]::IsNullOrWhiteSpace([string]$Profile.Group)) { @(Get-RamOrderedAccounts) }
-               else { @($script:Accounts | Where-Object { [string]$_.Group -eq [string]$Profile.Group }) }
+    # Порядок разбора: поимённый список -> набор -> все.
+    # Список важнее набора: его сохраняли ровно из тех аккаунтов, что были
+    # отмечены, и подменять их «всеми» нельзя.
+    $ids = @()
+    if ($Profile.PSObject.Properties.Name -contains 'Ids') { $ids = @($Profile.Ids | Where-Object { $_ }) }
+
+    if ($ids.Count -gt 0) {
+        $targets = @(Get-RamOrderedAccounts | Where-Object { $ids -contains [string]$_.Id })
+        if ($targets.Count -eq 0) {
+            Show-RamInfo "В профиле «$($Profile.Name)» записаны аккаунты, которых больше нет в списке. Пересохрани профиль."
+            return
+        }
+    } elseif ([string]::IsNullOrWhiteSpace([string]$Profile.Group)) {
+        $targets = @(Get-RamOrderedAccounts)
+    } else {
+        $targets = @($script:Accounts | Where-Object { [string]$_.Group -eq [string]$Profile.Group })
+    }
 
     if ($targets.Count -eq 0) {
         Show-RamInfo "В профиле «$($Profile.Name)» набор «$($Profile.Group)» пуст — некого запускать."
@@ -1684,7 +1726,7 @@ function Invoke-RamRunProfile {
     if (-not [string]::IsNullOrWhiteSpace([string]$Profile.PlaceId)) {
         foreach ($a in $targets) {
             $a.PlaceId  = [string]$Profile.PlaceId
-            $a.GameName = [string]$Profile.GameName
+            if ([string]$Profile.GameName) { $a.GameName = [string]$Profile.GameName }
             $a.LinkCode = [string]$Profile.LinkCode
         }
         Save-RamState
@@ -1705,9 +1747,18 @@ function Invoke-RamSaveProfile {
     if ([string]::IsNullOrWhiteSpace($name)) { return }
 
     $first = $targets[0]
+
+    # Набор запоминаем только если он у ВСЕХ отмеченных один и тот же.
+    # Иначе — сохраняем поимённый список: раньше в этом случае в профиль
+    # уходил пустой набор, а пустой набор означает «все аккаунты», и профиль
+    # поднимал в том числе те, которые не отмечали.
+    $groups = @($targets | ForEach-Object { [string]$_.Group } | Sort-Object -Unique)
+    $sharedGroup = if ($groups.Count -eq 1 -and $groups[0]) { $groups[0] } else { '' }
+
     $entry = [pscustomobject]@{
         Name     = $name.Trim()
-        Group    = [string]$first.Group
+        Group    = $sharedGroup
+        Ids      = @($targets | ForEach-Object { [string]$_.Id })
         PlaceId  = [string]$first.PlaceId
         GameName = [string]$first.GameName
         LinkCode = [string]$first.LinkCode

@@ -892,7 +892,9 @@ function Show-RamQuickSetup {
     $main.Order        = 10
     if ($null -ne $game -and $sameGame -and $game.PlaceId) {
         $main.PlaceId  = $game.PlaceId
-        $main.GameName = $game.GameName
+        # Пустым именем не затираем: если Roblox не ответил, лучше оставить
+        # то название, которое уже было, чем показать голый ID.
+        if ($game.GameName) { $main.GameName = $game.GameName }
         $main.LinkCode = $game.LinkCode
     }
 
@@ -908,7 +910,7 @@ function Show-RamQuickSetup {
         $a.Order        = 10 + ($i++ * 10)
         if ($null -ne $game -and $game.PlaceId) {
             $a.PlaceId  = $game.PlaceId
-            $a.GameName = $game.GameName
+            if ($game.GameName) { $a.GameName = $game.GameName }
             $a.LinkCode = $game.LinkCode
         }
     }
@@ -1357,7 +1359,11 @@ function Update-RamProfilesPanel {
             $h.Controls.Add($row)
 
             $row.Controls.Add((New-RamLabel -Text ([string]$pr.Name) -X 24 -Y 10 -Width 420 -Height 22 -Font $t.FontTitle -Truncatable))
-            $meta = if ($pr.Group) { "набор «$($pr.Group)»" } else { 'все аккаунты' }
+            $prIds = @()
+            if ($pr.PSObject.Properties.Name -contains 'Ids') { $prIds = @($pr.Ids | Where-Object { $_ }) }
+            $meta = if ($pr.Group)          { "набор «$($pr.Group)»" }
+                    elseif ($prIds.Count)   { "аккаунтов: $($prIds.Count)" }
+                    else                    { 'все аккаунты' }
             if ($pr.GameName) { $meta += "   ·   $($pr.GameName)" }
             elseif ($pr.PlaceId) { $meta += "   ·   ID $($pr.PlaceId)" }
             if ($pr.LinkCode) { $meta += '   ·   приватный сервер' }
