@@ -549,9 +549,18 @@ function Save-RamSettingsNow {
 }
 
 function Get-RamTargetAccounts {
-    <# Отмеченные галочками. #>
+    <#
+      Отмеченные галочками — В ТОМ ЖЕ ПОРЯДКЕ, В КАКОМ ОНИ В СПИСКЕ.
+
+      Раньше здесь шёл обход по $script:Accounts, то есть по порядку ХРАНЕНИЯ
+      массива, а список на экране сортируется по полю Order. У аккаунта,
+      добавленного последним, Order ставит его в середину списка, а в массиве
+      он остаётся в конце — и запускался он последним, хотя в списке стоял
+      третьим. Обещание «порядок в списке задаёт очередь запуска» не
+      выполнялось.
+    #>
     $res = @()
-    foreach ($a in $script:Accounts) {
+    foreach ($a in (Get-RamOrderedAccounts)) {
         $entry = $script:Cards[$a.Id]
         if ($null -ne $entry -and $entry.Check.Tag.Checked) { $res += $a }
     }

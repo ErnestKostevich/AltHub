@@ -937,6 +937,44 @@ Check 'Поля ввода читаются через .Tag.Text' {
     "полей через New-RamTextBox: разобрано, обращений мимо .Tag нет"
 }
 
+Check 'Очередь запуска идёт по порядку списка' {
+    # Список сортируется по Order, а отмеченных раньше собирали по порядку
+    # хранения массива. Аккаунт, добавленный последним, стоял в списке
+    # третьим, а запускался шестым.
+    $keepAcc   = $script:Accounts
+    $keepCards = $script:Cards
+    try {
+        $a1 = New-RamAccount -Alias 'Первый'   -Cookie 'x'; $a1.Order = 10
+        $a2 = New-RamAccount -Alias 'Второй'   -Cookie 'x'; $a2.Order = 20
+        $a3 = New-RamAccount -Alias 'Поздний'  -Cookie 'x'; $a3.Order = 15   # в списке между ними
+        # В массиве он ПОСЛЕДНИЙ — как и бывает у только что добавленного.
+        $script:Accounts = @($a1, $a2, $a3)
+
+        $script:Cards = @{}
+        foreach ($a in $script:Accounts) {
+            $cb = New-RamCheckBox -X 0 -Y 0
+            $cb.Tag.Checked = $true
+            $script:Cards[$a.Id] = [pscustomobject]@{ Check = $cb }
+        }
+
+        $order = @(Get-RamTargetAccounts | ForEach-Object { $_.Alias })
+        $want  = @('Первый', 'Поздний', 'Второй')
+        if (($order -join ',') -ne ($want -join ',')) {
+            throw "очередь «$($order -join ', ')» вместо «$($want -join ', ')»"
+        }
+
+        # И то же самое должно быть видно в списке.
+        $shown = @(Get-RamOrderedAccounts | ForEach-Object { $_.Alias })
+        if (($shown -join ',') -ne ($order -join ',')) {
+            throw "список «$($shown -join ', ')» разошёлся с очередью «$($order -join ', ')»"
+        }
+    } finally {
+        $script:Accounts = $keepAcc
+        $script:Cards    = $keepCards
+    }
+    'отмеченные отдаются в порядке списка, а не хранения'
+}
+
 Check 'Профиль запускает именно отмеченных' {
     $keepAcc = $script:Accounts
     $keepSet = $script:Settings
