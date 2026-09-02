@@ -33,6 +33,10 @@ try {
         [Net.SecurityProtocolType]::Tls12 -bor [Net.ServicePointManager]::SecurityProtocol
 } catch { }
 
+# По умолчанию .NET разрешает лишь 2 одновременных соединения на хост. При
+# запуске пачки аккаунтов это лишнее горлышко — поднимаем.
+try { [Net.ServicePointManager]::DefaultConnectionLimit = 64 } catch { }
+
 Add-Type -AssemblyName System.Net.Http -ErrorAction SilentlyContinue
 
 $script:RamHttp = $null
@@ -200,6 +204,36 @@ function Clear-RamCsrfCache {
     $script:RamCsrfCache.Remove((Get-RamCookieKey -Cookie $Cookie))
 }
 
+function New-RamRateLimitError {
+    <#
+      Ошибка «Roblox просит подождать». Несёт в себе, сколько именно ждать,
+      чтобы вызывающий мог отложить попытку, а НЕ засыпать в UI-потоке.
+      Раньше здесь стоял Start-Sleep до 30 секунд, и всё окно замерзало.
+    #>
+    param([int]$Seconds = 8, [string]$Message = '')
+
+    if ([string]::IsNullOrWhiteSpace($Message)) {
+        $Message = "Roblox просит сбавить темп. Повторю через $Seconds с."
+    }
+    $ex = New-Object System.Exception($Message)
+    $ex.Data['RamRetryAfter'] = $Seconds
+    return $ex
+}
+
+function Get-RamRetryAfterSeconds {
+    <# Достаёт паузу из ответа Roblox (заголовок retry-after), с потолком. #>
+    param($Response, [int]$Default = 8)
+
+    $wait = $Default
+    if ($null -ne $Response -and $Response.Headers.ContainsKey('retry-after')) {
+        $ra = 0
+        if ([int]::TryParse($Response.Headers['retry-after'], [ref]$ra) -and $ra -gt 0 -and $ra -le 120) {
+            $wait = $ra
+        }
+    }
+    return $wait
+}
+
 function Get-RamCsrfToken {
     <#
       Roblox требует CSRF-токен на любой POST. Получаем его штатно: делаем
@@ -224,10 +258,14 @@ function Get-RamCsrfToken {
     # Несколько источников токена подряд: Roblox время от времени меняет,
     # какие эндпоинты отвечают 403 с заголовком, а какие — сразу 401.
     # Все три запроса безобидны и ничего на аккаунте не меняют.
+    # ПОРЯДОК ВАЖЕН. Раньше первым стоял authentication-ticket — тот же самый
+    # эндпоинт, что и сам билет запуска. Каждый аккаунт бил по нему дважды, и
+    # на пятом Roblox включал ограничение частоты. Теперь токен берём с
+    # ненагруженных эндпоинтов, а auth.roblox.com оставлен на крайний случай.
     $sources = @(
-        @{ Url = 'https://auth.roblox.com/v1/authentication-ticket/'; Body = '' },
+        @{ Url = 'https://catalog.roblox.com/v1/catalog/items/details'; Body = '{"items":[{"itemType":"Asset","id":1}]}' },
         @{ Url = 'https://apis.roblox.com/sharelinks/v1/resolve-link'; Body = '{"linkId":"0","linkType":"Server"}' },
-        @{ Url = 'https://catalog.roblox.com/v1/catalog/items/details'; Body = '{"items":[{"itemType":"Asset","id":1}]}' }
+        @{ Url = 'https://auth.roblox.com/v1/authentication-ticket/'; Body = '' }
     )
 
     # Все три — только чтение. Эндпоинты вроде /v2/logout или /v1/account/pin
@@ -235,12 +273,14 @@ function Get-RamCsrfToken {
     # настройки аккаунта.
 
     $lastStatus = 0
+    $lastResponse = $null
     foreach ($src in $sources) {
         try {
             $r = Invoke-RamRequest -Method POST -Url $src.Url -Cookie $Cookie -Body $src.Body
         } catch {
             continue
         }
+        $lastResponse = $r
         if ($r.Headers.ContainsKey('x-csrf-token')) {
             $tok = $r.Headers['x-csrf-token']
             if (-not [string]::IsNullOrWhiteSpace($tok)) {
@@ -252,6 +292,12 @@ function Get-RamCsrfToken {
             }
         }
         $lastStatus = $r.Status
+    }
+
+    # Ограничение частоты — это НЕ проблема аккаунта. Отдаём его отдельной
+    # ошибкой с паузой, чтобы очередь запуска просто подождала и повторила.
+    if ($lastStatus -eq 429) {
+        throw (New-RamRateLimitError -Seconds (Get-RamRetryAfterSeconds -Response $lastResponse))
     }
 
     # Токен не дали. Прежде чем винить куку, проверим её отдельным запросом —
@@ -285,13 +331,24 @@ function Get-RamAuthTicket {
 
     $url = 'https://auth.roblox.com/v1/authentication-ticket/'
 
-    # До трёх попыток: 429 (слишком часто) переживаем паузой, протухший
-    # CSRF-токен — обновляем и пробуем снова. Без этого пятый аккаунт в пачке
-    # регулярно оставался без билета.
+    # До трёх попыток: протухший CSRF-токен обновляем и пробуем снова.
+    #
+    # ГЛАВНОЕ ИСПРАВЛЕНИЕ. Раньше Get-RamCsrfToken звался ВНЕ try/catch, и его
+    # исключение при 429 убивало весь цикл попыток на первом же круге — ветка
+    # обработки 429 ниже не выполнялась никогда. Отсюда и «максимум четыре
+    # аккаунта»: пятому не доставалось билета, и он молча пропадал.
+    #
+    # Теперь «слишком часто» на любом шаге поднимается наверх отдельной
+    # ошибкой с паузой, а очередь запуска откладывает аккаунт и берётся за
+    # него позже. Спать в UI-потоке нельзя — окно замерзало на полминуты.
     $r2 = $null
     for ($attempt = 1; $attempt -le 3; $attempt++) {
 
-        $csrf = Get-RamCsrfToken -Cookie $Cookie -Force:($attempt -gt 1)
+        try {
+            $csrf = Get-RamCsrfToken -Cookie $Cookie -Force:($attempt -gt 1)
+        } catch {
+            throw   # в том числе «слишком часто» — с паузой внутри
+        }
         $r2 = Invoke-RamRequest -Method POST -Url $url -Cookie $Cookie -Csrf $csrf -Body ''
 
         if ($r2.Headers.ContainsKey('rbx-authentication-ticket')) {
@@ -307,20 +364,10 @@ function Get-RamAuthTicket {
 
         if ($r2.Status -eq 429) {
             Clear-RamCsrfCache -Cookie $Cookie
-            $wait = 4 * $attempt
-            if ($r2.Headers.ContainsKey('retry-after')) {
-                $ra = 0
-                if ([int]::TryParse($r2.Headers['retry-after'], [ref]$ra) -and $ra -gt 0 -and $ra -le 30) { $wait = $ra }
-            }
-            Start-Sleep -Seconds $wait
-            continue
+            throw (New-RamRateLimitError -Seconds (Get-RamRetryAfterSeconds -Response $r2))
         }
 
         break
-    }
-
-    if ($r2.Status -eq 429) {
-        throw 'Roblox ограничил частоту запросов даже после трёх попыток. Увеличь паузу между запусками в Настройках (например до 15 с) и попробуй снова.'
     }
 
     if ($r2.Status -eq 401 -or $r2.Status -eq 403) {
@@ -483,6 +530,84 @@ function Get-RamAccountInfo {
 
 # -------------------------------------------------------------- аватар ------
 
+function Start-RamGetAsync {
+    <#
+      Запускает GET и СРАЗУ возвращает задачу, не дожидаясь ответа.
+
+      ЗАЧЕМ. Всё остальное в программе ходит в сеть синхронно
+      (SendAsync(...).GetAwaiter().GetResult()) — для запуска аккаунта это
+      нормально, там всё равно нечего делать. А вот аватарки грузились так же
+      и прямо в тике таймера: три штуки за такт при таймауте клиента 25 секунд.
+      На плохой сети окно замирало до двух с половиной минут за один тик.
+
+      Теперь вызывающий раз в такт заглядывает в .Task.IsCompleted и не ждёт
+      ни миллисекунды. У задачи свой короткий срок: аватарка — украшение,
+      висеть из-за неё нельзя.
+    #>
+    param([Parameter(Mandatory)][string]$Url, [int]$TimeoutSec = 10)
+
+    $client = Get-RamHttpClient
+    $req = New-Object System.Net.Http.HttpRequestMessage(
+        [System.Net.Http.HttpMethod]::new('GET'), $Url)
+    $req.Headers.TryAddWithoutValidation('User-Agent', 'Roblox/WinInet') | Out-Null
+
+    $cts = New-Object System.Threading.CancellationTokenSource
+    $cts.CancelAfter([TimeSpan]::FromSeconds($TimeoutSec))
+
+    return [pscustomobject]@{
+        Task = $client.SendAsync($req, $cts.Token)
+        Req  = $req
+        Cts  = $cts
+    }
+}
+
+function Complete-RamGetAsync {
+    <#
+      Забирает результат запущенной задачи. Возвращает @{ Ok; Body; Bytes }.
+      Ничего не ждёт: звать только когда .Task.IsCompleted уже истинно.
+    #>
+    param([Parameter(Mandatory)]$Job, [switch]$AsBytes)
+
+    $res = [pscustomobject]@{ Ok = $false; Body = ''; Bytes = $null }
+    try {
+        if ($Job.Task.Status -ne [System.Threading.Tasks.TaskStatus]::RanToCompletion) { return $res }
+        $resp = $Job.Task.Result
+        try {
+            if (-not $resp.IsSuccessStatusCode) { return $res }
+            if ($AsBytes) { $res.Bytes = $resp.Content.ReadAsByteArrayAsync().GetAwaiter().GetResult() }
+            else          { $res.Body  = $resp.Content.ReadAsStringAsync().GetAwaiter().GetResult() }
+            $res.Ok = $true
+        } finally { $resp.Dispose() }
+    } catch { }
+    finally {
+        try { $Job.Req.Dispose() } catch { }
+        try { $Job.Cts.Dispose() } catch { }
+    }
+    return $res
+}
+
+function Get-RamAvatarUrl {
+    <# Адрес картинки аватарки. Публичный запрос, кука не нужна. #>
+    param([Parameter(Mandatory)][int64]$UserId)
+    return "https://thumbnails.roblox.com/v1/users/avatar-headshot?userIds=$UserId&size=150x150&format=Png&isCircular=false"
+}
+
+function Get-RamCachedAvatarFile {
+    <#
+      Путь к уже лежащей в кэше аватарке, если она свежая. Скачиванием НЕ
+      занимается — этим ведает неблокирующая очередь в главном файле.
+    #>
+    param([Parameter(Mandatory)][int64]$UserId, [Parameter(Mandatory)][string]$CacheDir, [int]$MaxAgeDays = 14)
+
+    if ($UserId -le 0) { return $null }
+    $file = Join-Path $CacheDir "$UserId.png"
+    if (Test-Path -LiteralPath $file) {
+        $age = (Get-Date) - (Get-Item -LiteralPath $file).LastWriteTime
+        if ($age.TotalDays -lt $MaxAgeDays) { return $file }
+    }
+    return $null
+}
+
 function Invoke-RamDownloadBytes {
     <# Скачивание картинки. Используется только для аватарок. #>
     param([Parameter(Mandatory)][string]$Url)
@@ -552,8 +677,14 @@ function Get-RamImageFromFile {
     try {
         $bytes = [System.IO.File]::ReadAllBytes($Path)
         $ms    = New-Object System.IO.MemoryStream(,$bytes)
-        $img   = [System.Drawing.Image]::FromStream($ms)
-        return $img
+        try {
+            # Копия в Bitmap, чтобы можно было закрыть поток. Раньше поток
+            # оставался жить вместе с картинкой и не освобождался никогда —
+            # при каждой пересборке списка это утекало.
+            $src = [System.Drawing.Image]::FromStream($ms)
+            try   { return (New-Object System.Drawing.Bitmap($src)) }
+            finally { $src.Dispose() }
+        } finally { $ms.Dispose() }
     } catch {
         return $null
     }

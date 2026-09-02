@@ -282,9 +282,12 @@ function New-RamAccount {
 
 function Save-RamAccounts {
     param(
-        [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$Accounts,
+        # AllowNull нужен вместе с AllowEmptyCollection: пустой список,
+        # прошедший через возврат из функции, приходит сюда как $null.
+        [Parameter(Mandatory)][AllowNull()][AllowEmptyCollection()][object[]]$Accounts,
         [string]$Password
     )
+    if ($null -eq $Accounts) { $Accounts = @() }
     # Та же защита, что и у настроек, и специально ЗДЕСЬ, а не только в
     # Save-RamState: перешифровка в диалоге настроек зовёт эту функцию
     # напрямую, минуя Save-RamState. Один пропущенный вызов — и проверочный
@@ -377,6 +380,7 @@ function Get-RamDefaultSettings {
         TileMargin      = 4
         KeepMutex       = $true  # держать мьютекс мультизапуска
         ConfirmOnExit   = $true
+        FirstRunDone    = $false # прошёл ли человек мастер первого запуска
     }
 }
 

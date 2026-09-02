@@ -298,9 +298,13 @@ function Start-RamRobloxInstance {
         throw "У аккаунта '$($Account.Alias)' не сохранена кука."
     }
 
+    # Постоянный на аккаунт. Раньше он генерировался заново на каждый запуск
+    # и тут же выбрасывался — а он нужен, чтобы после перезапуска менеджера
+    # опознать уже работающий клиент по его командной строке.
     $btid = $Account.BrowserTrackerId
     if ([string]::IsNullOrWhiteSpace($btid)) {
         $btid = [string](Get-Random -Minimum 100000000000 -Maximum 999999999999)
+        $Account.BrowserTrackerId = $btid
     }
 
     # Билет берём в самый последний момент — он живёт меньше минуты.

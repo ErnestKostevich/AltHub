@@ -30,6 +30,14 @@ $script:Settings = Load-RamSettings
 $total  = 0
 $passed = 0
 
+function Get-RamAllSource {
+    <# Весь исходный код одной строкой: AltHub.ps1 плюс все модули.
+       После разбиения файла по смыслу искать только в AltHub.ps1 нельзя —
+       проверка «режим main доживает до раскладки» на этом и сорвалась. #>
+    $files = @((Join-Path $root 'AltHub.ps1')) + (Get-ChildItem (Join-Path $root 'modules\*.ps1')).FullName
+    return (($files | ForEach-Object { Get-Content -LiteralPath $_ -Raw }) -join "`n")
+}
+
 function Check {
     param([string]$Name, [scriptblock]$Body)
     $script:total++
@@ -851,7 +859,7 @@ Check 'Раскладка ждёт появления окон' {
     try {
         # Режим «основной крупно» обязан доживать до раскладки: его ставит
         # «Быстрая настройка», а раньше он молча подменялся сеткой.
-        $src = Get-Content (Join-Path $root 'AltHub.ps1') -Raw
+        $src = Get-RamAllSource
         if ($src -notmatch "'grid','cascade','columns','rows','main'") {
             throw 'режим main снова не пускают в раскладку — выбор подменится сеткой'
         }
@@ -893,6 +901,30 @@ Check 'Раскладка ждёт появления окон' {
     'раскладка ждёт окна, не висит по таймауту, режим «основной крупно» доживает'
 }
 
+Check 'Выключенная кнопка не нажимается' {
+    # Раньше Set-RamButtonEnabled только перекрашивал кнопку, а обработчик
+    # Click оставался живым — серая кнопка отлично срабатывала.
+    $script:clicked = 0
+    $b = New-RamButton -Text 'Проба' -OnClick { $script:clicked++ }
+
+    $host1 = New-Object System.Windows.Forms.Form
+    $host1.Controls.Add($b)
+
+    Set-RamButtonEnabled -Button $b -Enabled $false
+    if ($b.Enabled) { throw 'после выключения панель кнопки осталась включённой' }
+    if ($b.Tag.Enabled) { throw 'состояние в Tag не обновилось' }
+
+    Set-RamButtonEnabled -Button $b -Enabled $true
+    if (-not $b.Enabled -or -not $b.Tag.Enabled) { throw 'кнопка не включилась обратно' }
+
+    # И надпись на выключенной кнопке должна оставаться читаемой размером.
+    Set-RamButtonEnabled -Button $b -Enabled $false
+    if ($b.Tag.IsHover -or $b.Tag.IsDown) { throw 'осталось состояние наведения на выключенной кнопке' }
+
+    $host1.Dispose()
+    'выключение гасит саму панель, состояние наведения сбрасывается'
+}
+
 Check 'Кнопка состояния входов не мигает' {
     $keep    = $script:Accounts
     $had     = $script:UI.ContainsKey('FixAll')
@@ -930,7 +962,7 @@ Check 'Кнопка состояния входов не мигает' {
 
         # Главное про этот баг: кнопка не должна прятаться. Пропадающая кнопка
         # дёргала макет и оставляла след на перерисовке.
-        $src = Get-Content (Join-Path $root 'AltHub.ps1') -Raw
+        $src = Get-RamAllSource
         if ($src -match '\$script:UI\.FixAll\.Visible\s*=') {
             throw 'кнопку входов где-то снова прячут — мигание вернётся'
         }
@@ -971,10 +1003,30 @@ Check 'Меню правого клика по карточке' {
 
         # Обработчики должны брать аккаунт из Tag, а не из замыкания цикла:
         # иначе меню всех карточек будут работать по последнему аккаунту.
-        foreach ($it in $menu.Items) {
-            if ($it -is [System.Windows.Forms.ToolStripSeparator]) { continue }
-            if (-not $it.Enabled) { continue }
-            if ([string]$it.Tag -ne $acc.Id) { throw "у пункта '$($it.Text)' в Tag не тот аккаунт" }
+        # Заодно и вложенные пункты подменю: составной ключ вида «id|набор»
+        # тоже обязан начинаться с нужного аккаунта.
+        $checkItems = {
+            param($items, [string]$where)
+            foreach ($it in $items) {
+                if ($it -is [System.Windows.Forms.ToolStripSeparator]) { continue }
+                if (-not $it.Enabled) { continue }
+                $tag = [string]$it.Tag
+                if ($tag -ne $acc.Id -and -not $tag.StartsWith($acc.Id + '|')) {
+                    throw "у пункта '$where$($it.Text)' в Tag не тот аккаунт"
+                }
+                if ($it.PSObject.Properties.Name -contains 'DropDownItems' -and
+                    $it.DropDownItems.Count -gt 0) {
+                    & $checkItems $it.DropDownItems ("$($it.Text) -> ")
+                }
+            }
+        }
+        & $checkItems $menu.Items ''
+
+        # Подменю наборов должно быть на месте и полным.
+        $subItem = $menu.Items | Where-Object { $_.Text -like '*Готовый набор*' } | Select-Object -First 1
+        if ($null -eq $subItem) { throw 'в меню нет подменю готовых наборов' }
+        if ($subItem.DropDownItems.Count -ne @(Get-RamAccountPresets).Count) {
+            throw "в подменю наборов $($subItem.DropDownItems.Count) пунктов вместо $(@(Get-RamAccountPresets).Count)"
         }
 
         # Удалённый аккаунт — меню открываться не должно.
@@ -1052,6 +1104,65 @@ Check 'Стоковые темы на месте' {
     if ((Set-RamTheme -Name 'нет-такой-темы').Key -ne 'dark') { throw 'неизвестная тема не откатилась на тёмную' }
     Set-RamTheme -Name 'dark' | Out-Null
     "стоковых тем: $($stock.Count), все собираются, неизвестная откатывается"
+}
+
+Check 'Стоковые темы отличаются на глаз' {
+    # Жалоба была прямая: «Небо и Светлая ничем не отличаются». И правда —
+    # Panel и Card у обеих выходили пиксель-в-пиксель белыми, потому что при
+    # светлоте ровно 1.0 формула HSL даёт чистый белый при любом тоне.
+    # Порог различимости на глаз — примерно 5-8 единиц RGB, берём 9 с запасом.
+    $limit = 9
+
+    $dist = {
+        param($a, $b)
+        [Math]::Sqrt([Math]::Pow($a.R - $b.R, 2) + [Math]::Pow($a.G - $b.G, 2) + [Math]::Pow($a.B - $b.B, 2))
+    }
+
+    $stock = @(Get-RamStockThemeList)
+    $pal = @{}
+    foreach ($t in $stock) { $pal[$t.Key] = Get-RamPalette -Name $t.Key }
+
+    # Сравниваем только темы одной основы: светлую с тёмной сравнивать незачем.
+    $isLight = {
+        param($p)
+        (ConvertTo-RamHsl -Color $p.Bg).L -gt 0.5
+    }
+
+    $worst = 999.0; $worstPair = ''
+    for ($i = 0; $i -lt $stock.Count; $i++) {
+        for ($j = $i + 1; $j -lt $stock.Count; $j++) {
+            $a = $pal[$stock[$i].Key]; $b = $pal[$stock[$j].Key]
+            if ((& $isLight $a) -ne (& $isLight $b)) { continue }
+
+            # Тема считается отличимой, если разошёлся хотя бы один из
+            # крупных планов: фон, панель или карточка.
+            $best = 0.0
+            foreach ($k in @('Bg', 'Panel', 'Card')) {
+                $d = & $dist $a[$k] $b[$k]
+                if ($d -gt $best) { $best = $d }
+            }
+            if ($best -lt $worst) {
+                $worst = $best
+                $worstPair = "$($stock[$i].Title) / $($stock[$j].Title)"
+            }
+        }
+    }
+
+    if ($worst -lt $limit) {
+        throw "темы «$worstPair» неразличимы: расхождение $([Math]::Round($worst,1)) при пороге $limit"
+    }
+
+    # И отдельно — то, с чего началась жалоба: панели светлых тем не должны
+    # быть поголовно чисто белыми.
+    $lightKeys = @($stock | Where-Object { & $isLight $pal[$_.Key] } | ForEach-Object { $_.Key })
+    if ($lightKeys.Count -ge 2) {
+        $whites = @($lightKeys | Where-Object { (ConvertTo-RamHex -Color $pal[$_].Panel) -eq '#FFFFFF' })
+        if ($whites.Count -eq $lightKeys.Count) {
+            throw 'у всех светлых тем панель чисто белая — тон снова не проявляется'
+        }
+    }
+
+    "самая близкая пара: $worstPair = $([Math]::Round($worst,1)) при пороге $limit"
 }
 
 Check 'Свои темы: запись, чтение, файл' {
@@ -1192,6 +1303,132 @@ Check 'Разбор популярных игр из Roblox' {
     'отбор, дедуп, сортировка и пределы работают; пустой ответ не роняет'
 }
 
+Check 'Замыкания не трогают script-переменные' {
+    # ГРАБЛИ, СТОИВШИЕ АВАРИИ У ЛЮДЕЙ. Внутри .GetNewClosure() модификатор
+    # script: указывает на область динамического модуля, а не файла: чтение
+    # даёт $null, запись теряется. Так упало «Добавить отмеченные» в
+    # популярных играх и молча ломались счётчики добавленных аккаунтов.
+    # Проверяем разбором AST, чтобы это не вернулось никогда.
+    $files = @((Join-Path $root 'AltHub.ps1')) + (Get-ChildItem (Join-Path $root 'modules\*.ps1')).FullName
+    $bad = @(); $total = 0
+
+    foreach ($f in $files) {
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile($f, [ref]$null, [ref]$null)
+        $calls = $ast.FindAll({
+            param($x) $x -is [System.Management.Automation.Language.InvokeMemberExpressionAst] -and
+                      "$($x.Member.Value)" -eq 'GetNewClosure'
+        }, $true)
+        $total += $calls.Count
+
+        foreach ($c in $calls) {
+            $sb = $c.Expression
+            if ($sb -isnot [System.Management.Automation.Language.ScriptBlockExpressionAst]) { continue }
+            $vars = $sb.FindAll({ param($x) $x -is [System.Management.Automation.Language.VariableExpressionAst] }, $true)
+            foreach ($v in $vars) {
+                if ($v.VariablePath.IsScript) {
+                    $bad += ('{0}:{1} — {2}' -f (Split-Path -Leaf $f), $v.Extent.StartLineNumber, $v.VariablePath.UserPath)
+                }
+            }
+        }
+    }
+
+    if ($bad.Count -gt 0) {
+        throw ('внутри замыканий есть обращения к script-области (там они не работают): ' + ($bad -join ' | '))
+    }
+    "замыканий $total, ни одно не обращается к script-области"
+}
+
+Check 'Есть защита от падения' {
+    # Без глобального перехватчика любая ошибка в обработчике поднимает окно
+    # WinForms с кнопкой «Выход», которая убивает процесс. Именно так у людей
+    # приложение «само закрывалось».
+    foreach ($fn in @('Register-RamCrashGuard', 'Invoke-RamSafe', 'Write-RamCrashDump')) {
+        if (-not (Get-Command $fn -ErrorAction SilentlyContinue)) { throw "нет функции $fn" }
+    }
+
+    # Ошибка внутри Invoke-RamSafe не должна прорываться наружу.
+    $after = $false
+    Invoke-RamSafe -What 'проверка' -Body { throw 'нарочно' }
+    $after = $true
+    if (-not $after) { throw 'ошибка прорвалась сквозь Invoke-RamSafe' }
+
+    # Значение при этом возвращается как обычно.
+    if ((Invoke-RamSafe -What 'проверка' -Body { 7 }) -ne 7) { throw 'значение не вернулось' }
+
+    # Все таймеры главного окна обязаны быть под защитой.
+    $src = Get-RamAllSource
+    foreach ($m in [regex]::Matches($src, '\.Add_Tick\(\{(.*?)\}\)', 'Singleline')) {
+        if ($m.Groups[1].Value -notmatch 'Invoke-RamSafe') {
+            throw ('таймер без защиты: ' + $m.Groups[1].Value.Trim())
+        }
+    }
+    'перехватчик, безопасный вызов и защищённые таймеры на месте'
+}
+
+Check 'Ограничение частоты не морозит окно' {
+    # Раньше 429 обрабатывался через Start-Sleep до 30 секунд прямо в тике
+    # таймера — окно замерзало. И главное: добыча CSRF-токена вызывалась вне
+    # try/catch, поэтому цикл повторов умирал на первом круге и пятый аккаунт
+    # молча пропадал. Отсюда и «максимум четыре».
+    $ex = New-RamRateLimitError -Seconds 12
+    if (-not $ex.Data.Contains('RamRetryAfter')) { throw 'ошибка не несёт паузу' }
+    if ([int]$ex.Data['RamRetryAfter'] -ne 12)   { throw 'пауза потерялась' }
+
+    # Пауза берётся из ответа, абсурдные значения отсекаются.
+    if ((Get-RamRetryAfterSeconds -Response ([pscustomobject]@{ Headers = @{ 'retry-after' = '7' } }) -Default 8) -ne 7) { throw 'заголовок retry-after не учтён' }
+    if ((Get-RamRetryAfterSeconds -Response ([pscustomobject]@{ Headers = @{} }) -Default 8) -ne 8) { throw 'нет запасного значения' }
+    if ((Get-RamRetryAfterSeconds -Response ([pscustomobject]@{ Headers = @{ 'retry-after' = '9999' } }) -Default 8) -ne 8) { throw 'абсурдная пауза не отсечена' }
+
+    # В добыче билета не должно остаться сна, а CSRF обязан быть под try.
+    $fn = (Get-Command Get-RamAuthTicket).Definition
+    if ($fn -match 'Start-Sleep') { throw 'в билете запуска снова появился Start-Sleep' }
+    if ($fn -notmatch '(?s)try\s*\{\s*\$csrf\s*=\s*Get-RamCsrfToken') { throw 'добыча CSRF снова вне try/catch' }
+
+    # Токен берём не с того же эндпоинта, что и билет: иначе двойная нагрузка.
+    $api = Get-Content (Join-Path $root 'modules\RobloxApi.ps1') -Raw
+    $iCat  = $api.IndexOf('catalog.roblox.com/v1/catalog/items/details')
+    $iAuth = $api.IndexOf("auth.roblox.com/v1/authentication-ticket/'; Body = '' }")
+    if ($iCat -le 0 -or $iAuth -le 0 -or $iCat -gt $iAuth) { throw 'auth.roblox.com снова первый источник CSRF' }
+
+    if ([Net.ServicePointManager]::DefaultConnectionLimit -lt 16) { throw 'лимит соединений не поднят' }
+    'пауза передаётся наверх, сна в UI нет, источники токена разведены'
+}
+
+Check 'Подхват уже работающих клиентов' {
+    $keepAcc  = $script:Accounts
+    $keepInst = $script:Instances
+    try {
+        $a1 = New-RamAccount -Alias 'Основной' -Cookie 'x'
+        $a2 = New-RamAccount -Alias 'Твинк 1'  -Cookie 'x'
+        $a2.BrowserTrackerId = '123456789012'
+        $script:Accounts  = @($a1, $a2)
+        $script:Instances = @{}
+
+        # Чужой процесс не должен присваиваться наугад.
+        if ($null -ne (Get-RamClientOwner -ProcessId 999999 -Handle ([IntPtr]::Zero))) {
+            throw 'неизвестный процесс опознан как чей-то аккаунт'
+        }
+
+        # Подхват на пустом месте не падает.
+        [void](Restore-RamAdoptRunningClients)
+
+        # BrowserTrackerId должен сохраняться в аккаунт, иначе после
+        # перезапуска опознать клиент будет нечем.
+        $lnk = Get-Content (Join-Path $root 'modules\Launcher.ps1') -Raw
+        if ($lnk -notmatch '\$Account\.BrowserTrackerId\s*=\s*\$btid') {
+            throw 'BrowserTrackerId снова не сохраняется в аккаунт'
+        }
+
+        # Подхват обязан вызываться при старте.
+        $src = Get-RamAllSource
+        if ($src -notmatch 'Restore-RamAdoptRunningClients') { throw 'подхват не вызывается при старте' }
+    } finally {
+        $script:Accounts  = $keepAcc
+        $script:Instances = $keepInst
+    }
+    'чужой процесс не присваивается, btid сохраняется, подхват подключён к старту'
+}
+
 Check 'Окна и оформление собираются' {
     $form = New-RamMainForm
     if ($form.Controls.Count -lt 5) { throw "в главном окне только $($form.Controls.Count) элементов" }
@@ -1257,44 +1494,64 @@ Check 'Нижняя строка выровнена' {
     'кнопка входов на общей правой линии, панель не задета, строка не налезает'
 }
 
-Check 'Вёрстка: ничего не обрезано и не наложено' {
+Check 'Вёрстка держится на 100%, 125% и 150%' {
     <#
-      Обмеряет каждую подпись и кнопку во всех окнах и сравнивает с отведённым
-      местом. Свободный текст пользователя (имя, заметка, название игры) помечен
-      как Truncatable и пропускается — для него многоточие нормально.
+      Обходит ВСЕ окна программы и проверяет три вещи:
+        1) текст влезает в отведённое место;
+        2) элемент не вылезает за свой контейнер и за окно;
+        3) соседи не налезают друг на друга.
+
+      И делает это трижды — при обычном масштабе экрана, при 125% и при 150%.
+
+      ЗАЧЕМ ТРИ МАСШТАБА. Подписи меряются шрифтом, а шрифт растёт вместе с
+      масштабом экрана. Координаты в пикселях — нет. Поэтому вёрстка, которая
+      идеальна на машине разработчика, на 150% разъезжается: подписи наезжают
+      на кнопки, а кнопки вылезают за край панели. Системный масштаб при этом
+      не трогаем — просто подменяем шрифты темы через $Global:RamForceScale.
+
+      ЗАЧЕМ РЕЕСТР ОКОН. Раньше окна перечислялись здесь руками, список отстал
+      и проверялись четыре из одиннадцати. Из-за этого наложение в конструкторе
+      тем никто не видел. Теперь список живёт рядом с окнами.
+
+      ВНИМАНИЕ НА ОБЛАСТЬ ВИДИМОСТИ. Список найденного обязан быть именно
+      $script:bad. Вложенные функции ниже пишут в него, и если завести здесь
+      обычный локальный $bad, то это будут ДВЕ РАЗНЫЕ переменные: находки
+      уйдут в одну, а проверяться будет пустая другая. Ровно из-за этого
+      прошлая версия проверки была зелёной всегда, даже когда наложения были.
     #>
-    $bad = @()
+    $script:bad = @()
+
+    # Панели разделов главного окна лежат друг на друге НАРОЧНО: это стопка
+    # страниц, видна всегда одна. Их пересечения — не ошибка.
+    $stack = @{}
 
     function Test-RamFits {
         param($Control, [string]$Where)
 
-        if ($Control -is [System.Windows.Forms.Panel] -and $null -ne $Control.Tag -and
-            $Control.Tag.PSObject.Properties.Name -contains 'Caption') {
-            $txt = [string]$Control.Tag.Caption
-            if ($txt) {
-                $fnt = $Control.Tag.Font
-                if ($null -eq $fnt) { $fnt = $Global:RamTheme.FontBody }
-                $w = [System.Windows.Forms.TextRenderer]::MeasureText($txt, $fnt).Width
-                if ($w + 8 -gt $Control.Width) {
-                    $script:bad += "${Where}: кнопка «$txt» ($($w + 8)px в $($Control.Width)px)"
-                }
+        # --- кнопка: надпись должна влезать
+        if ($null -ne $Control.Tag -and
+            $Control.Tag.PSObject.Properties.Name -contains 'Caption' -and
+            $Control.Tag.PSObject.Properties.Name -contains 'Natural') {
+            $fixed = $false
+            if ($Control.Tag.PSObject.Properties.Name -contains 'Fixed') { $fixed = [bool]$Control.Tag.Fixed }
+            if (-not $fixed -and $Control.Tag.Natural.Width -gt $Control.Width + 1) {
+                $script:bad += "${Where}: кнопка «$($Control.Tag.Caption)» не влезает ($($Control.Tag.Natural.Width)px в $($Control.Width)px)"
             }
         }
 
+        # --- подпись
         if ($Control -is [System.Windows.Forms.Label]) {
             $txt  = [string]$Control.Text
             $free = ([string]$Control.Tag -eq 'truncatable')
             if ($txt -and -not $Control.AutoSize -and -not $free) {
                 $multi = ($txt -match "`n") -or ($Control.Height -ge $Control.Font.Height * 1.8)
                 if ($multi) {
-                    $sz = [System.Windows.Forms.TextRenderer]::MeasureText(
-                            $txt, $Control.Font, (New-Object System.Drawing.Size($Control.Width, 4000)),
-                            [System.Windows.Forms.TextFormatFlags]::WordBreak)
+                    $sz = Measure-RamText -Text $txt -Font $Control.Font -MaxWidth $Control.Width
                     if ($sz.Height -gt $Control.Height + 2) {
                         $script:bad += "${Where}: многострочная не влезла по высоте ($($sz.Height)px в $($Control.Height)px)"
                     }
                 } else {
-                    $one = [System.Windows.Forms.TextRenderer]::MeasureText($txt, $Control.Font).Width
+                    $one = (Measure-RamText -Text $txt -Font $Control.Font).Width
                     if ($one -gt $Control.Width + 1) {
                         $script:bad += "${Where}: подпись «$txt» ($($one)px в $($Control.Width)px)"
                     }
@@ -1302,15 +1559,23 @@ Check 'Вёрстка: ничего не обрезано и не наложен
             }
         }
 
-        # Элемент не должен вылезать за пределы своего контейнера.
-        if ($null -ne $Control.Parent -and -not ($Control.Parent -is [System.Windows.Forms.Form])) {
+        # --- не вылезает за контейнер. ТЕПЕРЬ И ДЛЯ ДЕТЕЙ САМОЙ ФОРМЫ:
+        # раньше эта ветка их исключала, поэтому в диалогах, где всё лежит
+        # прямо на окне, выход за край был невидим в принципе.
+        if ($null -ne $Control.Parent) {
             $par = $Control.Parent
+            $box = $par.ClientSize
             $scrollable = ($par -is [System.Windows.Forms.FlowLayoutPanel] -and $par.AutoScroll)
-            if (-not $scrollable) {
-                if ($Control.Right -gt $par.ClientSize.Width + 1 -or
-                    $Control.Bottom -gt $par.ClientSize.Height + 1) {
-                    $script:bad += "${Where}: элемент вылезает за контейнер (правый край $($Control.Right) при $($par.ClientSize.Width))"
-                }
+
+            if ($Control.Left -lt -1 -or $Control.Top -lt -1) {
+                $script:bad += "${Where}: элемент за левым/верхним краем ($($Control.Left),$($Control.Top))"
+            }
+            if ($Control.Right -gt $box.Width + 1) {
+                $script:bad += "${Where}: вылезает вправо (край $($Control.Right) при ширине $($box.Width))"
+            }
+            # Прокручиваемым разрешаем расти вниз, но не вбок.
+            if (-not $scrollable -and $Control.Bottom -gt $box.Height + 1) {
+                $script:bad += "${Where}: вылезает вниз (край $($Control.Bottom) при высоте $($box.Height))"
             }
         }
 
@@ -1318,9 +1583,9 @@ Check 'Вёрстка: ничего не обрезано и не наложен
     }
 
     function Test-RamOverlap {
-        <# Соседние элементы не должны налезать друг на друга.
+        <# Соседи не должны налезать друг на друга.
            По Visible фильтровать нельзя: у непоказанного окна всё числится
-           невидимым, и проверка молча пропустит всё. #>
+           невидимым, и проверка молча пропустила бы всё. #>
         param($Parent, [string]$Where)
 
         $kids = @()
@@ -1332,14 +1597,26 @@ Check 'Вёрстка: ничего не обрезано и не наложен
         for ($i = 0; $i -lt $kids.Count; $i++) {
             for ($j = $i + 1; $j -lt $kids.Count; $j++) {
                 $x = $kids[$i]; $y = $kids[$j]
-                if ($x.Height -le 6 -or $y.Height -le 6) { continue }       # полоски-акценты
-                if ($x.Controls.Count -gt 0 -or $y.Controls.Count -gt 0) { continue }  # контейнеры
+                if ($x.Height -le 6 -or $y.Height -le 6) { continue }   # полоски-акценты
+
+                # Стопка страниц — лежат друг на друге по замыслу.
+                if ($stack.ContainsKey($x) -and $stack.ContainsKey($y)) { continue }
+                # То же для диалогов с разделами: панели зовутся ramPage_*.
+                if ([string]$x.Name -like 'ramPage_*' -and [string]$y.Name -like 'ramPage_*') { continue }
 
                 $r = [System.Drawing.Rectangle]::Intersect($x.Bounds, $y.Bounds)
-                if ($r.Width -gt 2 -and $r.Height -gt 2) {
-                    $xn = if ($x -is [System.Windows.Forms.Label]) { $x.Text } else { $x.GetType().Name }
-                    $yn = if ($y -is [System.Windows.Forms.Label]) { $y.Text } else { $y.GetType().Name }
-                    $script:bad += "${Where}: наложение «$xn» и «$yn» на $($r.Width)x$($r.Height)px"
+                # Порога нет: у соприкасающихся прямоугольников пересечение
+                # пустое, поэтому любое ненулевое — это уже настоящее наложение.
+                # Со старым порогом «больше двух пикселей» кнопка на подписи
+                # в разделе «Профили» проходила ровно по границе.
+                if ($r.Width -gt 0 -and $r.Height -gt 0) {
+                    $xn = if ($x -is [System.Windows.Forms.Label]) { "«$($x.Text)»" }
+                          elseif ($null -ne $x.Tag -and $x.Tag.PSObject.Properties.Name -contains 'Caption') { "кнопка «$($x.Tag.Caption)»" }
+                          else { $x.GetType().Name }
+                    $yn = if ($y -is [System.Windows.Forms.Label]) { "«$($y.Text)»" }
+                          elseif ($null -ne $y.Tag -and $y.Tag.PSObject.Properties.Name -contains 'Caption') { "кнопка «$($y.Tag.Caption)»" }
+                          else { $y.GetType().Name }
+                    $script:bad += "${Where}: наложение $xn и $yn на $($r.Width)x$($r.Height)px"
                 }
             }
         }
@@ -1349,61 +1626,107 @@ Check 'Вёрстка: ничего не обрезано и не наложен
         }
     }
 
-    $keepAcc = $script:Accounts
+    # --- подопытные данные: длинные названия, смайлики, мёртвый вход
+    $keepAcc     = $script:Accounts
+    $keepGames   = $script:Settings.Games
+    $keepProf    = $script:Settings.Profiles
     $keepCompact = $script:Settings.CompactCards
-    $keepTray = $script:Settings.MinimizeToTray
+    $keepTray    = $script:Settings.MinimizeToTray
+    $keepScale   = $Global:RamForceScale
+    $keepTheme   = $script:Settings.Theme
+
     try {
         $script:Settings.MinimizeToTray = $false
 
-        # Нарочно длинные названия — на них вёрстка и ломалась.
         $a1 = New-RamAccount -Alias 'Основной' -Cookie 'x' -PlaceId '1'
         $a1.Username = 'TestPlayer'; $a1.UserId = 1234567
         $a1.Group = 'Основные аккаунты'; $a1.Note = 'заметка подлиннее для проверки'
         $a1.GameName = 'Elemental Dungeons'; $a1.Robux = 12345; $a1.Premium = 'yes'; $a1.Created = '2022-11-16'
         $a1.Graphics = '10'; $a1.Volume = '100'; $a1.FramerateCap = '240'
-        $script:Accounts = @($a1)
 
-        $form = New-RamMainForm
-        foreach ($sec in @('accounts','games','profiles','stats','log')) {
-            Show-RamSection -Key $sec
-            if ($sec -eq 'accounts') { Build-RamCards }
-            Test-RamFits -Control $form -Where "окно/$sec"
-            Test-RamOverlap -Parent $form -Where "окно/$sec"
+        $a2 = New-RamAccount -Alias 'Твинк с очень длинным именем аккаунта' -Cookie 'x'
+        $a2.Username = 'VeryLongUserNameHere'; $a2.UserId = 7654321
+        $a2.Group = 'Твины на приватном сервере'; $a2.CookieOk = 'no'
+        $a2.GameName = '[🌙] Elemental Dungeons'; $a2.Graphics = '1'; $a2.Volume = '0'; $a2.FramerateCap = '30'
+
+        $script:Accounts = @($a1, $a2)
+        $script:Settings.Games = @(
+            [pscustomobject]@{ Title = 'Blox Fruits'; PlaceId = '2753915549'; LinkCode = '' },
+            [pscustomobject]@{ Title = '[🌙] Игра с очень длинным названием для проверки'; PlaceId = '111'; LinkCode = 'abc' }
+        )
+        $script:Settings.Profiles = @(
+            [pscustomobject]@{ Name = 'Твины на випку'; Group = 'Твины на приватном сервере'; PlaceId = '111'; GameName = 'Elemental Dungeons'; LinkCode = 'abc' }
+        )
+
+        foreach ($scale in @(1.0, 1.25, 1.5)) {
+            $Global:RamForceScale = $scale
+            $script:RamDpiScale   = $null
+            # Эталонный экран растёт вместе с масштабом: настоящий монитор
+            # со 150% — это и физически больший монитор. Иначе мы бы проверяли
+            # крупный шрифт на маленьком столе и получали тесноту на пустом месте.
+            $Global:RamForceWorkArea = [pscustomobject]@{
+                Width  = [int](1600 * $scale)
+                Height = [int](1000 * $scale)
+            }
+            Set-RamTheme -Name $script:Settings.Theme | Out-Null
+
+            foreach ($w in Get-RamCheckableWindows) {
+                $form = $null
+                try { $form = & $w.Build } catch {
+                    $script:bad += "$($w.Name)@$($scale): окно не собралось — $($_.Exception.Message)"
+                    continue
+                }
+                if ($null -eq $form) { continue }
+
+                try {
+                    $stack = @{}
+                    if ($w.Main -and $script:UI.ContainsKey('Panels')) {
+                        foreach ($pnl in $script:UI.Panels.Values) { $stack[$pnl] = $true }
+                    }
+
+                    if ($w.Sections) {
+                        foreach ($sec in $w.Sections) {
+                            Show-RamSection -Key $sec
+                            if ($sec -eq 'accounts') { Build-RamCards }
+                            Test-RamFits   -Control $form -Where "$($w.Name)/$sec@$scale"
+                            Test-RamOverlap -Parent $form -Where "$($w.Name)/$sec@$scale"
+                        }
+                        $script:Settings.CompactCards = $true
+                        Show-RamSection -Key 'accounts'; Build-RamCards
+                        Test-RamFits   -Control $form -Where "$($w.Name)/компакт@$scale"
+                        Test-RamOverlap -Parent $form -Where "$($w.Name)/компакт@$scale"
+                        $script:Settings.CompactCards = $false
+                    } else {
+                        Test-RamFits   -Control $form -Where "$($w.Name)@$scale"
+                        Test-RamOverlap -Parent $form -Where "$($w.Name)@$scale"
+                    }
+                } finally {
+                    if ($w.Main) {
+                        foreach ($tn in @('UpdateTimer','ScheduleTimer','LaunchTimer','SearchTimer','StartupTimer')) {
+                            if ($script:UI.ContainsKey($tn) -and $null -ne $script:UI[$tn]) { $script:UI[$tn].Stop() }
+                        }
+                    }
+                    $form.Dispose()
+                }
+            }
         }
-
-        $script:Settings.CompactCards = $true
-        Show-RamSection -Key 'accounts'; Build-RamCards
-        Test-RamFits -Control $form -Where 'окно/компактные'
-        Test-RamOverlap -Parent $form -Where 'окно/компактные'
-
-        $script:UI.UpdateTimer.Stop()
-        $script:UI.ScheduleTimer.Stop()
-        $form.Dispose()
-
-        $wiz = Show-RamAddWizard -BuildOnly
-        Test-RamFits -Control $wiz -Where 'мастер'
-        Test-RamOverlap -Parent $wiz -Where 'мастер'
-        $wiz.Dispose()
-
-        $dlg = Show-RamAccountDialog -Account $a1 -BuildOnly
-        Test-RamFits -Control $dlg -Where 'аккаунт'
-        Test-RamOverlap -Parent $dlg -Where 'аккаунт'
-        $dlg.Dispose()
-
-        $st = Show-RamSettingsDialog -BuildOnly
-        Test-RamFits -Control $st -Where 'настройки'
-        Test-RamOverlap -Parent $st -Where 'настройки'
-        $st.Dispose()
     } finally {
         $script:Accounts = $keepAcc
+        $script:Settings.Games = $keepGames
+        $script:Settings.Profiles = $keepProf
         $script:Settings.CompactCards = $keepCompact
         $script:Settings.MinimizeToTray = $keepTray
+        $Global:RamForceScale = $keepScale
+        $Global:RamForceWorkArea = $null
+        $script:RamDpiScale = $null
+        Set-RamTheme -Name $keepTheme | Out-Null
     }
 
-    if ($bad.Count -gt 0) {
-        throw ($bad.Count.ToString() + ' шт., первое: ' + $bad[0])
+    if ($script:bad.Count -gt 0) {
+        $show = $script:bad | Select-Object -First 6
+        throw ($script:bad.Count.ToString() + ' шт.: ' + ($show -join ' | '))
     }
-    'ничего не обрезано, не вылезает за края и не налезает друг на друга'
+    'все окна на трёх масштабах: ничего не обрезано, не вылезает и не налезает'
 }
 
 Check 'Аватарки грузятся (публичный запрос, без куки)' {

@@ -22,6 +22,85 @@
 # в HSL и вывод целой палитры из одного акцента. Держим это здесь, рядом с
 # палитрами, чтобы цвета всей программы задавались из одного места.
 
+function Get-RamDpiScale {
+    <#
+      Во сколько раз экран крупнее обычного (96 точек на дюйм):
+      1.0 при 100%, 1.25 при 125%, 1.5 при 150%.
+
+      $Global:RamForceScale — подмена для Самопроверки. Она позволяет
+      прогнать всю вёрстку при 125% и 150%, НЕ трогая системный масштаб
+      экрана. На живом запуске такой переменной нет и берётся настоящий DPI.
+    #>
+    if ($null -ne $Global:RamForceScale) { return [double]$Global:RamForceScale }
+    if ($null -ne $script:RamDpiScale)   { return $script:RamDpiScale }
+
+    $sc = 1.0
+    try {
+        $f = New-Object System.Windows.Forms.Form
+        $g = $f.CreateGraphics()
+        $sc = $g.DpiY / 96.0
+        $g.Dispose(); $f.Dispose()
+    } catch { }
+    $script:RamDpiScale = [Math]::Max(1.0, $sc)
+    return $script:RamDpiScale
+}
+
+function Get-RamMetrics {
+    <#
+      Единая таблица отступов и высот В НАСТОЯЩИХ ПИКСЕЛЯХ текущего масштаба.
+
+      Все числа вёрстки берутся отсюда. Вписывать координаты и отступы прямо
+      в код окон нельзя: именно из-за этого при 125% и 150% подписи наезжали
+      на кнопки — шрифт рос вместе с масштабом, а числа оставались прежними.
+    #>
+    param([double]$Scale = 0)
+
+    if ($Scale -le 0) { $Scale = Get-RamDpiScale }
+    $k = { param($v) [int][Math]::Round($v * $Scale) }
+
+    @{
+        Scale    = $Scale
+        GapSm    = & $k 4
+        Gap      = & $k 8
+        GapLg    = & $k 16
+        PadX     = & $k 28
+        PadY     = & $k 22
+        RowH     = & $k 34
+        RowHSm   = & $k 30
+        RowHLg   = & $k 38
+        LabelH   = & $k 20
+        CaptionH = & $k 18
+        BtnPadX  = & $k 34
+        BtnMinW  = & $k 110
+        CardPad  = & $k 24
+        StripeH  = & $k 4
+        ScrollW  = & $k 17
+    }
+}
+
+function Measure-RamText {
+    <#
+      Размер надписи текущим шрифтом темы.
+      -MaxWidth больше нуля включает перенос по словам.
+    #>
+    param(
+        [Parameter(Mandatory)][AllowEmptyString()][string]$Text,
+        $Font,
+        [int]$MaxWidth = 0
+    )
+
+    if ($null -eq $Font) { $Font = $Global:RamTheme.FontBody }
+    if ([string]::IsNullOrEmpty($Text)) { return (New-Object System.Drawing.Size(0, 0)) }
+
+    if ($MaxWidth -gt 0) {
+        return [System.Windows.Forms.TextRenderer]::MeasureText(
+            $Text, $Font,
+            (New-Object System.Drawing.Size($MaxWidth, 4000)),
+            [System.Windows.Forms.TextFormatFlags]::WordBreak)
+    }
+    return [System.Windows.Forms.TextRenderer]::MeasureText($Text, $Font)
+}
+
 function ConvertTo-RamHex {
     <# Color -> '#RRGGBB'. #>
     param([Parameter(Mandatory)][System.Drawing.Color]$Color)
@@ -107,7 +186,7 @@ function Get-RamPaletteColorKeys {
     #>
     @(
         [pscustomobject]@{ Key = 'Bg';        Title = 'Фон окна' }
-        [pscustomobject]@{ Key = 'Panel';     Title = 'Панель (боковое меню, тулбар)' }
+        [pscustomobject]@{ Key = 'Panel';     Title = 'Боковое меню и тулбар' }
         [pscustomobject]@{ Key = 'Card';      Title = 'Карточка аккаунта' }
         [pscustomobject]@{ Key = 'CardHover'; Title = 'Карточка под мышью' }
         [pscustomobject]@{ Key = 'CardSel';   Title = 'Выделение' }
@@ -136,56 +215,84 @@ function New-RamDerivedPalette {
     #>
     param(
         [Parameter(Mandatory)][System.Drawing.Color]$Accent,
-        [ValidateSet('dark','light','black')][string]$Base = 'dark'
+        [ValidateSet('dark','light','black')][string]$Base = 'dark',
+        # Насколько сильно тон акцента примешан к нейтральным (фон, панели,
+        # карточки). -1 = взять значение по умолчанию для этой основы.
+        [double]$Tint = -1,
+        # Сдвиг светлоты всех нейтральных. Нужен, чтобы готовые темы
+        # различались не только тоном, но и глубиной.
+        [double]$Lift = 0
     )
 
     $hsl = ConvertTo-RamHsl -Color $Accent
     $h   = $hsl.H
-    $tint = 0.10          # примесь тона в нейтральных
-    $mk = { param($sat, $lum) ConvertFrom-RamHsl -H $h -S $sat -L $lum }
+    $mk  = { param($sat, $lum) ConvertFrom-RamHsl -H $h -S $sat -L ([Math]::Max(0.0, [Math]::Min(1.0, $lum))) }
 
     if ($Base -eq 'light') {
+        # ПОЧЕМУ ЗДЕСЬ НЕ L = 1.0.
+        # В HSL при светлоте ровно 1.0 формула даёт чистый белый при ЛЮБОМ
+        # тоне и любой насыщенности. Раньше Panel и Card считались как
+        # (0.02, 1.00) — и все светлые темы получались пиксель-в-пиксель
+        # одинаковыми. Отсюда жалоба «Небо и Светлая ничем не отличаются».
+        # Держим потолок ниже единицы, чтобы тон вообще мог проявиться.
+        if ($Tint -lt 0) { $Tint = 0.45 }
+
         return @{
-            Bg        = & $mk $tint 0.965
-            Panel     = & $mk 0.02  1.00
-            Card      = & $mk 0.02  1.00
-            CardHover = & $mk ($tint * 1.6) 0.945
-            CardSel   = & $mk 0.85  0.90
-            Border    = & $mk $tint 0.86
-            Text      = & $mk 0.22  0.13
-            Muted     = & $mk 0.14  0.44
+            Bg        = & $mk $Tint            (0.955 + $Lift)
+            Panel     = & $mk ($Tint * 0.55)   (0.995 + $Lift)
+            Card      = & $mk ($Tint * 0.40)   (0.992 + $Lift)
+            CardHover = & $mk ($Tint * 0.85)   (0.940 + $Lift)
+            CardSel   = & $mk 0.85             (0.895 + $Lift)
+            Border    = & $mk ($Tint * 0.70)   (0.855 + $Lift)
+            Text      = & $mk 0.28             0.13
+            Muted     = & $mk 0.18             0.44
             Accent    = $Accent
             AccentHov = & $mk ([Math]::Min(1.0, $hsl.S + 0.05)) ([Math]::Min(0.62, $hsl.L + 0.08))
             Ok        = ConvertFrom-RamHsl -H 150 -S 0.72 -L 0.34
             Warn      = ConvertFrom-RamHsl -H  35 -S 0.92 -L 0.38
             Danger    = ConvertFrom-RamHsl -H   2 -S 0.66 -L 0.49
             DangerHov = ConvertFrom-RamHsl -H   2 -S 0.72 -L 0.59
-            LogBack   = & $mk $tint 0.985
+            LogBack   = & $mk ($Tint * 0.45)   (0.985 + $Lift)
         }
     }
 
     # Тёмная основа. 'black' — почти чёрный фон для AMOLED-экранов.
-    $bgL   = if ($Base -eq 'black') { 0.03 } else { 0.095 }
-    $panL  = if ($Base -eq 'black') { 0.07 } else { 0.135 }
-    $cardL = if ($Base -eq 'black') { 0.11 } else { 0.175 }
-    $logL  = if ($Base -eq 'black') { 0.02 } else { 0.075 }
+    #
+    # Примесь тона раньше была 0.10, и на тёмном это давало разброс каналов
+    # всего ±2 — темы «Изумруд» и «Океан» отличались фоном на 2 единицы RGB
+    # при пороге различимости 5–8. Подняли до заметного.
+    # Скобочный if как выражение PowerShell 5.1 не понимает — только присваивание.
+    $isBlack = ($Base -eq 'black')
+    if ($Tint -lt 0) {
+        if ($isBlack) { $Tint = 0.30 } else { $Tint = 0.26 }
+    }
+
+    if ($isBlack) {
+        $bgL = 0.030; $panL = 0.070; $cardL = 0.110; $logL = 0.020
+    } else {
+        $bgL = 0.095; $panL = 0.135; $cardL = 0.175; $logL = 0.075
+    }
+    $bgL   += $Lift
+    $panL  += $Lift
+    $cardL += $Lift
+    $logL  += $Lift
 
     return @{
-        Bg        = & $mk $tint $bgL
-        Panel     = & $mk $tint $panL
-        Card      = & $mk $tint $cardL
-        CardHover = & $mk ($tint * 1.3) ($cardL + 0.05)
-        CardSel   = & $mk 0.50 ($cardL + 0.06)
-        Border    = & $mk $tint ($cardL + 0.11)
-        Text      = & $mk 0.14 0.95
-        Muted     = & $mk 0.12 0.62
+        Bg        = & $mk $Tint            $bgL
+        Panel     = & $mk ($Tint * 0.92)   $panL
+        Card      = & $mk ($Tint * 0.85)   $cardL
+        CardHover = & $mk ($Tint * 1.05)   ($cardL + 0.05)
+        CardSel   = & $mk 0.50             ($cardL + 0.06)
+        Border    = & $mk ($Tint * 0.75)   ($cardL + 0.11)
+        Text      = & $mk 0.16             0.95
+        Muted     = & $mk 0.14             0.62
         Accent    = $Accent
         AccentHov = & $mk ([Math]::Min(1.0, $hsl.S + 0.04)) ([Math]::Min(0.80, $hsl.L + 0.10))
         Ok        = ConvertFrom-RamHsl -H 145 -S 0.60 -L 0.53
         Warn      = ConvertFrom-RamHsl -H  38 -S 0.90 -L 0.50
         Danger    = ConvertFrom-RamHsl -H   0 -S 0.83 -L 0.60
         DangerHov = ConvertFrom-RamHsl -H   0 -S 0.90 -L 0.68
-        LogBack   = & $mk $tint $logL
+        LogBack   = & $mk ($Tint * 0.85)   $logL
     }
 }
 
@@ -304,32 +411,36 @@ function Get-RamPalette {
         #     разом и останутся согласованными. Ручные — только три первых,
         #     их трогать незачем.
 
-        'emerald' {  # Изумруд — тёмная с зелёным
-            $p = New-RamDerivedPalette -Accent ([System.Drawing.Color]::FromArgb(16, 185, 129)) -Base 'dark'
+        # Тон + СВОЯ глубина и своя примесь. Одного тона мало: без разницы
+        # в светлоте и насыщенности темы выглядят как один и тот же серый
+        # интерфейс с перекрашенной кнопкой.
+
+        'emerald' {  # Изумруд — глубокая зелёная
+            $p = New-RamDerivedPalette -Accent ([System.Drawing.Color]::FromArgb(16, 185, 129)) -Base 'dark' -Tint 0.34 -Lift -0.012
             $p.Key = 'emerald'; $p.Title = 'Изумруд'; return $p
         }
-        'sunset' {   # Закат — тёмная с оранжево-розовым
-            $p = New-RamDerivedPalette -Accent ([System.Drawing.Color]::FromArgb(251, 113, 64)) -Base 'dark'
+        'sunset' {   # Закат — тёплая, чуть светлее прочих
+            $p = New-RamDerivedPalette -Accent ([System.Drawing.Color]::FromArgb(251, 113, 64)) -Base 'dark' -Tint 0.30 -Lift 0.022
             $p.Key = 'sunset'; $p.Title = 'Закат'; return $p
         }
-        'rose' {     # Роза — тёмная с розовым
-            $p = New-RamDerivedPalette -Accent ([System.Drawing.Color]::FromArgb(244, 94, 150)) -Base 'dark'
+        'rose' {     # Роза — тёплая розовая, средней глубины
+            $p = New-RamDerivedPalette -Accent ([System.Drawing.Color]::FromArgb(244, 94, 150)) -Base 'dark' -Tint 0.26 -Lift 0.008
             $p.Key = 'rose'; $p.Title = 'Роза'; return $p
         }
-        'ocean' {    # Океан — тёмная с бирюзовым
-            $p = New-RamDerivedPalette -Accent ([System.Drawing.Color]::FromArgb(34, 197, 211)) -Base 'dark'
+        'ocean' {    # Океан — холодная бирюза, светлее изумруда
+            $p = New-RamDerivedPalette -Accent ([System.Drawing.Color]::FromArgb(34, 197, 211)) -Base 'dark' -Tint 0.28 -Lift 0.030
             $p.Key = 'ocean'; $p.Title = 'Океан'; return $p
         }
-        'grape' {    # Виноград — тёмная с сиреневым
-            $p = New-RamDerivedPalette -Accent ([System.Drawing.Color]::FromArgb(168, 120, 245)) -Base 'dark'
+        'grape' {    # Виноград — самая насыщенная и тёмная
+            $p = New-RamDerivedPalette -Accent ([System.Drawing.Color]::FromArgb(168, 120, 245)) -Base 'dark' -Tint 0.40 -Lift -0.004
             $p.Key = 'grape'; $p.Title = 'Виноград'; return $p
         }
         'amoled' {   # Чёрная — почти чёрный фон для AMOLED
-            $p = New-RamDerivedPalette -Accent ([System.Drawing.Color]::FromArgb(0, 162, 255)) -Base 'black'
+            $p = New-RamDerivedPalette -Accent ([System.Drawing.Color]::FromArgb(0, 162, 255)) -Base 'black' -Tint 0.24
             $p.Key = 'amoled'; $p.Title = 'Чёрная'; return $p
         }
-        'sky' {      # Небо — светлая с голубым
-            $p = New-RamDerivedPalette -Accent ([System.Drawing.Color]::FromArgb(14, 130, 233)) -Base 'light'
+        'sky' {      # Небо — светлая, отчётливо голубая (не серая, как Светлая)
+            $p = New-RamDerivedPalette -Accent ([System.Drawing.Color]::FromArgb(14, 130, 233)) -Base 'light' -Tint 0.62 -Lift -0.012
             $p.Key = 'sky'; $p.Title = 'Небо'; return $p
         }
 
@@ -392,11 +503,25 @@ function Set-RamTheme {
     if ($known -notcontains $Name) { $Name = 'dark' }
     $p = Get-RamPalette -Name $Name
 
-    $p.FontBig   = New-Object System.Drawing.Font('Segoe UI Semibold', 15)
-    $p.FontTitle = New-Object System.Drawing.Font('Segoe UI Semibold', 11)
-    $p.FontBody  = New-Object System.Drawing.Font('Segoe UI', 9.5)
-    $p.FontSmall = New-Object System.Drawing.Font('Segoe UI', 8.5)
-    $p.FontMono  = New-Object System.Drawing.Font('Consolas', 9)
+    # Шрифты заданы в ПУНКТАХ, поэтому на настоящем экране 150% они уже
+    # крупнее сами по себе — умножать не надо. А вот когда Самопроверка
+    # притворяется, что масштаб 150% на обычном экране, умножить необходимо,
+    # иначе эффект просто не воспроизведётся.
+    $fs = 1.0
+    if ($null -ne $Global:RamForceScale) { $fs = [double]$Global:RamForceScale }
+
+    $p.FontBig   = New-Object System.Drawing.Font('Segoe UI Semibold', (15  * $fs))
+    $p.FontTitle = New-Object System.Drawing.Font('Segoe UI Semibold', (11  * $fs))
+    $p.FontBody  = New-Object System.Drawing.Font('Segoe UI',          (9.5 * $fs))
+    $p.FontSmall = New-Object System.Drawing.Font('Segoe UI',          (8.5 * $fs))
+    $p.FontMono  = New-Object System.Drawing.Font('Consolas',          (9   * $fs))
+
+    # Кэш эмодзи-шрифтов держит РАЗМЕР, поэтому при смене масштаба его надо
+    # выбросить — иначе смайлики останутся прежней величины.
+    $script:RamEmojiFonts = @{}
+
+    # Метрики пересобираются вместе с темой: они зависят от масштаба.
+    $p.M = Get-RamMetrics
 
     $Global:RamTheme = $p
     return $p
@@ -531,19 +656,34 @@ function New-RamButton {
     #>
     param(
         [Parameter(Mandatory)][string]$Text,
+        # ЭТО МИНИМУМ, а не обещание: если надпись длиннее, кнопка будет шире.
         [int]$Width  = 150,
         [int]$Height = 34,
         [ValidateSet('primary','normal','danger','ghost')][string]$Kind = 'normal',
         [scriptblock]$OnClick,
         [string]$Tooltip,
-        [int]$Radius = 7
+        [int]$Radius = 7,
+        # Не подгонять под текст: ширина ровно такая, как просили, длинное
+        # обрезать многоточием. Нужно там, где кнопка прибита к краю окна.
+        [switch]$Fixed
     )
 
     $t = $Global:RamTheme
+
+    # МЕРИМ ДО СОЗДАНИЯ.
+    # Раньше кнопка расширялась под текст ПОСЛЕДНЕЙ строкой перед возвратом —
+    # то есть уже после того, как вызывающий прикинул её размер, и прямо перед
+    # тем, как он поставит соседа по жёсткой координате. При обычном шрифте это
+    # почти не срабатывало, а при 125% и 150% надписи вырастали, кнопки лезли
+    # друг на друга и вылезали за край панели. Теперь размер окончателен сразу.
+    $pad  = if ($null -ne $t.M) { $t.M.BtnPadX } else { 26 }
+    $need = (Measure-RamText -Text $Text -Font $t.FontBody).Width + $pad
+    if ($Fixed) { $wantW = $Width } else { $wantW = [Math]::Max($Width, $need) }
+
     $colors = Get-RamButtonColors -Kind $Kind
 
     $btn = New-Object System.Windows.Forms.Panel
-    $btn.Size      = New-Object System.Drawing.Size($Width, $Height)
+    $btn.Size      = New-Object System.Drawing.Size($wantW, $Height)
     $btn.BackColor = [System.Drawing.Color]::Transparent
     $btn.Cursor    = [System.Windows.Forms.Cursors]::Hand
     $btn.Margin    = New-Object System.Windows.Forms.Padding(0, 0, 8, 0)
@@ -609,11 +749,12 @@ function New-RamButton {
     $btn.Add_MouseDown( { $this.Tag.IsDown  = $true;  $this.Invalidate() })
     $btn.Add_MouseUp(   { $this.Tag.IsDown  = $false; $this.Invalidate() })
 
-    # Если надпись не влезает в заданную ширину — расширяем кнопку. Ширины
-    # проставлены на глаз, а длина слов зависит от языка и от масштаба экрана,
-    # поэтому надёжнее померить и подвинуть, чем надеяться.
-    $need = [System.Windows.Forms.TextRenderer]::MeasureText($Text, $t.FontBody).Width + 26
-    if ($need -gt $btn.Width) { $btn.Width = $need }
+    # Договор с раскладчиком: он спрашивает Natural, чтобы отвести место,
+    # и Fixed, чтобы понять, можно ли резать многоточием.
+    $btn.Tag | Add-Member -NotePropertyName Kind    -NotePropertyValue 'button' -Force
+    $btn.Tag | Add-Member -NotePropertyName Fixed   -NotePropertyValue ([bool]$Fixed) -Force
+    $btn.Tag | Add-Member -NotePropertyName MinW    -NotePropertyValue $Width -Force
+    $btn.Tag | Add-Member -NotePropertyName Natural -NotePropertyValue (New-Object System.Drawing.Size($wantW, $Height)) -Force
 
     if ($null -ne $OnClick) { $btn.Add_Click($OnClick) }
 
@@ -654,17 +795,57 @@ function Set-RamButtonKind {
 }
 
 function Set-RamButtonEnabled {
+    <#
+      Выключенная кнопка обязана быть выключенной ПО ДЕЛУ, а не только на вид.
+
+      Раньше здесь менялся лишь цвет: обработчик Click оставался на месте, и
+      серая кнопка прекрасно нажималась. Гасим саму панель — WinForms тогда
+      не отдаёт ей ни щелчки, ни наведение мышью, а рисование по Paint
+      продолжает работать, поэтому вид не портится.
+    #>
     param($Button, [bool]$Enabled)
     if ($null -eq $Button -or $null -eq $Button.Tag) { return }
     $Button.Tag.Enabled = $Enabled
+    $Button.Enabled = $Enabled
+    if (-not $Enabled) { $Button.Tag.IsHover = $false; $Button.Tag.IsDown = $false }
     $Button.Cursor = if ($Enabled) { [System.Windows.Forms.Cursors]::Hand } else { [System.Windows.Forms.Cursors]::Default }
     $Button.Invalidate()
 }
 
 function Set-RamButtonText {
-    param($Button, [string]$Text)
+    <#
+      Меняет надпись и пересчитывает ширину.
+
+      Если кнопка прибита к ПРАВОМУ краю, растём влево — иначе она уедет за
+      край окна. Раньше ширину намеренно не трогали и надпись просто не
+      влезала; отсюда была подпорка «поставим ширину с запасом под обе
+      надписи», которая ломалась на крупном масштабе.
+    #>
+    param($Button, [string]$Text, [switch]$KeepWidth)
     if ($null -eq $Button -or $null -eq $Button.Tag) { return }
     $Button.Tag.Caption = $Text
+
+    $t    = $Global:RamTheme
+    $pad  = if ($null -ne $t.M) { $t.M.BtnPadX } else { 26 }
+    $need = (Measure-RamText -Text $Text -Font $Button.Tag.Font).Width + $pad
+    $Button.Tag.Natural = New-Object System.Drawing.Size($need, $Button.Height)
+
+    $fixed = $false
+    if ($Button.Tag.PSObject.Properties.Name -contains 'Fixed') { $fixed = [bool]$Button.Tag.Fixed }
+
+    if (-not $KeepWidth -and -not $fixed) {
+        $minW = $Button.Width
+        if ($Button.Tag.PSObject.Properties.Name -contains 'MinW') { $minW = [int]$Button.Tag.MinW }
+        $w = [Math]::Max($need, $minW)
+        if ($w -ne $Button.Width) {
+            $anchor   = $Button.Anchor
+            $toRight  = (($anchor -band [System.Windows.Forms.AnchorStyles]::Right) -ne 0) -and
+                        (($anchor -band [System.Windows.Forms.AnchorStyles]::Left) -eq 0)
+            $wasRight = $Button.Right
+            $Button.Width = $w
+            if ($toRight) { $Button.Left = $wasRight - $w }
+        }
+    }
     $Button.Invalidate()
 }
 
@@ -750,8 +931,15 @@ function New-RamTextBox {
         $tb.Location   = New-Object System.Drawing.Point(9, 7)
         $tb.Size       = New-Object System.Drawing.Size(($Width - 18), ($Height - 14))
     } else {
-        $tb.Location = New-Object System.Drawing.Point(9, [int](($Height - 17) / 2))
+        # ВАЖНО. У однострочного TextBox высоту задаёт ШРИФТ: заданные 17 px
+        # он игнорирует. На крупном масштабе экрана поле становится выше своей
+        # панели и вылезает за неё. Поэтому панель подтягиваем под факт.
         $tb.Size     = New-Object System.Drawing.Size(($Width - 18), 17)
+        $needH = $tb.Height + 14
+        if ($needH -gt $host_.Height) {
+            $host_.Size = New-Object System.Drawing.Size($Width, $needH)
+        }
+        $tb.Location = New-Object System.Drawing.Point(9, [int](($host_.Height - $tb.Height) / 2))
     }
     # Поле лежит внутри нарисованной рамки с отступом. Если кликнуть по рамке,
     # а не точно по тексту, фокус никуда не встанет — и человек решит, что
@@ -857,8 +1045,22 @@ function New-RamStatusDot {
 }
 
 function Set-RamStatusDot {
+    <#
+      Перерисовываем ТОЛЬКО при смене подписи или цвета.
+
+      Раньше Invalidate() звался безусловно, а зовут эту функцию по каждому
+      аккаунту каждые две секунды из таймера. На двадцати аккаунтах это
+      двадцать принудительных перерисовок GDI+ в секунду при совершенно
+      неподвижной картинке — программа грела процессор, ничего не делая.
+    #>
     param($Dot, [string]$Caption, $Color)
     if ($null -eq $Dot) { return }
+
+    $sameText  = ([string]$Dot.Tag.Caption -eq [string]$Caption)
+    $sameColor = ($null -ne $Dot.Tag.Color -and $null -ne $Color -and
+                  $Dot.Tag.Color.ToArgb() -eq $Color.ToArgb())
+    if ($sameText -and $sameColor) { return }
+
     $Dot.Tag.Caption = $Caption
     $Dot.Tag.Color   = $Color
     $Dot.Invalidate()
@@ -1014,12 +1216,18 @@ function Add-RamMenuItem {
 }
 
 function New-RamCheckBox {
-    <# Тёмная галочка, нарисованная вручную. #>
+    <# Тёмная галочка, нарисованная вручную. Растёт вместе со шрифтом:
+       иначе при крупном масштабе экрана она выглядит крошечной рядом
+       с подписью. #>
     param([int]$X, [int]$Y)
+
+    $sc = 1.0
+    if ($null -ne $Global:RamTheme.M) { $sc = [double]$Global:RamTheme.M.Scale }
+    $side = [int][Math]::Round(20 * $sc)
 
     $c = New-Object System.Windows.Forms.Panel
     $c.Location  = New-Object System.Drawing.Point($X, $Y)
-    $c.Size      = New-Object System.Drawing.Size(20, 20)
+    $c.Size      = New-Object System.Drawing.Size($side, $side)
     $c.BackColor = [System.Drawing.Color]::Transparent
     $c.Cursor    = [System.Windows.Forms.Cursors]::Hand
     $c.Tag       = [pscustomobject]@{ Checked = $false }
@@ -1030,6 +1238,11 @@ function New-RamCheckBox {
         $t = $Global:RamTheme
         $g = $e.Graphics
         $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
+
+        # Рисунок задан в координатах 20x20 — растягиваем его под текущий
+        # размер, чтобы не переписывать все числа ниже.
+        $k = $s.Width / 20.0
+        if ($k -ne 1.0) { $g.ScaleTransform($k, $k) }
 
         $rect = New-Object System.Drawing.Rectangle(1, 1, 17, 17)
         $path = New-RamRoundRect -Rect $rect -Radius 5
