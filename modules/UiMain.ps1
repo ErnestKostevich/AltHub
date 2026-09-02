@@ -555,6 +555,115 @@ function Update-RamOneAvatar {
     }
 }
 
+function Update-RamOneGameName {
+    <#
+      Догружает НАЗВАНИЕ игры для аккаунтов, у которых есть placeId, но имя
+      пустое — на карточке такой аккаунт выглядит как «ID 10515146389».
+
+      Так бывает, когда игру назначали в момент, когда Roblox не ответил:
+      Get-RamPlaceName возвращает пустую строку, и она уезжает в аккаунт.
+      Чинить это разово нельзя — данные уже сохранены на диске, поэтому
+      имя подтягивается фоном, как аватарки.
+
+      Тот же принцип: ОДИН короткий шаг за такт, ничего не ждём.
+      Шаги: placeId -> universeId -> название.
+    #>
+
+    if ($null -ne $script:GameNameJob) {
+        $job = $script:GameNameJob
+        if (-not $job.Net.Task.IsCompleted) { return }
+        $script:GameNameJob = $null
+
+        if ($job.Stage -eq 'universe') {
+            $r = Complete-RamGetAsync -Job $job.Net
+            $universeId = ''
+            if ($r.Ok) {
+                try { $universeId = [string](($r.Body | ConvertFrom-Json).universeId) } catch { }
+            }
+            if ([string]::IsNullOrWhiteSpace($universeId)) {
+                $script:GameNameSkip[$job.PlaceId] = [int]$script:GameNameSkip[$job.PlaceId] + 1
+                return
+            }
+            $script:GameNameJob = [pscustomobject]@{
+                PlaceId = $job.PlaceId; Stage = 'name'
+                Net = (Start-RamGetAsync -Url "https://games.roblox.com/v1/games?universeIds=$universeId" -TimeoutSec 10)
+            }
+            return
+        }
+
+        # --- пришло название
+        $r = Complete-RamGetAsync -Job $job.Net
+        $name = ''
+        if ($r.Ok) {
+            try {
+                $data = ($r.Body | ConvertFrom-Json).data
+                if ($data -and $data.Count -gt 0) { $name = [string]$data[0].name }
+            } catch { }
+        }
+        if ([string]::IsNullOrWhiteSpace($name)) {
+            $script:GameNameSkip[$job.PlaceId] = [int]$script:GameNameSkip[$job.PlaceId] + 1
+            return
+        }
+
+        $touched = 0
+        foreach ($a in @($script:Accounts)) {
+            if ($null -ne $a -and [string]$a.PlaceId -eq $job.PlaceId -and -not $a.GameName) {
+                $a.GameName = $name; $touched++
+            }
+        }
+        # И в сохранённых играх, если там тоже стоит заглушка «ID …».
+        foreach ($g in @($script:Settings.Games)) {
+            if ($null -ne $g -and [string]$g.PlaceId -eq $job.PlaceId -and [string]$g.Title -match '^ID \d+$') {
+                $g.Title = $name; $touched++
+            }
+        }
+        if ($touched -gt 0) {
+            Save-RamState
+            Save-RamSettingsNow
+            Build-RamCards
+            if ($script:Section -eq 'games') { Update-RamGamesPanel }
+            Write-RamLog "Название игры подтянулось: «$name»." 'info'
+        }
+        return
+    }
+
+    # --- задачи нет: ищем, кому имени не хватает
+    $need = ''
+    foreach ($a in @($script:Accounts)) {
+        if ($null -eq $a) { continue }
+        $pid2 = [string]$a.PlaceId
+        if (-not $pid2 -or $a.GameName) { continue }
+        if ([int]$script:GameNameSkip[$pid2] -ge 2) { continue }
+        $need = $pid2; break
+    }
+    if (-not $need) {
+        foreach ($g in @($script:Settings.Games)) {
+            if ($null -eq $g) { continue }
+            $pid2 = [string]$g.PlaceId
+            if (-not $pid2 -or [string]$g.Title -notmatch '^ID \d+$') { continue }
+            if ([int]$script:GameNameSkip[$pid2] -ge 2) { continue }
+            $need = $pid2; break
+        }
+    }
+    if (-not $need) { return }
+
+    # Может, имя уже известно по соседям — тогда сеть не нужна.
+    $known = Get-RamKnownGameName -PlaceId $need
+    if ($known) {
+        foreach ($a in @($script:Accounts)) {
+            if ($null -ne $a -and [string]$a.PlaceId -eq $need -and -not $a.GameName) { $a.GameName = $known }
+        }
+        Save-RamState
+        Build-RamCards
+        return
+    }
+
+    $script:GameNameJob = [pscustomobject]@{
+        PlaceId = $need; Stage = 'universe'
+        Net = (Start-RamGetAsync -Url "https://apis.roblox.com/universes/v1/places/$need/universe" -TimeoutSec 10)
+    }
+}
+
 function Set-RamCookieAlive {
     <# Пометить вход живым — после удачной проверки или починки. #>
     param([Parameter(Mandatory)]$Account)
@@ -1239,7 +1348,7 @@ function Update-RamGamesPanel {
             $c = New-RamCard -Width $W -Height 110
             $h.Controls.Add($c)
             $c.Controls.Add((New-RamLabel -Text 'Список пуст' -X 24 -Y 20 -Width 400 -Height 26 -Font $t.FontTitle))
-            $c.Controls.Add((New-RamLabel -Text 'Игры попадают сюда сами, как только назначишь их аккаунтам кнопкой «Игра для отмеченных». Дальше их можно ставить одним кликом.' `
+            $c.Controls.Add((New-RamLabel -Text 'Нажми «＋ Своя игра» и вставь ссылку — или возьми готовую из популярных. Игры также попадают сюда сами, когда назначаешь их кнопкой «Игра для отмеченных».' `
                                           -X 24 -Y 48 -Width ($W - 48) -Height 44 -Font $t.FontBody -Color $t.Muted))
             return
         }
@@ -1830,17 +1939,56 @@ function New-RamMainForm {
     $script:UI.Panels['games'] = $pGames
 
     $pGames.Controls.Add((New-RamLabel -Text 'Мои игры' -X 0 -Y 0 -Width 400 -Height 32 -Font $t.FontBig))
-    $pGames.Controls.Add((New-RamLabel -Text 'Отметь аккаунты в разделе «Аккаунты», потом нажми «Назначить отмеченным» у нужной игры' `
-                                       -X 0 -Y 32 -Width 900 -Height 22 -Font $t.FontSmall -Color $t.Muted))
+    # Сама подпись добавляется НИЖЕ, когда уже известна ширина кнопок справа:
+    # иначе она растягивается на всю панель и лезет под них.
+    $gamesHintText = 'Добавь игру своей ссылкой или из популярных. Потом отметь аккаунты в разделе «Аккаунты» и нажми «Назначить отмеченным».'
 
-    $btnPopular = New-RamButton -Text 'Популярные из Roblox' -Width 220 -Height 36 -Kind 'primary' `
+    # Добавить свою игру ссылкой — раньше в этом разделе можно было только
+    # взять готовую из популярных, а свою приходилось назначать через карточку
+    # аккаунта. Теперь обе кнопки рядом и прижаты к правому краю по факту
+    # своей ширины, а не по вписанному числу.
+    $btnOwnGame = New-RamButton -Text '＋ Своя игра' -Width 1 -Height 36 -Kind 'primary' `
+                                -Tooltip 'Добавить игру по ссылке, приглашению на приватный сервер или по номеру' -OnClick {
+        $val = Show-RamInputDialog -Title 'Своя игра' `
+                 -Prompt ("Вставь ссылку на игру, приглашение на приватный сервер или просто её номер.`n" +
+                          'Название подтянется само.')
+        if ([string]::IsNullOrWhiteSpace($val)) { return }
+
+        $script:UI.Form.Cursor = [System.Windows.Forms.Cursors]::WaitCursor
+        try   { $g = Resolve-RamGameInput -Value $val }
+        catch { Show-RamError $_.Exception.Message; return }
+        finally { $script:UI.Form.Cursor = [System.Windows.Forms.Cursors]::Default }
+
+        if ($null -eq $g -or -not $g.PlaceId) {
+            Show-RamError 'Не удалось понять, что это за игра. Нужна ссылка на игру, приглашение на приватный сервер или номер игры.'
+            return
+        }
+        $title = if ($g.GameName) { $g.GameName } else { "ID $($g.PlaceId)" }
+        Add-RamSavedGame -PlaceId $g.PlaceId -LinkCode $g.LinkCode -Title $title
+        Update-RamGamesPanel
+        Write-RamLog "В список игр добавлена «$title»." 'ok'
+    }
+    $ownW = (Measure-RamControl -Control $btnOwnGame).Width
+
+    $btnPopular = New-RamButton -Text 'Популярные из Roblox' -Width 1 -Height 36 -Kind 'ghost' `
                                 -Tooltip 'Показать игры, в которые сейчас играют больше всего, и добавить их в список' -OnClick {
         Show-RamPopularGamesDialog
         Update-RamGamesPanel
     }
-    $btnPopular.Location = New-Object System.Drawing.Point(900, 8)
+    $popW = (Measure-RamControl -Control $btnPopular).Width
+
+    $btnPopular.Location = New-Object System.Drawing.Point(($contentW - $popW), 8)
     $btnPopular.Anchor   = 'Top,Right'
     $pGames.Controls.Add($btnPopular)
+
+    $btnOwnGame.Location = New-Object System.Drawing.Point(($contentW - $popW - $metrics.Gap - $ownW), 8)
+    $btnOwnGame.Anchor   = 'Top,Right'
+    $pGames.Controls.Add($btnOwnGame)
+
+    $gamesHintW = $btnOwnGame.Left - $metrics.GapLg
+    if ($gamesHintW -lt 200) { $gamesHintW = 200 }
+    $pGames.Controls.Add((New-RamLabel -Text $gamesHintText -X 0 -Y 32 -Width $gamesHintW -Height 22 `
+                                       -Font $t.FontSmall -Color $t.Muted -Truncatable))
 
     $gamesHost = New-RamScrollPanel -Width $contentW -Height ($contentH - 66)
     $gamesHost.Location = New-Object System.Drawing.Point(0, 66)

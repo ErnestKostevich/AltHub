@@ -1335,6 +1335,7 @@ function Update-RamInstances {
 
     Update-RamCardStates
     Update-RamOneAvatar
+    Update-RamOneGameName
     if ($script:Section -eq 'stats' -and $dead.Count -gt 0) { Update-RamStatsPanel }
 }
 
