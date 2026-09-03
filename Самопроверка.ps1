@@ -1632,6 +1632,31 @@ Check 'Главное окно живёт в Application.Run' {
     'окно живёт в Application.Run, сворачивание его не прячет'
 }
 
+Check 'Все меню оформлены темой' {
+    # Меню в часах создавалось сырым ContextMenuStrip: слева оставался
+    # «жёлоб под значки», который тема не красит, и на тёмном оформлении это
+    # была белая полоса во всю высоту меню.
+    # Сырое меню разрешено ровно в одном месте — внутри самой обёртки
+    # New-RamContextMenu (modules\Theme.ps1). Везде остальное запрещено.
+    foreach ($f in (Get-ChildItem (Join-Path $root 'modules\*.ps1')).FullName + @((Join-Path $root 'AltHub.ps1'))) {
+        if ((Split-Path -Leaf $f) -eq 'Theme.ps1') { continue }
+        $txt = Get-Content -LiteralPath $f -Raw -Encoding UTF8
+        foreach ($m in [regex]::Matches($txt, '(?m)^\s*\$(\w+)\s*=\s*New-Object System\.Windows\.Forms\.ContextMenuStrip')) {
+            throw "$(Split-Path -Leaf $f): меню «$($m.Groups[1].Value)» создаётся мимо New-RamContextMenu — будет неокрашенная полоса слева"
+        }
+    }
+
+    # И сама обёртка обязана убирать жёлоб и ставить отрисовщик темы.
+    $menu = New-RamContextMenu
+    try {
+        if ($menu.ShowImageMargin) { throw 'жёлоб под значки снова включён' }
+        if ($null -eq $menu.Renderer) { throw 'у меню нет отрисовщика темы' }
+        if ($menu.BackColor -ne $Global:RamTheme.Card) { throw 'фон меню не из темы' }
+    } finally { $menu.Dispose() }
+
+    'меню создаются через New-RamContextMenu, полосы слева нет'
+}
+
 Check 'Одна копия программы на компьютер' {
     # Без этого потерянное окно вернуть нечем: повторный клик по ярлыку
     # открывал вторую копию, а первая оставалась висеть невидимой и держала

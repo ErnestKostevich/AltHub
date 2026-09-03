@@ -633,9 +633,11 @@ function Show-RamTrayHint {
     Save-RamSettingsNow
 
     try {
-        $script:UI.Tray.BalloonTipTitle = "$($script:AppName) свернулся в часы"
+        $script:UI.Tray.BalloonTipTitle = "$($script:AppName) продолжает работать"
+        # Раз крестик больше не закрывает программу, человеку надо сразу
+        # сказать, как её всё-таки закрыть — иначе он будет искать.
         $script:UI.Tray.BalloonTipText  =
-            'Значка не видно? Он спрятан под стрелкой ^ рядом с часами — перетащи его оттуда, чтобы был на виду. Клик по значку возвращает окно.'
+            'Окно ушло в часы. Клик по значку возвращает его, правый клик — меню, там же «Выход».'
         $script:UI.Tray.BalloonTipIcon  = [System.Windows.Forms.ToolTipIcon]::Info
         $script:UI.Tray.ShowBalloonTip(7000)
     } catch { }
@@ -962,6 +964,24 @@ function Show-RamQuickSetup {
     }
 
     $t = $Global:RamTheme
+    $m = $t.M
+
+    # Ширина считается от самой длинной строки подсказки, а не назначается
+    # числом: раньше окно было 690x470 на любом масштабе, и при 150% полоска
+    # сверху обрывалась, а кнопки прижимались к краю.
+    $hintLines = @(
+        'Одним играешь, остальные стоят на приватном сервере.',
+        '  основному — графика на максимум, звук включён',
+        '  твинам    — графика 1, звук 0, 30 кадров, общая игра',
+        '  окна      — основной крупно слева, твины мелко справа',
+        '  профиль   — «Твины на випку», одной кнопкой'
+    )
+    $wide = 0
+    foreach ($l in $hintLines) {
+        $w = (Measure-RamText -Text $l -Font $t.FontBody).Width
+        if ($w -gt $wide) { $wide = $w }
+    }
+    $pageW = [Math]::Max($wide + $m.GapLg, [int][Math]::Round(560 * $m.Scale))
 
     $dlg = New-Object System.Windows.Forms.Form
     $dlg.Text            = 'Быстрая настройка'
@@ -970,83 +990,100 @@ function Show-RamQuickSetup {
     $dlg.MaximizeBox     = $false; $dlg.MinimizeBox = $false
     $dlg.BackColor       = $t.Bg
     $dlg.Font            = $t.FontBody
-    $dlg.ClientSize      = New-Object System.Drawing.Size(690, 470)
+    $dlg.ClientSize      = New-Object System.Drawing.Size(($pageW + $m.PadX * 2), 480)
     $dlg.Add_HandleCreated({ Set-RamDarkTitleBar $this })
+    Set-RamWindowIcon $dlg
 
     $stripe = New-Object System.Windows.Forms.Panel
-    $stripe.Size = New-Object System.Drawing.Size(660, 4); $stripe.BackColor = $t.Accent
+    $stripe.Location  = New-Object System.Drawing.Point(0, 0)
+    $stripe.Size      = New-Object System.Drawing.Size($dlg.ClientSize.Width, $m.StripeH)
+    $stripe.BackColor = $t.Accent
     $dlg.Controls.Add($stripe)
 
-    $dlg.Controls.Add((New-RamLabel -Text 'Быстрая настройка' -X 28 -Y 22 -Width 500 -Height 32 -Font $t.FontBig))
+    $lay = New-RamLayout -Container $dlg
+    [void](Add-RamGap -Layout $lay -Height $m.StripeH)
 
-    $hint = New-Object System.Windows.Forms.Label
-    $hint.Text = @'
-Одним играешь, остальные стоят на приватном сервере.
-  основному — графика на максимум, звук включён
-  твинам    — графика 1, звук 0, 30 кадров, общая игра
-  окна      — основной крупно слева, твины мелко справа
-  профиль   — «Твины на випку», одной кнопкой
-'@
-    $hint.Location  = New-Object System.Drawing.Point(28, 60)
-    $hint.Size      = New-Object System.Drawing.Size(604, 132)
-    $hint.Font      = $t.FontBody
-    $hint.ForeColor = $t.Muted
-    $hint.BackColor = [System.Drawing.Color]::Transparent
-    $dlg.Controls.Add($hint)
+    $titleH = (Measure-RamText -Text 'Ay' -Font $t.FontBig).Height + 2
+    [void](Add-RamRow -Layout $lay -Height $titleH -Gap $m.GapSm -Items @(
+        @{ Control = (New-RamLabel -Text 'Быстрая настройка' -X 0 -Y 0 -Width 10 -Height $titleH -Font $t.FontBig)
+           Width   = $lay.Width }
+    ))
 
-    $dlg.Controls.Add((New-RamLabel -Text 'ОСНОВНОЙ АККАУНТ — ИМ ТЫ ИГРАЕШЬ' -X 28 -Y 204 -Width 400 -Height 18 -Font $t.FontSmall -Color $t.Muted))
+    $hintText = $hintLines -join [Environment]::NewLine
+    $hintH = (Measure-RamText -Text $hintText -Font $t.FontBody -MaxWidth $lay.Width).Height + 4
+    [void](Add-RamRow -Layout $lay -Height $hintH -Items @(
+        @{ Control = (New-RamLabel -Text $hintText -X 0 -Y 0 -Width 10 -Height $hintH -Font $t.FontBody -Color $t.Muted)
+           Width   = $lay.Width }
+    ))
+    [void](Add-RamGap -Layout $lay -Height $m.GapSm)
+
+    $capH = (Measure-RamText -Text 'Ay' -Font $t.FontSmall).Height + 2
+    $addCap = {
+        param([string]$text)
+        [void](Add-RamRow -Layout $lay -Height $capH -Gap $m.GapSm -Items @(
+            @{ Control = (New-RamLabel -Text $text -X 0 -Y 0 -Width 10 -Height $capH -Font $t.FontSmall -Color $t.Muted)
+               Width   = $lay.Width }
+        ))
+    }
+
+    & $addCap 'ОСНОВНОЙ АККАУНТ — ИМ ТЫ ИГРАЕШЬ'
     $accItems = @()
     foreach ($a in (Get-RamOrderedAccounts)) {
         $lbl = $a.Alias
         if ($a.Username) { $lbl += "  (@$($a.Username))" }
         $accItems += [pscustomobject]@{ Text = $lbl; Value = $a.Id }
     }
-    $cbMain = New-RamCombo -X 28 -Y 224 -Width 604 -Items $accItems -Value $accItems[0].Value
-    $dlg.Controls.Add($cbMain)
+    $cbMain = New-RamCombo -X 0 -Y 0 -Width $lay.Width -Items $accItems -Value $accItems[0].Value
+    [void](Add-RamRow -Layout $lay -Items @(@{ Control = $cbMain; Width = $lay.Width }))
 
-    $dlg.Controls.Add((New-RamLabel -Text 'ИГРА ДЛЯ ТВИНОВ' -X 28 -Y 262 -Width 500 -Height 18 -Font $t.FontSmall -Color $t.Muted))
-
+    & $addCap 'ИГРА ДЛЯ ТВИНОВ'
     $gameItems = @([pscustomobject]@{ Text = '— оставить как есть —'; Value = '' })
     foreach ($g in (Get-RamGameSuggestions)) { $gameItems += $g }
-    $cbGame = New-RamCombo -X 28 -Y 282 -Width 604 -Items $gameItems -Value ''
-    $dlg.Controls.Add($cbGame)
+    $cbGame = New-RamCombo -X 0 -Y 0 -Width $lay.Width -Items $gameItems -Value ''
+    [void](Add-RamRow -Layout $lay -Items @(@{ Control = $cbGame; Width = $lay.Width }))
 
-    $tbGame = New-RamTextBox -Width 480 -Height 32 -Value ''
-    $tbGame.Location = New-Object System.Drawing.Point(28, 320)
-    $dlg.Controls.Add($tbGame)
-
-    $btnPaste = New-RamButton -Text 'Вставить' -Width 110 -Height 32 -OnClick {
+    $btnPaste = New-RamButton -Text 'Вставить' -Width 1 -Height $m.RowHSm -OnClick {
         try {
             if ([System.Windows.Forms.Clipboard]::ContainsText()) {
                 $tbGame.Tag.Text = [System.Windows.Forms.Clipboard]::GetText().Trim()
             }
         } catch { }
     }
-    $btnPaste.Location = New-Object System.Drawing.Point(522, 320)
-    $dlg.Controls.Add($btnPaste)
+    $pasteW = (Measure-RamControl -Control $btnPaste).Width
+    $tbGame = New-RamTextBox -Width ($lay.Width - $pasteW - $m.Gap) -Height $m.RowHSm -Value ''
+    [void](Add-RamRow -Layout $lay -VAlign 'middle' -Items @(
+        @{ Control = $tbGame;   Width = ($lay.Width - $pasteW - $m.Gap) },
+        @{ Control = $btnPaste; Width = $pasteW }
+    ))
 
-    $dlg.Controls.Add((New-RamLabel -Text 'Поле важнее списка: если вставишь сюда ссылку, возьмётся она.' `
-                                    -X 28 -Y 362 -Width 630 -Height 20 -Font $t.FontSmall -Color $t.Muted))
+    $noteH = (Measure-RamText -Text 'Поле важнее списка: если вставишь сюда ссылку, возьмётся она.' -Font $t.FontSmall -MaxWidth $lay.Width).Height + 2
+    [void](Add-RamRow -Layout $lay -Height $noteH -Gap $m.GapSm -Items @(
+        @{ Control = (New-RamLabel -Text 'Поле важнее списка: если вставишь сюда ссылку, возьмётся она.' `
+                                   -X 0 -Y 0 -Width 10 -Height $noteH -Font $t.FontSmall -Color $t.Muted)
+           Width   = $lay.Width }
+    ))
 
-    $cbSameGame = New-RamCheckBox -X 28 -Y 384
-    $dlg.Controls.Add($cbSameGame)
-    # Подпись за галочкой: та растёт вместе со шрифтом.
-    $lblSame = New-RamLabel -Text 'Основному поставить ту же игру' -X (28 + $cbSameGame.Width + 8) -Y 383 -Width 400 -Height 24
+    $cbSameGame = New-RamCheckBox -X 0 -Y 0
+    $sameH = (Measure-RamText -Text 'Основному поставить ту же игру' -Font $t.FontBody).Height + 2
+    $lblSame = New-RamLabel -Text 'Основному поставить ту же игру' -X 0 -Y 0 -Width 10 -Height $sameH
     $lblSame.Cursor = [System.Windows.Forms.Cursors]::Hand
-    $lblSame.Add_Click({ $cbSameGame.Tag.Checked = -not $cbSameGame.Tag.Checked; $cbSameGame.Invalidate() })
-    $dlg.Controls.Add($lblSame)
+    $lblSame.Tag = $cbSameGame
+    $lblSame.Add_Click({ $this.Tag.Tag.Checked = -not $this.Tag.Tag.Checked; $this.Tag.Invalidate() })
+    [void](Add-RamRow -Layout $lay -VAlign 'middle' -Gap $m.Gap -Items @(
+        @{ Control = $cbSameGame; Width = $cbSameGame.Width },
+        @{ Control = $lblSame;    Width = ($lay.Width - $cbSameGame.Width - $m.Gap) }
+    ))
 
-    $btnGo = New-RamButton -Text 'Настроить' -Width 150 -Height 38 -Kind 'primary' -OnClick {
+    [void](Add-RamGap -Layout $lay -Height $m.Gap)
+    $btnGo = New-RamButton -Text 'Настроить' -Width 1 -Height $m.RowHLg -Kind 'primary' -OnClick {
         $this.FindForm().Tag = $true; $this.FindForm().Close()
     }
-    $btnGo.Location = New-Object System.Drawing.Point(340, 418)
-    $dlg.Controls.Add($btnGo)
-
-    $btnNo = New-RamButton -Text 'Отмена' -Width 130 -Height 38 -OnClick {
+    $btnNo = New-RamButton -Text 'Отмена' -Width 1 -Height $m.RowHLg -OnClick {
         $this.FindForm().Tag = $false; $this.FindForm().Close()
     }
-    $btnNo.Location = New-Object System.Drawing.Point(502, 418)
-    $dlg.Controls.Add($btnNo)
+    [void](Add-RamButtonBar -Layout $lay -Primary $btnGo -Secondary @($btnNo))
+    [void](Complete-RamLayout -Layout $lay -ClampToScreen)
+    $stripe.Size = New-Object System.Drawing.Size($dlg.ClientSize.Width, $m.StripeH)
     $dlg.Tag = $false
 
     if ($BuildOnly) { return $dlg }
@@ -1289,25 +1326,40 @@ function Update-RamStatsPanel {
                 $e.Graphics.FillPath($b, $path); $b.Dispose(); $path.Dispose()
             })
 
-            $row.Controls.Add((New-RamLabel -Text $a.Alias -X 24 -Y 10 -Width 240 -Height 22 -Font $t.FontTitle -Truncatable))
+            # КОЛОНКИ РАСТЯГИВАЮТСЯ НА ВСЮ КАРТОЧКУ.
+            # Раньше они стояли на вписанных 290/400/510/680, а карточка шире:
+            # все цифры жались в левую половину, справа зияла пустота во всю
+            # ширину окна. Теперь имя занимает свою долю, а четыре колонки
+            # делят остаток поровну — при любой ширине окна и любом масштабе.
+            $pad     = [int](24 * $t.M.Scale)
+            $nameW   = [Math]::Max([int](220 * $t.M.Scale), [int](($W - $pad * 2) * 0.28))
+            $restW   = $W - $pad * 2 - $nameW
+            $colW    = [int]($restW / 4)
+            $colX    = $pad + $nameW
+
+            $row.Controls.Add((New-RamLabel -Text $a.Alias -X $pad -Y 10 -Width $nameW -Height 22 -Font $t.FontTitle -Truncatable))
             $sub = if ($a.Username) { "@$($a.Username)" } else { 'вход не проверен' }
-            $row.Controls.Add((New-RamLabel -Text $sub -X 24 -Y 32 -Width 240 -Height 20 -Font $t.FontSmall -Color $t.Muted -Truncatable))
-
-            $row.Controls.Add((New-RamLabel -Text 'ЗАПУСКОВ' -X 290 -Y 10 -Width 110 -Height 16 -Font $t.FontSmall -Color $t.Muted))
-            $row.Controls.Add((New-RamLabel -Text ([string][int]$a.LaunchCount) -X 290 -Y 28 -Width 110 -Height 22))
-
-            $row.Controls.Add((New-RamLabel -Text 'ВЫЛЕТОВ' -X 400 -Y 10 -Width 110 -Height 16 -Font $t.FontSmall -Color $t.Muted))
-            $row.Controls.Add((New-RamLabel -Text ([string][int]$a.CrashCount) -X 400 -Y 28 -Width 110 -Height 22 `
-                                            -Color $(if ([int]$a.CrashCount -gt 0) { $t.Warn } else { $t.Text })))
-
-            $row.Controls.Add((New-RamLabel -Text 'НАИГРАНО' -X 510 -Y 10 -Width 160 -Height 16 -Font $t.FontSmall -Color $t.Muted))
-            $row.Controls.Add((New-RamLabel -Text (Format-RamDuration ([int]$a.PlaySeconds)) -X 510 -Y 28 -Width 160 -Height 22))
+            $row.Controls.Add((New-RamLabel -Text $sub -X $pad -Y 32 -Width $nameW -Height 20 -Font $t.FontSmall -Color $t.Muted -Truncatable))
 
             $last = if ($a.LastUsed) {
                 try { ([datetime]$a.LastUsed).ToString('dd.MM HH:mm') } catch { [string]$a.LastUsed }
             } else { 'ни разу' }
-            $row.Controls.Add((New-RamLabel -Text 'ПОСЛЕДНИЙ ЗАПУСК' -X 680 -Y 10 -Width 230 -Height 16 -Font $t.FontSmall -Color $t.Muted))
-            $row.Controls.Add((New-RamLabel -Text $last -X 680 -Y 28 -Width 180 -Height 22))
+
+            $cols = @(
+                @{ Cap = 'ЗАПУСКОВ';         Val = [string][int]$a.LaunchCount; Color = $t.Text },
+                @{ Cap = 'ВЫЛЕТОВ';          Val = [string][int]$a.CrashCount
+                   Color = $(if ([int]$a.CrashCount -gt 0) { $t.Warn } else { $t.Text }) },
+                @{ Cap = 'НАИГРАНО';         Val = (Format-RamDuration ([int]$a.PlaySeconds)); Color = $t.Text },
+                @{ Cap = 'ПОСЛЕДНИЙ ЗАПУСК'; Val = $last; Color = $t.Text }
+            )
+            $x = $colX
+            foreach ($c in $cols) {
+                $row.Controls.Add((New-RamLabel -Text $c.Cap -X $x -Y 10 -Width $colW -Height 16 `
+                                                -Font $t.FontSmall -Color $t.Muted -Truncatable))
+                $row.Controls.Add((New-RamLabel -Text $c.Val -X $x -Y 28 -Width $colW -Height 22 `
+                                                -Color $c.Color -Truncatable))
+                $x += $colW
+            }
         }
     } finally {
         $h.ResumeLayout()
@@ -1917,10 +1969,13 @@ function New-RamMainForm {
     # крупном масштабе «Удалить» просто уезжала за край.
     $barRW = [int](390 * $metrics.Scale)
     $bar.Size          = New-Object System.Drawing.Size(($contentW - $barRW - $metrics.GapLg), 44)
+    # Перенос ОБЯЗАН быть включён. Ниже высота панели считается по факту
+    # (см. $barBottom), то есть вторая строка кнопок предусмотрена. Строкой
+    # ниже перенос когда-то выключили обратно — и на масштабе 150% кнопка
+    # «Удалить» просто обрезалась краем панели.
     $bar.WrapContents  = $true
     $bar.BackColor     = $t.Bg
     $bar.FlowDirection = 'LeftToRight'
-    $bar.WrapContents  = $false
     $bar.Anchor        = 'Top,Left'
     $pAcc.Controls.Add($bar)
 
@@ -1958,10 +2013,9 @@ function New-RamMainForm {
     }
     $barR.Controls.Add($bPlay)
 
-    $tileMenu = New-Object System.Windows.Forms.ContextMenuStrip
-    $tileMenu.BackColor = $t.Card
-    $tileMenu.ForeColor = $t.Text
-    $tileMenu.ShowImageMargin = $false
+    # Здесь жёлоб убирали, но отрисовщика темы не ставили: рамка и подсветка
+    # наведения оставались системными. Обёртка делает и то, и другое.
+    $tileMenu = New-RamContextMenu
     foreach ($m in @(
         @{ K = 'main';    T = 'Основной крупно, твины мелко' },
         @{ K = 'grid';    T = 'Сеткой' },
@@ -2153,7 +2207,11 @@ function New-RamMainForm {
         Update-RamStatsPanel
         Write-RamLog 'Статистика обнулена.' 'ok'
     }
-    $bResetStats.Location = New-Object System.Drawing.Point(420, 2)
+    # К ПРАВОМУ КРАЮ, а не к вписанному числу 420. Раньше кнопка висела
+    # посреди пустой шапки: слева заголовок, справа половина панели пустая.
+    $resetW = (Measure-RamControl -Control $bResetStats).Width
+    $bResetStats.Location = New-Object System.Drawing.Point(($contentW - $resetW), 2)
+    $bResetStats.Anchor   = 'Top,Right'
     $pStats.Controls.Add($bResetStats)
 
     $statsHost = New-RamScrollPanel -Width $contentW -Height ($contentH - 46)
@@ -2180,14 +2238,22 @@ function New-RamMainForm {
     # По фактической ширине: на крупном масштабе надписи длиннее и кнопки
     # налезали друг на друга.
     $copyW  = (Measure-RamControl -Control $bCopyLog).Width
-    $bCopyLog.Location = New-Object System.Drawing.Point(420, 2)
-    $pLog.Controls.Add($bCopyLog)
 
     $bClearLog = New-RamButton -Text 'Очистить' -Width 120 -Height 32 -Kind 'ghost' -OnClick {
         $script:UI.Log.Clear()
     }
-    $bClearLog.Location = New-Object System.Drawing.Point((420 + $copyW + $metrics.Gap), 2)
+    $clearW = (Measure-RamControl -Control $bClearLog).Width
+
+    # Обе кнопки к ПРАВОМУ краю: «Очистить» крайняя, «Скопировать» слева от
+    # неё. Раньше обе стояли от вписанного числа 420 и висели посреди шапки,
+    # а справа зияла пустота во всю ширину окна.
+    $bClearLog.Location = New-Object System.Drawing.Point(($contentW - $clearW), 2)
+    $bClearLog.Anchor   = 'Top,Right'
     $pLog.Controls.Add($bClearLog)
+
+    $bCopyLog.Location = New-Object System.Drawing.Point(($contentW - $clearW - $metrics.Gap - $copyW), 2)
+    $bCopyLog.Anchor   = 'Top,Right'
+    $pLog.Controls.Add($bCopyLog)
 
     $logHost = New-Object System.Windows.Forms.Panel
     $logHost.Location  = New-Object System.Drawing.Point(0, 46)
@@ -2395,9 +2461,12 @@ function New-RamMainForm {
         })
         $ni.Add_DoubleClick({ Show-RamMainWindow })
 
-        $trayMenu = New-Object System.Windows.Forms.ContextMenuStrip
-        $trayMenu.BackColor = $t.Card
-        $trayMenu.ForeColor = $t.Text
+        # Через New-RamContextMenu, а не сырым ContextMenuStrip.
+        # У обычного меню слева остаётся «жёлоб под значки», который тема не
+        # красит: на тёмном оформлении это была белая полоса во всю высоту.
+        # Обёртка убирает жёлоб и ставит отрисовщик в цветах темы — ровно то,
+        # что уже работает в меню по правому клику на карточке.
+        $trayMenu = New-RamContextMenu
         $ni.ContextMenuStrip = $trayMenu
         $script:UI.TrayMenu = $trayMenu
 
