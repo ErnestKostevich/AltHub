@@ -342,7 +342,10 @@ function Update-RamAppAccountWatch {
     try { $user = Get-RamAuthenticatedUser -Cookie $cookie } catch { return }
     if ($null -eq $user -or -not $user.Name) { return }
 
-    $script:AppOffer = [pscustomobject]@{ Cookie = $cookie; Name = [string]$user.Name; UserId = [int]$user.Id }
+    # [int64], а НЕ [int]: номера аккаунтов Roblox давно перевалили за два
+    # миллиарда, и 4062608487 в Int32 не влезает. С [int] это падало на
+    # каждом такте у любого, чей аккаунт заведён недавно.
+    $script:AppOffer = [pscustomobject]@{ Cookie = $cookie; Name = [string]$user.Name; UserId = [int64]$user.Id }
     Set-RamStatus "В приложении Roblox сейчас «$($user.Name)» — нажми сюда, чтобы добавить его в менеджер"
     Write-RamLog "В приложении Roblox замечен «$($user.Name)» — его можно добавить одним кликом по строке внизу." 'info'
 }

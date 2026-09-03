@@ -436,9 +436,10 @@ function ConvertFrom-RamTwoStepChallenge {
     try {
         $j = $Body | ConvertFrom-Json
         $data = if ($null -ne $j.twoStepVerificationData) { $j.twoStepVerificationData } else { $j }
-        $uid = 0
-        if ($j.PSObject.Properties.Name -contains 'userId') { $uid = [int]$j.userId }
-        if ($uid -le 0 -and $data.PSObject.Properties.Name -contains 'userId') { $uid = [int]$data.userId }
+        # int64: номера аккаунтов Roblox не помещаются в Int32.
+        $uid = [int64]0
+        if ($j.PSObject.Properties.Name -contains 'userId') { $uid = [int64]$j.userId }
+        if ($uid -le 0 -and $data.PSObject.Properties.Name -contains 'userId') { $uid = [int64]$data.userId }
         $ticket = [string]$data.ticket
         $media  = [string]$data.mediaType
         if ($uid -gt 0 -and $ticket) {
@@ -457,7 +458,7 @@ function Complete-RamLoginTwoStep {
       Никакого обхода здесь нет: мы просто передаём введённый им код дальше.
     #>
     param(
-        [Parameter(Mandatory)][int]$UserId,
+        [Parameter(Mandatory)][int64]$UserId,
         [Parameter(Mandatory)][string]$MediaType,
         [Parameter(Mandatory)][string]$Ticket,
         [Parameter(Mandatory)][string]$Code

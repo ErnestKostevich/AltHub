@@ -4,7 +4,7 @@
  AltHub — менеджер аккаунтов Roblox
 ================================================================================
  Автор: Эрнест Костевич (Ernest Kostevich)
- Версия: 1.2
+ Версия: 1.2.1
  Лицензия: MIT — см. файл LICENSE рядом. Можно свободно передавать друзьям,
  менять под себя и распространять дальше, сохраняя это указание авторства.
 
@@ -145,7 +145,7 @@ $script:RestartCount   = @{}      # Id аккаунта -> сколько раз
 $script:ReadOnly = [bool]$NoAutoStart
 
 $script:AppName    = 'AltHub'
-$script:AppVersion = '1.2'
+$script:AppVersion = '1.2.1'
 $script:AppAuthor  = 'Эрнест Костевич'
 
 function Get-RamAvatarDir { Join-Path (Get-RamDataDir) 'avatars' }

@@ -29,7 +29,16 @@ If Not fso.FileExists(script) Then
     WScript.Quit 1
 End If
 
-cmd = "powershell.exe -NoProfile -ExecutionPolicy Bypass -STA -File """ & script & """"
+' -WindowStyle Hidden прячет консоль сам PowerShell, изнутри процесса.
+cmd = "powershell.exe -NoProfile -ExecutionPolicy Bypass -STA -WindowStyle Hidden -File """ & script & """"
 
-' 0 — окно не показывать вообще, False — не ждать завершения
-shell.Run cmd, 0, False
+' ВНИМАНИЕ, ЗДЕСЬ БЫЛ БАГ. Раньше вторым доводом стоял 0 — «не показывать
+' окно вообще». Выглядит логично, но 0 попадает в STARTUPINFO запускаемого
+' процесса как SW_HIDE, а WinForms применяет его к ПЕРВОМУ окну программы.
+' В итоге главное окно AltHub создавалось скрытым: программа работала, но
+' её нигде не было видно — со стороны это выглядело как «не запускается,
+' сразу закрывается».
+'
+' Поэтому здесь 1 (обычный режим), а консоль прячет сам PowerShell ключом
+' -WindowStyle Hidden. На окно программы это уже не влияет.
+shell.Run cmd, 1, False

@@ -2371,6 +2371,26 @@ function New-RamMainForm {
     $form.Add_Shown({
         $this.ActiveControl = $null
         Show-RamSection -Key $script:Section
+
+        # ПОДСТРАХОВКА ОТ НЕВИДИМОГО ОКНА.
+        # Если процессу досталось SW_HIDE в STARTUPINFO (так бывает, когда
+        # программу запускают скриптом или ярлыком со «спрятать окно»), Windows
+        # применяет это к ПЕРВОМУ окну процесса. Программа при этом работает,
+        # но её нигде не видно — со стороны выглядит как «не запускается».
+        #
+        # Проверять надо ИМЕННО через Win32: свойство .Visible у формы при этом
+        # остаётся true — WinForms уверен, что окно показал, а спрятала его
+        # система уже после.
+        try {
+            $h = $this.Handle
+            if ($h -ne [IntPtr]::Zero -and -not [Ram.Native]::IsWindowVisible($h)) {
+                [void][Ram.Native]::ShowWindow($h, 1)   # SW_SHOWNORMAL
+                [void][Ram.Native]::SetForegroundWindow($h)
+                Write-RamLog 'Окно было скрыто способом запуска — показал его принудительно.' 'warn'
+            }
+        } catch { }
+
+        if ($this.WindowState -eq 'Minimized') { $this.WindowState = 'Normal' }
     })
 
     $script:UI.Form = $form
