@@ -2014,6 +2014,27 @@ Check 'В коде нет опасных конструкций и постор�
     "домены в коде: $($urls -join ', ')"
 }
 
+Check 'README не врёт числом проверок' {
+    # Число в README трижды разошлось с кодом и висело устаревшим, пока его
+    # не заметил человек. Считаем проверки прямо из этого файла и требуем,
+    # чтобы README называл то же число.
+    $me   = Get-Content -LiteralPath $PSCommandPath -Raw
+    $real = ([regex]::Matches($me, "(?m)^Check '")).Count
+    if ($real -lt 20) { throw "проверки не посчитались: нашлось $real" }
+
+    $readme = Join-Path $root 'README.md'
+    if (-not (Test-Path $readme)) { throw 'README.md рядом нет' }
+    $txt = Get-Content -LiteralPath $readme -Raw
+
+    $said = [regex]::Matches($txt, '(\d+)\s+проверок')
+    if ($said.Count -eq 0) { throw 'в README нет ни одного числа проверок — проверка не сработала' }
+    foreach ($m in $said) {
+        $n = [int]$m.Groups[1].Value
+        if ($n -ne $real) { throw "README обещает $n проверок, а их $real" }
+    }
+    "проверок $real, в README упомянуто $($said.Count) раз — сходится"
+}
+
 Write-Host '--------------------------------------------------'
 if ($passed -eq $total) {
     Write-Host "Пройдено $passed из $total — всё в порядке." -ForegroundColor Green
