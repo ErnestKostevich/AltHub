@@ -117,7 +117,10 @@ function Invoke-RamRequest {
         [Parameter(Mandatory)][string]$Url,
         [string]$Cookie,
         [string]$Csrf,
-        [string]$Body
+        [string]$Body,
+        # Свои заголовки. Нужны для продолжения «вызова» Roblox при входе:
+        # rblx-challenge-id / -type / -metadata.
+        [hashtable]$Headers
     )
 
     $client = Get-RamHttpClient
@@ -134,6 +137,13 @@ function Invoke-RamRequest {
     $req.Headers.TryAddWithoutValidation('Origin',  'https://www.roblox.com')  | Out-Null
     $req.Headers.TryAddWithoutValidation('Accept',  'application/json')        | Out-Null
     $req.Headers.TryAddWithoutValidation('User-Agent', 'Roblox/WinInet')       | Out-Null
+
+    if ($null -ne $Headers) {
+        foreach ($k in $Headers.Keys) {
+            $v = [string]$Headers[$k]
+            if ($v) { $req.Headers.TryAddWithoutValidation([string]$k, $v) | Out-Null }
+        }
+    }
 
     if ($Method -eq 'POST') {
         $payload = if ($null -eq $Body) { '' } else { $Body }
@@ -389,13 +399,14 @@ function Get-RamLoginCookie {
             if ($cookie) {
                 return [pscustomobject]@{ Ok = $true; Need = ''; Message = ''; Cookie = $cookie }
             }
-            # 200 без куки — значит Roblox ждёт второй шаг.
+            # 200 без куки — старый вид ответа со вторым шагом.
             $tw = ConvertFrom-RamTwoStepChallenge -Body $r.Body
             if ($null -ne $tw) {
                 return [pscustomobject]@{
                     Ok = $false; Need = '2fa'; Cookie = ''
                     Message = 'Нужен код двухфакторной защиты.'
                     UserId = $tw.UserId; MediaType = $tw.MediaType; Ticket = $tw.Ticket
+                    ChallengeId = ''; ChallengeMeta = ''; Body = $body; Csrf = $csrf
                 }
             }
             return (& $fail 'creds' 'Roblox ответил без входа и без причины. Попробуй ещё раз или добавь аккаунт из приложения.')
@@ -405,12 +416,62 @@ function Get-RamLoginCookie {
             return (& $fail 'creds' 'Неверный логин или пароль.')
         }
 
-        # 403 со вторым заходом — тоже вызов, но нераспознанный.
+        # --- ДВУХФАКТОРКА ПРИХОДИТ ИМЕННО ТАК.
+        # Современный Roblox не отвечает на неё кодом 200 с телом: он отдаёт
+        # 403 и заголовки rblx-challenge-*. Раньше этот случай проваливался
+        # в общий отказ, и человек видел «Roblox отказал (код 403)» вместо
+        # запроса кода. Именно на этом всё и застряло.
+        $chId   = ''
+        $chMeta = ''
+        if ($r.Headers.ContainsKey('rblx-challenge-id'))       { $chId   = [string]$r.Headers['rblx-challenge-id'] }
+        if ($r.Headers.ContainsKey('rblx-challenge-metadata')) { $chMeta = [string]$r.Headers['rblx-challenge-metadata'] }
+
+        if ($chId -and ($ctype -match 'twostepverification' -or $ctype -match 'forceauthenticator')) {
+            $meta = ConvertFrom-RamChallengeMetadata -Base64 $chMeta
+            $uid  = 0
+            $inner = ''
+            $media = 'Authenticator'
+            if ($null -ne $meta) {
+                if ($meta.PSObject.Properties.Name -contains 'userId')      { $uid   = [int64]$meta.userId }
+                if ($meta.PSObject.Properties.Name -contains 'challengeId') { $inner = [string]$meta.challengeId }
+                if ($meta.PSObject.Properties.Name -contains 'mediaType' -and $meta.mediaType) { $media = [string]$meta.mediaType }
+            }
+            if ($uid -gt 0 -and $inner) {
+                return [pscustomobject]@{
+                    Ok = $false; Need = '2fa'; Cookie = ''
+                    Message = 'Нужен код двухфакторной защиты.'
+                    UserId = $uid; MediaType = $media; Ticket = $inner
+                    ChallengeId = $chId; ChallengeMeta = $chMeta
+                    Body = $body; Csrf = $csrf
+                }
+            }
+            return (& $fail 'creds' (
+                "Roblox просит двухфакторную защиту, но не сказал, каким способом.`n`n" +
+                'Надёжнее добавить аккаунт из приложения Roblox — там пароль и код не нужны.'))
+        }
+
+        # 403 со вторым заходом и без понятного вызова.
         if ($attempt -eq 2) {
-            return (& $fail 'creds' "Roblox отказал (код $($r.Status)). Надёжнее добавить аккаунт из приложения Roblox.")
+            $hint = if ($ctype) { " Тип вызова: $ctype." } else { '' }
+            return (& $fail 'creds' (
+                "Roblox отказал (код $($r.Status)).$hint`n`n" +
+                'Надёжнее добавить аккаунт из приложения Roblox: войди там под нужным аккаунтом и нажми «Из приложения Roblox».'))
         }
     }
     return (& $fail 'creds' 'Roblox не ответил на попытку входа.')
+}
+
+function ConvertFrom-RamChallengeMetadata {
+    <# Roblox шлёт сведения о вызове в base64. Возвращает объект или $null. #>
+    param([string]$Base64)
+    if ([string]::IsNullOrWhiteSpace($Base64)) { return $null }
+    try {
+        $json = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($Base64))
+        return ($json | ConvertFrom-Json)
+    } catch {
+        # Иногда прилетает уже готовый JSON, без base64.
+        try { return ($Base64 | ConvertFrom-Json) } catch { return $null }
+    }
 }
 
 function Get-RamCookieFromSetCookies {
@@ -454,43 +515,98 @@ function Complete-RamLoginTwoStep {
     <#
       Завершает вход, когда Roblox попросил код двухфакторной защиты.
 
-      Код вводит сам человек — тот, что пришёл ему на почту или в приложение.
-      Никакого обхода здесь нет: мы просто передаём введённый им код дальше.
+      Код вводит САМ ЧЕЛОВЕК — тот, что пришёл ему на почту или показало
+      приложение-аутентификатор. Никакого обхода здесь нет: мы только
+      передаём введённый им код дальше, ровно как это делает сайт Roblox.
+
+      Три шага, и все три обязательны:
+        1. проверить код               -> получаем verificationToken
+        2. продолжить «вызов»          -> Roblox отмечает вызов пройденным
+        3. повторить сам вход          -> теперь он отдаёт .ROBLOSECURITY
+
+      Раньше третьего шага не было, и Roblox куку просто не отдавал.
+
+      $Challenge — то, что вернул Get-RamLoginCookie с Need='2fa'.
     #>
     param(
-        [Parameter(Mandatory)][int64]$UserId,
-        [Parameter(Mandatory)][string]$MediaType,
-        [Parameter(Mandatory)][string]$Ticket,
+        [Parameter(Mandatory)]$Challenge,
         [Parameter(Mandatory)][string]$Code
     )
 
-    $verifyUrl = "https://twostepverification.roblox.com/v1/users/$UserId/challenges/$MediaType/verify"
-    $body = ConvertTo-Json -Compress -InputObject @{
-        challengeId = $Ticket
+    $uid    = [int64]$Challenge.UserId
+    $media  = [string]$Challenge.MediaType
+    $inner  = [string]$Challenge.Ticket
+    $csrf   = [string]$Challenge.Csrf
+
+    $fail = { param([string]$m) [pscustomobject]@{ Ok = $false; Cookie = ''; Message = $m } }
+
+    # --- шаг 1: проверяем код
+    $verifyUrl = "https://twostepverification.roblox.com/v1/users/$uid/challenges/$media/verify"
+    $vBody = ConvertTo-Json -Compress -InputObject @{
+        challengeId = $inner
         actionType  = 'Login'
         code        = $Code
     }
 
-    $csrf = ''
     $token = ''
-    for ($attempt = 1; $attempt -le 2; $attempt++) {
-        $r = Invoke-RamRequest -Method POST -Url $verifyUrl -Csrf $csrf -Body $body
-        if ($r.Status -eq 403 -and $r.Headers.ContainsKey('x-csrf-token') -and -not $csrf) {
-            $csrf = [string]$r.Headers['x-csrf-token']; continue
+    for ($i = 1; $i -le 2; $i++) {
+        $r = Invoke-RamRequest -Method POST -Url $verifyUrl -Csrf $csrf -Body $vBody
+        if ($r.Status -eq 403 -and $r.Headers.ContainsKey('x-csrf-token')) {
+            $csrf = [string]$r.Headers['x-csrf-token']
+            if ($i -eq 1) { continue }
         }
         if ($r.Status -eq 200) {
             try { $token = [string](($r.Body | ConvertFrom-Json).verificationToken) } catch { }
             break
         }
-        return [pscustomobject]@{ Ok = $false; Cookie = ''; Message = 'Код не подошёл. Проверь и введи заново.' }
+        if ($r.Status -eq 400 -or $r.Status -eq 401) {
+            return (& $fail 'Код не подошёл. Проверь и введи заново — он живёт недолго.')
+        }
     }
-    if (-not $token) {
-        return [pscustomobject]@{ Ok = $false; Cookie = ''; Message = 'Roblox не принял код.' }
+    if (-not $token) { return (& $fail 'Roblox не принял код. Попробуй ещё раз или добавь аккаунт из приложения.') }
+
+    # --- шаг 2: продолжаем вызов
+    $chId = [string]$Challenge.ChallengeId
+    if ($chId) {
+        $meta = ConvertTo-Json -Compress -InputObject @{
+            verificationToken = $token
+            rememberDevice    = $false
+            challengeId       = $inner
+            actionType        = 'Login'
+        }
+        $metaB64 = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($meta))
+
+        $cBody = ConvertTo-Json -Compress -InputObject @{
+            challengeId       = $chId
+            challengeType     = 'twostepverification'
+            challengeMetadata = $meta
+        }
+        $rc = Invoke-RamRequest -Method POST -Url 'https://apis.roblox.com/challenge/v1/continue' -Csrf $csrf -Body $cBody
+        if ($rc.Status -eq 403 -and $rc.Headers.ContainsKey('x-csrf-token')) {
+            $csrf = [string]$rc.Headers['x-csrf-token']
+            $rc = Invoke-RamRequest -Method POST -Url 'https://apis.roblox.com/challenge/v1/continue' -Csrf $csrf -Body $cBody
+        }
+
+        # --- шаг 3: повторяем вход, приложив пройденный вызов
+        $hdrs = @{
+            'rblx-challenge-id'       = $chId
+            'rblx-challenge-type'     = 'twostepverification'
+            'rblx-challenge-metadata' = $metaB64
+        }
+        $r3 = Invoke-RamRequest -Method POST -Url 'https://auth.roblox.com/v2/login' `
+                                -Csrf $csrf -Body ([string]$Challenge.Body) -Headers $hdrs
+        if ($r3.Status -eq 403 -and $r3.Headers.ContainsKey('x-csrf-token')) {
+            $r3 = Invoke-RamRequest -Method POST -Url 'https://auth.roblox.com/v2/login' `
+                                    -Csrf ([string]$r3.Headers['x-csrf-token']) -Body ([string]$Challenge.Body) -Headers $hdrs
+        }
+        $cookie = Get-RamCookieFromSetCookies -SetCookieHeaders $r3.SetCookies
+        if ($cookie) { return [pscustomobject]@{ Ok = $true; Cookie = $cookie; Message = '' } }
     }
 
-    $loginUrl = 'https://auth.roblox.com/v3/users/' + $UserId + '/two-step-verification/login'
+    # --- запасной путь: старый вид завершения входа
+    $loginUrl = 'https://auth.roblox.com/v3/users/' + $uid + '/two-step-verification/login'
     $body2 = ConvertTo-Json -Compress -InputObject @{
-        challengeId       = $Ticket
+        challengeId       = $inner
         verificationToken = $token
     }
     $r2 = Invoke-RamRequest -Method POST -Url $loginUrl -Csrf $csrf -Body $body2
@@ -500,7 +616,7 @@ function Complete-RamLoginTwoStep {
 
     $cookie = Get-RamCookieFromSetCookies -SetCookieHeaders $r2.SetCookies
     if ($cookie) { return [pscustomobject]@{ Ok = $true; Cookie = $cookie; Message = '' } }
-    return [pscustomobject]@{ Ok = $false; Cookie = ''; Message = 'Roblox принял код, но вход не отдал. Добавь аккаунт из приложения.' }
+    return (& $fail 'Код принят, но вход Roblox не отдал. Добавь аккаунт из приложения Roblox — там пароль и код не нужны.')
 }
 
 function Get-RamAuthTicket {

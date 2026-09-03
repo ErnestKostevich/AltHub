@@ -1,18 +1,25 @@
 @echo off
 rem ---------------------------------------------------------------------------
-rem  Zapusk AltHub.
+rem  AltHub - zapusk.
 rem
-rem  Snachala probuem AltHub.vbs — on startuet PowerShell voobshe bez okna
-rem  konsoli. Esli wscript otklyuchen politikoy ili zablokirovan antivirusom,
-rem  srazu uhodim na obychnyy zapusk cherez PowerShell.
+rem  Snachala probuem AltHub.vbs: on startuet PowerShell bez okna konsoli.
+rem  Esli wscript nedostupen (otklyuchen politikoy ili antivirusom) - uhodim
+rem  na obychnyy zapusk cherez PowerShell.
 rem
-rem  Esli okno tak i ne otkroetsya — zapusti "Запустить с окном.cmd",
-rem  on pokazhet, chto imenno poshlo ne tak.
+rem  Esli okno tak i ne otkroetsya - zapusti "Zapusk s oknom.cmd":
+rem  on pokazhet tochnuyu oshibku.
+rem
+rem  Vnimanie: fayl dolzhen lezhat RYADOM s AltHub.ps1. Zapuskat pryamo iz
+rem  arhiva nelzya - snachala raspakuy ego celikom.
 rem ---------------------------------------------------------------------------
 cd /d "%~dp0"
 
 if not exist "%~dp0AltHub.ps1" (
-    echo Ryadom net AltHub.ps1. Raspakuy arhiv celikom, ne po odnomu faylu.
+    echo.
+    echo  AltHub.ps1 not found next to this file.
+    echo  Raspakuy arhiv CELIKOM i zapuskay iz raspakovannoy papki,
+    echo  a ne pryamo iz arhiva.
+    echo.
     pause
     exit /b 1
 )

@@ -980,6 +980,79 @@ Check 'Капча не обходится, а передаётся челове�
     'решателей капчи нет, человека уводим на страницу Roblox'
 }
 
+Check 'Значок в часах не пустой' {
+    # Регрессия 1.2: ради утечки handle сюда добавили DestroyIcon, а значок,
+    # полученный через Icon.FromHandle, на этот handle ещё ссылался. NotifyIcon
+    # при этом честно говорил Visible = true, но рисовать системе было нечего —
+    # окно уходило «в часы», а значка там не появлялось.
+    $icon = New-RamTrayIcon -Accent ([System.Drawing.Color]::FromArgb(0, 122, 214))
+    if ($null -eq $icon) { throw 'значок не создался' }
+    try {
+        if ($icon.Width -le 0 -or $icon.Height -le 0) { throw 'у значка нулевой размер' }
+
+        # Если бы значок зависел от освобождённого handle, картинка была бы
+        # пустой или ToBitmap() свалился бы.
+        $bmp = $icon.ToBitmap()
+        try {
+            $solid = 0
+            for ($x = 0; $x -lt $bmp.Width; $x += 4) {
+                for ($y = 0; $y -lt $bmp.Height; $y += 4) {
+                    if ($bmp.GetPixel($x, $y).A -gt 0) { $solid++ }
+                }
+            }
+            if ($solid -lt 5) { throw "значок пустой ($solid непрозрачных точек) — в часах его не будет видно" }
+        } finally { $bmp.Dispose() }
+    } finally { $icon.Dispose() }
+
+    # И он не должен собираться через Clone(): именно этот путь и ломался.
+    $src = Get-RamAllSource
+    if ($src -match '\$icon\.Clone\(\)') { throw 'значок снова собирается через Clone() от FromHandle' }
+
+    'значок рисуется и переживает освобождение handle'
+}
+
+Check 'Запускающие файлы в правильной кодировке' {
+    # cmd.exe читает пакетный файл в кодировке OEM и требует CRLF. Файл,
+    # записанный в UTF-8 с переводами строк LF, он разбирает как мусор и
+    # пытается выполнить обрывки русских слов как команды — именно так и
+    # получилось: «'Филась.' is not recognized as an internal command».
+    # Поэтому .cmd у нас строго ASCII + CRLF, а весь текст по-русски живёт
+    # в .ps1 и README.
+    $bad = @()
+
+    foreach ($n in @('Запустить.cmd', 'Запустить с окном.cmd', 'Ярлык на рабочий стол.cmd')) {
+        $p = Join-Path $root $n
+        if (-not (Test-Path -LiteralPath $p)) { $bad += "$n : файла нет"; continue }
+        $b = [System.IO.File]::ReadAllBytes($p)
+
+        for ($i = 0; $i -lt $b.Length; $i++) {
+            if ($b[$i] -gt 127) { $bad += "$n : не-ASCII байт (позиция $i) — cmd прочитает его как мусор"; break }
+        }
+        $lone = 0
+        for ($i = 0; $i -lt $b.Length; $i++) {
+            if ($b[$i] -eq 10 -and ($i -eq 0 -or $b[$i-1] -ne 13)) { $lone++ }
+        }
+        if ($lone -gt 0) { $bad += "$n : $lone переводов строки без CR — cmd такой файл разбирает неверно" }
+    }
+
+    # .vbs — UTF-16LE с BOM: wscript такой понимает, и русские комментарии
+    # в нём остаются читаемыми.
+    $v = Join-Path $root 'AltHub.vbs'
+    if (-not (Test-Path -LiteralPath $v)) { $bad += 'AltHub.vbs : файла нет' }
+    else {
+        $vb = [System.IO.File]::ReadAllBytes($v)
+        $utf16 = ($vb.Length -ge 2 -and $vb[0] -eq 0xFF -and $vb[1] -eq 0xFE)
+        $ascii = $true
+        foreach ($x in $vb) { if ($x -gt 127) { $ascii = $false; break } }
+        if (-not $utf16 -and -not $ascii) {
+            $bad += 'AltHub.vbs : ни UTF-16 с BOM, ни чистый ASCII — wscript прочитает текст неверно'
+        }
+    }
+
+    if ($bad.Count) { throw ($bad -join ' | ') }
+    'cmd — ASCII и CRLF, vbs — UTF-16 с BOM'
+}
+
 Check 'Запуск не прячет главное окно' {
     # Самая дорогая ошибка 1.2: AltHub.vbs запускал PowerShell с режимом окна 0.
     # Это SW_HIDE в STARTUPINFO, а Windows применяет его к ПЕРВОМУ окну

@@ -168,16 +168,34 @@ function New-RamTrayIcon {
         $g.Dispose()
     }
 
+    # ЗНАЧОК ДЕЛАЕМ ЧЕРЕЗ ПОТОК, А НЕ ЧЕРЕЗ Clone().
+    #
+    # Icon.FromHandle не владеет handle: полученный значок продолжает на него
+    # ссылаться, и Clone() эту зависимость не разрывает. В 1.2 сюда добавили
+    # DestroyIcon ради утечки — и значок в часах перестал появляться вообще:
+    # NotifyIcon.Visible при этом честно говорит true, но рисовать системе
+    # уже нечего.
+    #
+    # Поэтому сохраняем значок в память как настоящий .ico и собираем из
+    # потока — такой значок ни от чего не зависит. Handle после этого можно
+    # спокойно освободить, и утечки тоже нет.
     $hicon = $bmp.GetHicon()
-    $icon  = [System.Drawing.Icon]::FromHandle($hicon)
-    # Копия нужна, чтобы значок пережил освобождение исходной картинки.
-    $clone = $icon.Clone()
-    $icon.Dispose()
-    # Handle от GetHicon система сама не освобождает — забираем руками,
-    # иначе он течёт при каждой смене темы.
-    try { [void][Ram.IconTools]::DestroyIcon($hicon) } catch { }
-    $bmp.Dispose()
-    return $clone
+    $result = $null
+    try {
+        $src = [System.Drawing.Icon]::FromHandle($hicon)
+        try {
+            $ms = New-Object System.IO.MemoryStream
+            try {
+                $src.Save($ms)
+                $ms.Position = 0
+                $result = New-Object System.Drawing.Icon($ms)
+            } finally { $ms.Dispose() }
+        } finally { $src.Dispose() }
+    } finally {
+        try { [void][Ram.IconTools]::DestroyIcon($hicon) } catch { }
+        $bmp.Dispose()
+    }
+    return $result
 }
 
 function New-RamDesktopShortcut {
