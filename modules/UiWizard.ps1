@@ -104,6 +104,7 @@ function Show-RamFirstRun {
     $dlg.Font            = $t.FontBody
     $dlg.ClientSize      = New-Object System.Drawing.Size(($pageW + $m.PadX * 2), 600)
     $dlg.Add_HandleCreated({ Set-RamDarkTitleBar $this })
+    Set-RamWindowIcon $dlg
 
     $stripe = New-Object System.Windows.Forms.Panel
     $stripe.Location  = New-Object System.Drawing.Point(0, 0)
@@ -284,6 +285,21 @@ function Show-RamFirstRun {
     [void](& $addText $p5 ("Отметь галочками нужные аккаунты и нажми «Запустить» — окна поднимутся по очереди и разложатся по экрану.`n`n" +
                            "Правый клик по карточке — игра, наборы настроек, починка входа.`n`n" +
                            "Пройти эту настройку заново можно из «Справки».") $t.FontSmall $t.Muted)
+    [void](Add-RamGap -Layout $p5 -Height $m.Gap)
+
+    $btnShortcut = New-RamButton -Text 'Сделать ярлык на рабочем столе' -Width 1 -Height $m.RowH -Kind 'ghost' `
+                                 -Tooltip 'Запуск одним кликом, без чёрного окна консоли' -OnClick {
+        $r = New-RamDesktopShortcut
+        if ($r.Ok) {
+            Set-RamButtonText -Button $this -Text 'Ярлык создан ✓'
+            Set-RamButtonEnabled -Button $this -Enabled $false
+            Write-RamLog "Ярлык создан: $($r.Path)" 'ok'
+        } else {
+            Show-RamError "Не вышло создать ярлык.`n`n$($r.Error)"
+        }
+    }
+    [void](Add-RamRow -Layout $p5 -Items @($btnShortcut))
+    [void](& $addText $p5 'Ярлык запускает AltHub без чёрного окна консоли и со своей иконкой.' $t.FontSmall $t.Muted)
 
     # --------------------------------------------------- выравнивание страниц
     $pageH = 0

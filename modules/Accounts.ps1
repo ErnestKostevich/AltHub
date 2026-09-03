@@ -304,6 +304,81 @@ function Get-RamAnyCookie {
     return ''
 }
 
+function Update-RamAppAccountWatch {
+    <#
+      Замечает, что в приложении Roblox сменился аккаунт, и предлагает добавить
+      его одной кнопкой.
+
+      Раньше человек должен был сам открыть мастер и нажать «Проверить снова».
+      Первый же сторонний пользователь сказал прямо: у соседней программы
+      добавление проще. Кука и так лежит в хранилище клиента — остаётся её
+      заметить.
+
+      Дёшево: файл читается ТОЛЬКО когда сменилось время его записи. В покое
+      это одна проверка атрибутов файла за такт.
+    #>
+    if ($script:ReadOnly) { return }
+
+    try {
+        $f = Get-RamRobloxCookieFile
+        if (-not (Test-Path -LiteralPath $f)) { return }
+        $stamp = (Get-Item -LiteralPath $f).LastWriteTime.Ticks
+        if ($stamp -eq $script:AppCookieStamp) { return }
+        $script:AppCookieStamp = $stamp
+    } catch { return }
+
+    $cookie = ''
+    try { $cookie = Get-RamCookieFromRobloxApp } catch { return }
+    if ([string]::IsNullOrWhiteSpace($cookie)) { return }
+
+    # Уже знаем этот вход — предлагать нечего.
+    foreach ($a in @($script:Accounts)) {
+        if ($null -ne $a -and $a.Cookie -eq $cookie) { $script:AppOffer = $null; return }
+    }
+    # Тот же самый, про который уже спрашивали — не назойливничаем.
+    if ($null -ne $script:AppOffer -and $script:AppOffer.Cookie -eq $cookie) { return }
+
+    $user = $null
+    try { $user = Get-RamAuthenticatedUser -Cookie $cookie } catch { return }
+    if ($null -eq $user -or -not $user.Name) { return }
+
+    $script:AppOffer = [pscustomobject]@{ Cookie = $cookie; Name = [string]$user.Name; UserId = [int]$user.Id }
+    Set-RamStatus "В приложении Roblox сейчас «$($user.Name)» — нажми сюда, чтобы добавить его в менеджер"
+    Write-RamLog "В приложении Roblox замечен «$($user.Name)» — его можно добавить одним кликом по строке внизу." 'info'
+}
+
+function Invoke-RamAppOffer {
+    <# Клик по строке состояния, когда там висит предложение добавить аккаунт. #>
+    $offer = $script:AppOffer
+    if ($null -eq $offer) { return }
+
+    foreach ($a in @($script:Accounts)) {
+        if ($null -ne $a -and $a.Cookie -eq $offer.Cookie) { $script:AppOffer = $null; return }
+    }
+
+    if (-not (Confirm-Ram "Добавить аккаунт «$($offer.Name)» в менеджер?`n`nВход берётся из приложения Roblox, пароль не нужен.")) {
+        # Больше про этот вход не спрашиваем, пока в приложении не сменят аккаунт.
+        $script:AppOffer = $null
+        return
+    }
+
+    $script:AppOffer = $null
+    try {
+        $r = Add-RamAccountFromCookie -Cookie $offer.Cookie
+        Build-RamCards
+        Update-RamHeaderCounts
+        if ($r.IsNew) {
+            Set-RamStatus "Добавлен «$($r.User.Name)»"
+            Write-RamLog "Добавлен аккаунт «$($r.User.Name)» из приложения Roblox." 'ok'
+        } else {
+            Set-RamStatus "Вход «$($r.User.Name)» обновлён"
+            Write-RamLog "Обновлён вход аккаунта «$($r.User.Name)» из приложения Roblox." 'ok'
+        }
+    } catch {
+        Show-RamError $_.Exception.Message
+    }
+}
+
 function Get-RamKnownGameName {
     <#
       Название игры, которое уже где-то известно менеджеру: в сохранённых
@@ -1345,6 +1420,7 @@ function Update-RamInstances {
     Update-RamCardStates
     Update-RamOneAvatar
     Update-RamOneGameName
+    Update-RamAppAccountWatch
     if ($script:Section -eq 'stats' -and $dead.Count -gt 0) { Update-RamStatsPanel }
 }
 

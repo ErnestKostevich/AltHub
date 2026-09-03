@@ -4,7 +4,7 @@
  AltHub — менеджер аккаунтов Roblox
 ================================================================================
  Автор: Эрнест Костевич (Ernest Kostevich)
- Версия: 1.1
+ Версия: 1.2
  Лицензия: MIT — см. файл LICENSE рядом. Можно свободно передавать друзьям,
  менять под себя и распространять дальше, сохраняя это указание авторства.
 
@@ -14,7 +14,7 @@
  Ничего не устанавливается, ничего не скачивается, ничего не компилируется.
  Это обычные текстовые .ps1-файлы — открой любым блокнотом и прочитай.
 
- Запускать через "Запустить.cmd" (или: powershell -ExecutionPolicy Bypass
+ Запускать через "AltHub.vbs" или "Запустить.cmd" (или: powershell -ExecutionPolicy Bypass
  -STA -File AltHub.ps1).
 
  Разбор по файлам. Сам AltHub.ps1 — только точка входа: состояние, журнал и
@@ -113,6 +113,8 @@ $script:AvatarJob      = $null    # текущая незавершённая з
 $script:AvatarSkip     = @{}      # UserId -> сколько раз не вышло скачать
 $script:GameNameJob    = $null    # текущая незавершённая догрузка названия игры
 $script:GameNameSkip   = @{}      # placeId -> сколько раз не вышло узнать название
+$script:AppCookieStamp = 0        # время записи хранилища кук клиента
+$script:AppOffer       = $null    # замеченный в приложении аккаунт, ещё не добавленный
 $script:NextLaunchTime = [datetime]::MinValue
 $script:PlayerPath     = ''
 $script:Filter         = ''       # текст поиска по аккаунтам
@@ -143,7 +145,7 @@ $script:RestartCount   = @{}      # Id аккаунта -> сколько раз
 $script:ReadOnly = [bool]$NoAutoStart
 
 $script:AppName    = 'AltHub'
-$script:AppVersion = '1.1'
+$script:AppVersion = '1.2'
 $script:AppAuthor  = 'Эрнест Костевич'
 
 function Get-RamAvatarDir { Join-Path (Get-RamDataDir) 'avatars' }
@@ -151,12 +153,17 @@ function Get-RamAvatarDir { Join-Path (Get-RamDataDir) 'avatars' }
 # ------------------------------------------------------------- утилиты ------
 
 function Write-RamLog {
-    <# Пишем в окно журнала. Куки в журнал не попадают: любая строка, похожая
-       на .ROBLOSECURITY, режется перед выводом. #>
+    <# Пишем в окно журнала. Секреты в журнал не попадают: кука, длинные токены
+       и пароль вырезаются ДО вывода — и на экран, и в файл. #>
     param([string]$Message, [string]$Level = 'info')
 
     $safe = $Message -replace '_\|WARNING[^\s]*', '<кука скрыта>'
     $safe = $safe    -replace '[A-Za-z0-9_\-]{200,}', '<длинный токен скрыт>'
+    # Пароль появился в программе вместе с входом по логину (Get-RamLoginCookie).
+    # Сам по себе он в журнал не отправляется никогда, но если тело запроса
+    # случайно попадёт в текст ошибки — вырезаем и его.
+    $safe = $safe -replace '(?i)("?password"?\s*[:=]\s*)"[^"]*"', '$1"<пароль скрыт>"'
+    $safe = $safe -replace '(?i)(password\s*[:=]\s*)\S+', '$1<пароль скрыт>'
     # Журнал моноширинный, подстановки шрифта в нём нет — смайлики из
     # названий игр вырезаем, иначе будут квадратики.
     $safe = Remove-RamEmoji -Text $safe   # журнал моноширинный, смайликам там не место

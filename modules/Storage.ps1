@@ -370,7 +370,13 @@ function Get-RamDefaultSettings {
         WatchGroup      = ''          # набор, который держать в игре
         Profiles        = @()         # профили запуска: @{ Name; Group; PlaceId; LinkCode; GameName }
         HotkeySwitch    = $true       # Ctrl+1..9 переключают окна аккаунтов
-        MinimizeToTray  = $true       # сворачивать в часы, а не в панель задач
+        # Куда девается окно. Раньше был один флаг MinimizeToTray, и он
+        # описывал только сворачивание — а люди ждут выбора и для крестика.
+        # Умолчания скучные нарочно: программа не должна пропадать у того,
+        # кто ничего не настраивал. См. перенос старого флага в Load-RamSettings.
+        OnMinimize      = 'taskbar'   # taskbar | tray
+        OnClose         = 'exit'      # exit    | tray
+        TrayHintShown   = $false      # показывали ли подсказку «ищи под стрелкой»
         CheckOnStart    = $true       # проверять входы при открытии менеджера
         AutoRestart     = $false # поднимать аккаунт заново, если клиент вылетел
         AutoRestartMax  = 3      # сколько раз подряд пытаться
@@ -393,8 +399,21 @@ function Load-RamSettings {
             foreach ($p in $s.PSObject.Properties.Name) {
                 if ($loaded.PSObject.Properties.Name -contains $p) { $s.$p = $loaded.$p }
             }
+
+            # Перенос со старого флага. Недостающие поля доливаются из умолчаний
+            # сами, но тогда у того, кто уже привык к сворачиванию в часы, оно
+            # молча выключилось бы. Переносим один раз: если в файле остался
+            # MinimizeToTray и ещё нет нового OnMinimize — уважаем старый выбор.
+            $names = $loaded.PSObject.Properties.Name
+            if (($names -contains 'MinimizeToTray') -and -not ($names -contains 'OnMinimize')) {
+                $s.OnMinimize = $(if ([bool]$loaded.MinimizeToTray) { 'tray' } else { 'taskbar' })
+            }
         } catch { }
     }
+
+    # Мусор в файле не должен превращаться в непонятное поведение окна.
+    if ($s.OnMinimize -notin @('taskbar', 'tray')) { $s.OnMinimize = 'taskbar' }
+    if ($s.OnClose    -notin @('exit', 'tray'))    { $s.OnClose    = 'exit' }
     return $s
 }
 

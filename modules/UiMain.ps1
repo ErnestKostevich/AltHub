@@ -555,6 +555,42 @@ function Update-RamOneAvatar {
     }
 }
 
+function Show-RamMainWindow {
+    <# Вернуть главное окно из часов. Одно место на все способы: значок,
+       его меню, повторный запуск программы. #>
+    $f = $script:UI.Form
+    if ($null -eq $f) { return }
+    try {
+        $f.Show()
+        if ($f.WindowState -eq 'Minimized') { $f.WindowState = 'Normal' }
+        [void]$f.Activate()
+        $f.BringToFront()
+    } catch { }
+}
+
+function Show-RamTrayHint {
+    <#
+      Один раз объясняем, куда делось окно.
+
+      В Windows 11 новый значок в часах по умолчанию уезжает под стрелку «^»,
+      и человек видит только то, что программа пропала. Именно так и звучала
+      жалоба: «свернул минусиком — закрылось всё приложение».
+    #>
+    if ([bool]$script:Settings.TrayHintShown) { return }
+    if (-not $script:UI.TrayOk -or $null -eq $script:UI.Tray) { return }
+
+    $script:Settings.TrayHintShown = $true
+    Save-RamSettingsNow
+
+    try {
+        $script:UI.Tray.BalloonTipTitle = "$($script:AppName) свернулся в часы"
+        $script:UI.Tray.BalloonTipText  =
+            'Значка не видно? Он спрятан под стрелкой ^ рядом с часами — перетащи его оттуда, чтобы был на виду. Клик по значку возвращает окно.'
+        $script:UI.Tray.BalloonTipIcon  = [System.Windows.Forms.ToolTipIcon]::Info
+        $script:UI.Tray.ShowBalloonTip(7000)
+    } catch { }
+}
+
 function Update-RamOneGameName {
     <#
       Догружает НАЗВАНИЕ игры для аккаунтов, у которых есть placeId, но имя
@@ -1512,7 +1548,9 @@ function Update-RamTrayMenu {
     $m.Items.Clear()
 
     $mShow = New-Object System.Windows.Forms.ToolStripMenuItem('Открыть AltHub')
-    $mShow.Add_Click({ $f = $script:UI.Form; $f.Show(); $f.WindowState = 'Normal'; [void]$f.Activate() })
+    # Жирным: это действие, за которым в меню значка приходят в 9 случаях из 10.
+    $mShow.Font = New-Object System.Drawing.Font($mShow.Font, [System.Drawing.FontStyle]::Bold)
+    $mShow.Add_Click({ Show-RamMainWindow })
     [void]$m.Items.Add($mShow)
     [void]$m.Items.Add((New-Object System.Windows.Forms.ToolStripSeparator))
 
@@ -1571,6 +1609,7 @@ function Get-RamCheckableWindows {
         @{ Name = 'из браузера';   Build = { Show-RamBrowserGuide -BuildOnly } }
         @{ Name = 'популярные';    Build = { Show-RamPopularGamesDialog -BuildOnly } }
         @{ Name = 'быстрая';       Build = { Show-RamQuickSetup -BuildOnly } }
+        @{ Name = 'вход/пароль';   Build = { Show-RamPasswordLoginDialog -BuildOnly } }
         @{ Name = 'мастер1';       Build = { Show-RamFirstRun -StartStep 0 -BuildOnly }; Pages = $true }
         @{ Name = 'мастер1/тема';  Build = { Show-RamFirstRun -StartStep 1 -BuildOnly }; Pages = $true }
         @{ Name = 'мастер1/акк';   Build = { Show-RamFirstRun -StartStep 2 -BuildOnly }; Pages = $true }
@@ -1653,6 +1692,8 @@ function New-RamMainForm {
     $form.Font          = $t.FontBody
     Set-RamDoubleBuffered $form
     $form.Add_HandleCreated({ Set-RamDarkTitleBar $this })
+
+    Set-RamWindowIcon $form
 
     # Перетаскивание файла на окно: список кук/приглашений или файл настроек.
     # Курсор «копировать» показываем только для файлов — на текст и прочее не
@@ -2124,6 +2165,10 @@ function New-RamMainForm {
     $lineY = $formH - [int](28 * $metrics.Scale)
     $st = New-RamLabel -Text '' -X $contentX -Y ($lineY + 4) -Width ($contentW - $fixW - $metrics.GapLg) -Height 20 -Font $t.FontSmall -Color $t.Muted
     $st.Anchor = 'Left,Right,Bottom'
+    # По строке состояния можно кликнуть, когда в ней висит предложение
+    # добавить аккаунт, замеченный в приложении Roblox. В остальное время
+    # клик ничего не делает — см. Invoke-RamAppOffer.
+    $st.Add_Click({ Invoke-RamAppOffer })
     $form.Controls.Add($st)
     $script:UI.Status = $st
 
@@ -2223,6 +2268,19 @@ function New-RamMainForm {
 
     $form.Add_FormClosing({
         param($sender, $e)
+
+        # Крестик может сворачивать в часы — так делают Discord и Telegram,
+        # и именно этого от него ждали. Но только если значок реально есть:
+        # иначе программа исчезнет без следа. UserClosing — это именно
+        # крестик и Alt+F4, а не выключение Windows и не Restart-AltHub.
+        if ($script:Settings.OnClose -eq 'tray' -and $script:UI.TrayOk -and
+            $e.CloseReason -eq [System.Windows.Forms.CloseReason]::UserClosing) {
+            $e.Cancel = $true
+            $sender.Hide()
+            Show-RamTrayHint
+            return
+        }
+
         if ($script:Settings.ConfirmOnExit -and $script:Instances.Count -gt 0) {
             if (-not (Confirm-Ram "Запущено клиентов: $($script:Instances.Count).`n`nЗакрыть менеджер? Сами окна Roblox продолжат работать, но новые аккаунты запустить будет нельзя, пока менеджер закрыт.")) {
                 $e.Cancel = $true
@@ -2241,17 +2299,33 @@ function New-RamMainForm {
     })
 
     # =================================================== значок в часах =====
-    if ($script:Settings.MinimizeToTray) {
+    # Значок нужен, если В ЧАСЫ уходит хоть что-то — сворачивание или крестик.
+    $script:UI.TrayOk = $false
+    if ($script:Settings.OnMinimize -eq 'tray' -or $script:Settings.OnClose -eq 'tray') {
         $ni = New-Object System.Windows.Forms.NotifyIcon
-        try { $ni.Icon = New-RamTrayIcon -Accent $t.Accent } catch { }
-        $ni.Text    = $script:AppName
-        $ni.Visible = $true
+        # ЗДЕСЬ БЫЛ catch { } — и это дорого стоило. Если значок не создавался,
+        # NotifyIcon оставался с Icon = $null, Windows такой значок не рисует,
+        # а окно всё равно пряталось. Человек сворачивал программу, и она
+        # исчезала совсем: ни в панели задач, ни в часах. Теперь при сбое
+        # мы честно говорим об этом и НЕ прячем окно (см. TrayOk).
+        try {
+            $ni.Icon    = New-RamTrayIcon -Accent $t.Accent
+            $ni.Text    = $script:AppName
+            $ni.Visible = $true
+            $script:UI.TrayOk = ($null -ne $ni.Icon -and $ni.Visible)
+        } catch {
+            Write-RamLog "Значок в часах не создался ($($_.Exception.Message)) — окно будет сворачиваться в панель задач." 'warn'
+        }
         $script:UI.Tray = $ni
 
-        $ni.Add_DoubleClick({
-            $f = $script:UI.Form
-            $f.Show(); $f.WindowState = 'Normal'; [void]$f.Activate()
+        # Одиночный клик тоже возвращает окно: двойной по значку в часах
+        # находят не все, а спрятанную программу ищут долго.
+        $ni.Add_Click({
+            param($sender, $e)
+            if ($e.Button -ne [System.Windows.Forms.MouseButtons]::Left) { return }
+            Show-RamMainWindow
         })
+        $ni.Add_DoubleClick({ Show-RamMainWindow })
 
         $trayMenu = New-Object System.Windows.Forms.ContextMenuStrip
         $trayMenu.BackColor = $t.Card
@@ -2266,8 +2340,12 @@ function New-RamMainForm {
     }
 
     $form.Add_Resize({
-        if ($script:Settings.MinimizeToTray -and $this.WindowState -eq 'Minimized' -and $null -ne $script:UI.Tray) {
+        # Прятать окно можно ТОЛЬКО когда значок в часах действительно есть.
+        # Иначе программа исчезает целиком, и вернуть её нечем.
+        if ($this.WindowState -eq 'Minimized' -and
+            $script:Settings.OnMinimize -eq 'tray' -and $script:UI.TrayOk) {
             $this.Hide()
+            Show-RamTrayHint
             return
         }
 

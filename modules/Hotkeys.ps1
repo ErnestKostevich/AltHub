@@ -70,6 +70,14 @@ namespace Ram {
             DestroyHandle();
         }
     }
+
+    // Освобождение значка. Bitmap.GetHicon() выдаёт handle, который система
+    // сама не заберёт: без DestroyIcon он течёт при каждой перерисовке значка,
+    // то есть при каждой смене темы.
+    public static class IconTools {
+        [DllImport("user32.dll", SetLastError = true)]
+        public static extern bool DestroyIcon(IntPtr handle);
+    }
 }
 '@ | ForEach-Object {
         Add-Type -TypeDefinition $_ -ReferencedAssemblies 'System.Windows.Forms', 'System.Drawing' -ErrorAction Stop
@@ -164,6 +172,116 @@ function New-RamTrayIcon {
     $icon  = [System.Drawing.Icon]::FromHandle($hicon)
     # Копия нужна, чтобы значок пережил освобождение исходной картинки.
     $clone = $icon.Clone()
+    $icon.Dispose()
+    # Handle от GetHicon система сама не освобождает — забираем руками,
+    # иначе он течёт при каждой смене темы.
+    try { [void][Ram.IconTools]::DestroyIcon($hicon) } catch { }
     $bmp.Dispose()
     return $clone
+}
+
+function New-RamDesktopShortcut {
+    <#
+      Ярлык «AltHub» на рабочем столе.
+
+      Указывает на AltHub.vbs, а не на .ps1 напрямую: так PowerShell стартует
+      вообще без окна консоли. Иконку берём из data\althub.ico, который к
+      этому моменту уже нарисован (см. Get-RamAppIcon).
+
+      Возвращает @{ Ok; Path; Error } — окну надо показать понятный ответ,
+      а не свалиться с исключением.
+    #>
+    $res = [pscustomobject]@{ Ok = $false; Path = ''; Error = '' }
+    try {
+        $target = Join-Path $script:Root 'AltHub.vbs'
+        if (-not (Test-Path -LiteralPath $target)) {
+            $res.Error = "Рядом с программой нет AltHub.vbs — распакуй архив целиком."
+            return $res
+        }
+
+        $lnk = Join-Path ([Environment]::GetFolderPath('Desktop')) 'AltHub.lnk'
+        $sh  = New-Object -ComObject WScript.Shell
+        $s   = $sh.CreateShortcut($lnk)
+        $s.TargetPath       = 'wscript.exe'
+        $s.Arguments        = '"' + $target + '"'
+        $s.WorkingDirectory = $script:Root
+        $s.Description      = 'AltHub — менеджер аккаунтов Roblox'
+
+        $ico = Join-Path (Get-RamDataDir) 'althub.ico'
+        if (-not (Test-Path -LiteralPath $ico)) { [void](Get-RamAppIcon) }
+        if (Test-Path -LiteralPath $ico) { $s.IconLocation = $ico }
+
+        $s.Save()
+        $res.Ok = $true
+        $res.Path = $lnk
+    } catch {
+        $res.Error = $_.Exception.Message
+    }
+    return $res
+}
+
+function Get-RamAppIcon {
+    <#
+      Значок программы: один на весь запуск.
+
+      Рисуется один раз и раздаётся всем окнам — главному, мастеру первого
+      запуска, диалогам. Заодно кладётся в data\althub.ico, откуда его берёт
+      ярлык на рабочем столе.
+
+      Возвращает $null, если нарисовать не вышло: окно тогда просто останется
+      с системным значком, ронять программу из-за иконки незачем.
+    #>
+    param([switch]$Fresh)
+
+    if (-not $Fresh -and $null -ne $script:RamAppIcon) { return $script:RamAppIcon }
+
+    try {
+        $accent = $Global:RamTheme.Accent
+        $script:RamAppIcon = New-RamTrayIcon -Accent $accent
+        [void](Save-RamAppIcon -Path (Join-Path (Get-RamDataDir) 'althub.ico') -Accent $accent)
+    } catch {
+        $script:RamAppIcon = $null
+    }
+    return $script:RamAppIcon
+}
+
+function Set-RamWindowIcon {
+    <# Ставит окну значок программы. Без него в панели задач висел безымянный
+       значок PowerShell, и программа выглядела как чужой скрипт. #>
+    param($Form)
+    if ($null -eq $Form) { return }
+    try {
+        $icon = Get-RamAppIcon
+        if ($null -ne $icon) { $Form.Icon = $icon }
+    } catch { }
+}
+
+function Save-RamAppIcon {
+    <#
+      Кладёт значок программы в файл .ico рядом с данными.
+
+      Нужен ярлыку на рабочем столе: у ярлыка иконку можно взять только из
+      файла. В самом репозитории двоичных файлов по-прежнему нет — .ico
+      рождается здесь, на машине пользователя, из того же рисунка, что и
+      значок в часах.
+
+      Возвращает путь к файлу или пустую строку, если не вышло.
+    #>
+    param([Parameter(Mandatory)][string]$Path, $Accent)
+
+    if ($null -eq $Accent) { $Accent = $Global:RamTheme.Accent }
+    try {
+        $dir = Split-Path -Parent $Path
+        if ($dir -and -not (Test-Path -LiteralPath $dir)) {
+            New-Item -ItemType Directory -Path $dir -Force | Out-Null
+        }
+        $icon = New-RamTrayIcon -Accent $Accent
+        try {
+            $fs = [System.IO.File]::Create($Path)
+            try { $icon.Save($fs) } finally { $fs.Dispose() }
+        } finally { $icon.Dispose() }
+        return $Path
+    } catch {
+        return ''
+    }
 }

@@ -937,6 +937,109 @@ Check 'Поля ввода читаются через .Tag.Text' {
     "полей через New-RamTextBox: разобрано, обращений мимо .Tag нет"
 }
 
+Check 'Пароль не попадает в журнал' {
+    # Вход по логину появился в 1.2. Сам пароль в журнал не отправляется
+    # никогда, но текст ошибки может принести с собой тело запроса — поэтому
+    # вырезаем его в Write-RamLog, до вывода и на экран, и в файл.
+    $keepUi = $script:UI
+    try {
+        $box = New-Object System.Windows.Forms.TextBox
+        $box.Multiline = $true
+        $script:UI = @{ Log = $box }
+
+        $secret = 'Sup3rSecretPass!'
+        Write-RamLog ('Ответ сервера: {"ctype":"Username","cvalue":"vasya","password":"' + $secret + '"}') 'err'
+        Write-RamLog ("password=$secret") 'err'
+        Write-RamLog ("password: $secret") 'err'
+
+        if ($box.Text -match [regex]::Escape($secret)) { throw 'пароль виден в журнале' }
+        if ($box.Text -notmatch 'пароль скрыт') { throw 'пароль не заменён пометкой' }
+
+        # И кука по-прежнему режется.
+        $box.Clear()
+        Write-RamLog ('вход: _|WARNING:-DO-NOT-SHARE-THIS' + ('A' * 300)) 'info'
+        if ($box.Text -match 'AAAAAAAAAA') { throw 'кука снова видна в журнале' }
+    } finally {
+        $script:UI = $keepUi
+    }
+    'пароль и кука вырезаются до вывода'
+}
+
+Check 'Капча не обходится, а передаётся человеку' {
+    # Просьба была «пусть люди проходят капчу сами». Значит в коде не должно
+    # быть ни решателей, ни сервисов разгадывания — только открытие настоящей
+    # страницы Roblox.
+    $src = Get-RamAllSource
+    foreach ($bad in @('anti-captcha', 'anticaptcha', '2captcha', 'rucaptcha', 'capmonster', 'capsolver')) {
+        if ($src -match [regex]::Escape($bad)) { throw "в коде появился сервис разгадывания капчи: $bad" }
+    }
+    if ($src -notmatch 'https://www\.roblox\.com/login') {
+        throw 'нет передачи человека на настоящую страницу входа Roblox'
+    }
+    if ($src -notmatch "Need = '2fa'|Need -eq '2fa'") { throw 'двухфакторка перестала обрабатываться' }
+    'решателей капчи нет, человека уводим на страницу Roblox'
+}
+
+Check 'Окно не прячется без значка в часах' {
+    # Самая дорогая ошибка 1.1: значок в часах не создавался, а окно всё равно
+    # уходило по Hide(). Программа исчезала целиком — ни в панели задач, ни
+    # в часах, и вернуть её было нечем.
+    $src = Get-RamAllSource
+
+    # 1. Прятать разрешено только вместе с проверкой TrayOk.
+    if ($src -notmatch '\$script:UI\.TrayOk') { throw 'признак TrayOk пропал из кода' }
+    foreach ($m in [regex]::Matches($src, '(?m)^.*\$this\.Hide\(\).*$|(?m)^.*\$sender\.Hide\(\).*$')) {
+        # Ищем ближайшее условие выше — оно обязано упоминать TrayOk.
+        $idx = $src.IndexOf($m.Value)
+        $before = $src.Substring([Math]::Max(0, $idx - 400), [Math]::Min(400, $idx))
+        if ($before -notmatch 'TrayOk') {
+            throw "окно прячется без проверки значка: $($m.Value.Trim())"
+        }
+    }
+
+    # 2. Создание значка больше не глотает ошибку молча.
+    if ($src -match 'try\s*\{\s*\$ni\.Icon\s*=\s*New-RamTrayIcon[^}]*\}\s*catch\s*\{\s*\}') {
+        throw 'сбой создания значка снова глотается пустым catch'
+    }
+
+    # 3. Умолчания скучные: без настройки окно остаётся в панели задач.
+    $d = Get-RamDefaultSettings
+    if ($d.OnMinimize -ne 'taskbar') { throw "по умолчанию сворачивание = $($d.OnMinimize), а должно быть taskbar" }
+    if ($d.OnClose    -ne 'exit')    { throw "по умолчанию крестик = $($d.OnClose), а должен быть exit" }
+
+    'прятать окно можно только при живом значке, умолчания безопасные'
+}
+
+Check 'Старая настройка сворачивания переносится' {
+    # У тех, кто уже привык к сворачиванию в часы, поведение не должно
+    # молча поменяться при обновлении.
+    $tmp = Join-Path $env:TEMP ('ram-mig-' + [guid]::NewGuid().ToString('N').Substring(0,8) + '.json')
+    $keepData = $env:RAM_DATA_DIR
+    try {
+        # Готовим файл настроек старого образца.
+        $old = [pscustomobject]@{ MinimizeToTray = $true; Theme = 'dark' }
+        ConvertTo-Json -InputObject $old -Depth 3 | Set-Content -LiteralPath $tmp -Encoding UTF8
+
+        $loaded = Get-Content -LiteralPath $tmp -Raw -Encoding UTF8 | ConvertFrom-Json
+        $s = Get-RamDefaultSettings
+        $names = $loaded.PSObject.Properties.Name
+        if (($names -contains 'MinimizeToTray') -and -not ($names -contains 'OnMinimize')) {
+            $s.OnMinimize = $(if ([bool]$loaded.MinimizeToTray) { 'tray' } else { 'taskbar' })
+        }
+        if ($s.OnMinimize -ne 'tray') { throw 'старое «сворачивать в часы» не перенеслось' }
+
+        # А выключенное старое — остаётся выключенным.
+        $old2 = [pscustomobject]@{ MinimizeToTray = $false }
+        $s2 = Get-RamDefaultSettings
+        if ([bool]$old2.MinimizeToTray) { $s2.OnMinimize = 'tray' } else { $s2.OnMinimize = 'taskbar' }
+        if ($s2.OnMinimize -ne 'taskbar') { throw 'выключенное старое превратилось в «в часы»' }
+    } finally {
+        if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Force }
+        $env:RAM_DATA_DIR = $keepData
+    }
+    'MinimizeToTray = true превращается в OnMinimize = tray, false остаётся taskbar'
+}
+
 Check 'Очередь запуска идёт по порядку списка' {
     # Список сортируется по Order, а отмеченных раньше собирали по порядку
     # хранения массива. Аккаунт, добавленный последним, стоял в списке
@@ -1734,12 +1837,12 @@ Check 'Вёрстка держится на 100%, 125% и 150%' {
     $keepGames   = $script:Settings.Games
     $keepProf    = $script:Settings.Profiles
     $keepCompact = $script:Settings.CompactCards
-    $keepTray    = $script:Settings.MinimizeToTray
+    $keepTray    = $script:Settings.OnMinimize
     $keepScale   = $Global:RamForceScale
     $keepTheme   = $script:Settings.Theme
 
     try {
-        $script:Settings.MinimizeToTray = $false
+        $script:Settings.OnMinimize = 'taskbar'
 
         $a1 = New-RamAccount -Alias 'Основной' -Cookie 'x' -PlaceId '1'
         $a1.Username = 'TestPlayer'; $a1.UserId = 1234567
@@ -1818,7 +1921,7 @@ Check 'Вёрстка держится на 100%, 125% и 150%' {
         $script:Settings.Games = $keepGames
         $script:Settings.Profiles = $keepProf
         $script:Settings.CompactCards = $keepCompact
-        $script:Settings.MinimizeToTray = $keepTray
+        $script:Settings.OnMinimize = $keepTray
         $Global:RamForceScale = $keepScale
         $Global:RamForceWorkArea = $null
         $script:RamDpiScale = $null
