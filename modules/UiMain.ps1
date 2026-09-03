@@ -568,6 +568,56 @@ function Show-RamMainWindow {
     } catch { }
 }
 
+function Confirm-RamTrayVisible {
+    <#
+      Спрашивает один раз: видно ли значок в часах.
+
+      Зачем спрашивать, а не проверить. У Windows нельзя узнать, видит ли
+      человек значок: Shell_NotifyIcon возвращает успех и когда значок уехал
+      под стрелку «^». Именно на этом программа и терялась — окно пряталось,
+      значка не было, вернуть было нечем.
+
+      Возвращает $true, если в часы прятать можно.
+    #>
+    if ([bool]$script:Settings.TrayConfirmed) { return $true }
+    if (-not $script:UI.TrayOk) { return $false }
+
+    # Сначала показываем значок и подсказку, потом спрашиваем — чтобы человеку
+    # было куда посмотреть.
+    try {
+        $script:UI.Tray.BalloonTipTitle = 'Это значок AltHub'
+        $script:UI.Tray.BalloonTipText  = 'Он рядом с часами. Если не видно — нажми стрелку ^ слева от часов.'
+        $script:UI.Tray.BalloonTipIcon  = [System.Windows.Forms.ToolTipIcon]::Info
+        $script:UI.Tray.ShowBalloonTip(6000)
+    } catch { }
+
+    $ans = Show-RamMessage -Title 'Крестик убирает в часы' -Kind 'info' -Message (
+        "Сейчас рядом с часами должен был появиться значок AltHub.`n`n" +
+        "В Windows 11 новые значки часто прячутся под стрелку ^ слева от часов — " +
+        "загляни туда и, если он там, перетащи его наружу.`n`n" +
+        "Видишь значок?"
+    ) -Buttons @(
+        @{ Text = 'Да, вижу';            Value = 'yes'; Kind = 'primary' },
+        @{ Text = 'Нет — просто закрывай'; Value = 'no' }
+    )
+
+    if ([string]$ans -eq 'yes') {
+        $script:Settings.TrayConfirmed = $true
+        Save-RamSettingsNow
+        return $true
+    }
+
+    # Не видит — значит прятать нельзя. Переключаем крестик на закрытие
+    # и говорим об этом прямо, чтобы не выглядело как «программа сама решила».
+    $script:Settings.OnClose = 'exit'
+    $script:Settings.TrayConfirmed = $false
+    Save-RamSettingsNow
+    Write-RamLog 'Значок в часах не виден — крестик переключён на обычное закрытие.' 'warn'
+    Show-RamInfo ("Тогда крестик будет просто закрывать программу — так её точно не потеряешь.`n`n" +
+                  'Поменять это можно в «Настройки» -> «Прочее».')
+    return $false
+}
+
 function Show-RamTrayHint {
     <#
       Один раз объясняем, куда делось окно.
@@ -1609,7 +1659,6 @@ function Get-RamCheckableWindows {
         @{ Name = 'из браузера';   Build = { Show-RamBrowserGuide -BuildOnly } }
         @{ Name = 'популярные';    Build = { Show-RamPopularGamesDialog -BuildOnly } }
         @{ Name = 'быстрая';       Build = { Show-RamQuickSetup -BuildOnly } }
-        @{ Name = 'вход/пароль';   Build = { Show-RamPasswordLoginDialog -BuildOnly } }
         @{ Name = 'мастер1';       Build = { Show-RamFirstRun -StartStep 0 -BuildOnly }; Pages = $true }
         @{ Name = 'мастер1/тема';  Build = { Show-RamFirstRun -StartStep 1 -BuildOnly }; Pages = $true }
         @{ Name = 'мастер1/акк';   Build = { Show-RamFirstRun -StartStep 2 -BuildOnly }; Pages = $true }
@@ -2269,16 +2318,25 @@ function New-RamMainForm {
     $form.Add_FormClosing({
         param($sender, $e)
 
-        # Крестик может сворачивать в часы — так делают Discord и Telegram,
-        # и именно этого от него ждали. Но только если значок реально есть:
-        # иначе программа исчезнет без следа. UserClosing — это именно
-        # крестик и Alt+F4, а не выключение Windows и не Restart-AltHub.
+        # Крестик убирает в часы — так делают Discord и Telegram.
+        #
+        # Но прятать окно можно ТОЛЬКО когда человек своими глазами подтвердил,
+        # что значок в часах он видит. Узнать это у Windows нельзя:
+        # Shell_NotifyIcon отвечает «успех» и тогда, когда значок уехал под
+        # стрелку и человеку не виден. Поэтому спрашиваем прямо, один раз.
+        # UserClosing — это именно крестик и Alt+F4, а не выключение Windows
+        # и не Restart-AltHub.
         if ($script:Settings.OnClose -eq 'tray' -and $script:UI.TrayOk -and
             $e.CloseReason -eq [System.Windows.Forms.CloseReason]::UserClosing) {
-            $e.Cancel = $true
-            $sender.Hide()
-            Show-RamTrayHint
-            return
+
+            if (Confirm-RamTrayVisible) {
+                $e.Cancel = $true
+                $sender.Hide()
+                Show-RamTrayHint
+                return
+            }
+            # Не подтвердил — крестик закрывает, как раньше. Настройка уже
+            # переключена внутри Confirm-RamTrayVisible.
         }
 
         if ($script:Settings.ConfirmOnExit -and $script:Instances.Count -gt 0) {
@@ -2292,6 +2350,7 @@ function New-RamMainForm {
         Invoke-RamSafe -What 'сохранение при закрытии' -Body { Save-RamState }
         Invoke-RamSafe -What 'снятие замков'          -Body { Disable-RamMultiInstance }
         Invoke-RamSafe -What 'снятие горячих клавиш'  -Body { Unregister-RamHotkeys }
+        Invoke-RamSafe -What 'снятие замка копии'     -Body { Clear-RamSingleInstance }
         if ($null -ne $script:UI.Tray) {
             $script:UI.Tray.Visible = $false
             $script:UI.Tray.Dispose()
@@ -2299,9 +2358,10 @@ function New-RamMainForm {
     })
 
     # =================================================== значок в часах =====
-    # Значок нужен, если В ЧАСЫ уходит хоть что-то — сворачивание или крестик.
+    # Значок нужен, когда в часы уводит крестик. Минус в часы не уводит
+    # никогда — см. Add_Resize.
     $script:UI.TrayOk = $false
-    if ($script:Settings.OnMinimize -eq 'tray' -or $script:Settings.OnClose -eq 'tray') {
+    if ($script:Settings.OnClose -eq 'tray') {
         $ni = New-Object System.Windows.Forms.NotifyIcon
         # ЗДЕСЬ БЫЛ catch { } — и это дорого стоило. Если значок не создавался,
         # NotifyIcon оставался с Icon = $null, Windows такой значок не рисует,
@@ -2309,12 +2369,20 @@ function New-RamMainForm {
         # исчезала совсем: ни в панели задач, ни в часах. Теперь при сбое
         # мы честно говорим об этом и НЕ прячем окно (см. TrayOk).
         try {
-            $ni.Icon    = New-RamTrayIcon -Accent $t.Accent
+            # Тот же значок, что у окна и у ярлыка — рисуется один раз за запуск.
+            $icon = Get-RamAppIcon
+            if ($null -eq $icon) { throw 'значок не нарисовался' }
+
+            $ni.Icon    = $icon
             $ni.Text    = $script:AppName
             $ni.Visible = $true
             $script:UI.TrayOk = ($null -ne $ni.Icon -and $ni.Visible)
+            if (-not $script:UI.TrayOk) { throw 'значок задан, но система его не приняла' }
         } catch {
-            Write-RamLog "Значок в часах не создался ($($_.Exception.Message)) — окно будет сворачиваться в панель задач." 'warn'
+            # МОЛЧА ЭТО ГЛОТАТЬ НЕЛЬЗЯ. Если значка нет, крестик обязан просто
+            # закрывать программу — иначе окно спрячется в никуда.
+            $script:UI.TrayOk = $false
+            Write-RamLog "Значок в часах не создался ($($_.Exception.Message)) — крестик будет просто закрывать программу." 'warn'
         }
         $script:UI.Tray = $ni
 
@@ -2340,14 +2408,14 @@ function New-RamMainForm {
     }
 
     $form.Add_Resize({
-        # Прятать окно можно ТОЛЬКО когда значок в часах действительно есть.
-        # Иначе программа исчезает целиком, и вернуть её нечем.
-        if ($this.WindowState -eq 'Minimized' -and
-            $script:Settings.OnMinimize -eq 'tray' -and $script:UI.TrayOk) {
-            $this.Hide()
-            Show-RamTrayHint
-            return
-        }
+        # МИНУС ВСЕГДА СВОРАЧИВАЕТ В ПАНЕЛЬ ЗАДАЧ, И НИКОГДА НЕ ПРЯЧЕТ.
+        #
+        # Раньше при настройке «в часы» здесь звался Hide(): окно уходило и из
+        # панели задач тоже. Если значок в часах при этом был не виден (в
+        # Windows 11 новые значки уезжают под стрелку), программа исчезала
+        # целиком, и вернуть её было нечем. Выбора тут больше нет — в часы
+        # уводит только крестик, и только с проверкой, что значок видно.
+        if ($this.WindowState -eq 'Minimized') { return }
 
         # ПОЧЕМУ ЗДЕСЬ, А НЕ ТОЛЬКО В ResizeEnd.
         # ResizeEnd бывает лишь когда окно тянут за край мышью. Разворот на

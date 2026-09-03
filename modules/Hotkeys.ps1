@@ -198,6 +198,72 @@ function New-RamTrayIcon {
     return $result
 }
 
+$Global:RamSingleMutex = $null
+
+function Test-RamAlreadyRunning {
+    <#
+      Одна копия программы на компьютер.
+
+      Зачем это важнее, чем кажется. Если окно почему-то не видно (свернули
+      в часы, а значок уехал под стрелку; система спрятала окно при запуске),
+      человек делает единственное разумное — жмёт ярлык ещё раз. Раньше это
+      открывало ВТОРУЮ копию: первая оставалась висеть невидимой, держала
+      горячие клавиши и замки мультизапуска. Именно так у автора и появилась
+      строка «Ctrl+1..9 занял кто-то другой» — это была его же потерянная копия.
+
+      Теперь повторный запуск возвращает окно уже работающей программы.
+
+      Возвращает $true, если программа уже запущена (и мы её разбудили).
+    #>
+    $created = $false
+    try {
+        $Global:RamSingleMutex = New-Object System.Threading.Mutex($true, 'Global\AltHubSingleInstance', [ref]$created)
+    } catch {
+        # Не вышло взять замок — не мешаем запуску, это всего лишь удобство.
+        return $false
+    }
+
+    if ($created) { return $false }
+
+    # Замок занят: будим уже запущенную копию и уходим.
+    try { [void](Show-RamRunningInstance) } catch { }
+    return $true
+}
+
+function Show-RamRunningInstance {
+    <# Поднимает окно уже запущенной копии: ищем его по заголовку и классу. #>
+    $me = $PID
+    $found = $false
+    $cb = [Ram.Native+EnumWindowsProc]{
+        param($h, $l)
+        $q = 0
+        [void][Ram.Native]::GetWindowThreadProcessId($h, [ref]$q)
+        if ($q -ne $me) {
+            $title = [Ram.Native]::TitleOf($h)
+            $cls   = [Ram.Native]::ClassOf($h)
+            if ($title -eq 'AltHub' -and $cls -like 'WindowsForms*') {
+                [void][Ram.Native]::ShowWindow($h, 9)   # SW_RESTORE
+                [void][Ram.Native]::ShowWindow($h, 1)   # SW_SHOWNORMAL
+                [void][Ram.Native]::SetForegroundWindow($h)
+                $script:found = $true
+                return $false
+            }
+        }
+        return $true
+    }
+    [void][Ram.Native]::EnumWindows($cb, [IntPtr]::Zero)
+    return $found
+}
+
+function Clear-RamSingleInstance {
+    <# Отпускает замок при выходе. #>
+    if ($null -ne $Global:RamSingleMutex) {
+        try { $Global:RamSingleMutex.ReleaseMutex() } catch { }
+        try { $Global:RamSingleMutex.Dispose() } catch { }
+        $Global:RamSingleMutex = $null
+    }
+}
+
 function New-RamDesktopShortcut {
     <#
       Ярлык «AltHub» на рабочем столе.

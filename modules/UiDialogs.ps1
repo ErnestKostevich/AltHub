@@ -601,163 +601,6 @@ function Import-RamDroppedFile {
     Write-RamLog "Из брошенного файла: добавлено $($sum.Added), обновлено $($sum.Updated)." 'ok'
 }
 
-function Show-RamPasswordLoginDialog {
-    <#
-      Добавление аккаунта по логину и паролю — дополнительный способ.
-
-      Честно про ограничения прямо в окне: Roblox часто просит капчу, и тогда
-      способ не сработает. Капчу мы не обходим намеренно.
-
-      Пароль отсюда уходит ровно в один адрес — auth.roblox.com — и нигде не
-      сохраняется: ни в аккаунт, ни в настройки, ни в журнал.
-      Возвращает $true, если аккаунт добавлен.
-    #>
-    param([switch]$BuildOnly)
-
-    $t = $Global:RamTheme
-    $m = $t.M
-
-    $dlg = New-Object System.Windows.Forms.Form
-    $dlg.Text            = 'Вход по логину и паролю'
-    $dlg.FormBorderStyle = 'FixedDialog'
-    $dlg.StartPosition   = 'CenterParent'
-    $dlg.MaximizeBox     = $false; $dlg.MinimizeBox = $false
-    $dlg.BackColor       = $t.Bg
-    $dlg.Font            = $t.FontBody
-    $dlg.ClientSize      = New-Object System.Drawing.Size(([int](620 * $m.Scale)), 400)
-    $dlg.Add_HandleCreated({ Set-RamDarkTitleBar $this })
-    Set-RamWindowIcon $dlg
-
-    $stripe = New-Object System.Windows.Forms.Panel
-    $stripe.Location  = New-Object System.Drawing.Point(0, 0)
-    $stripe.Size      = New-Object System.Drawing.Size($dlg.ClientSize.Width, $m.StripeH)
-    $stripe.BackColor = $t.Accent
-    $dlg.Controls.Add($stripe)
-
-    $lay = New-RamLayout -Container $dlg
-    [void](Add-RamGap -Layout $lay -Height $m.StripeH)
-
-    $titleH = (Measure-RamText -Text 'Ay' -Font $t.FontBig).Height + 2
-    [void](Add-RamRow -Layout $lay -Height $titleH -Gap $m.GapSm -Items @(
-        @{ Control = (New-RamLabel -Text 'Вход по логину и паролю' -X 0 -Y 0 -Width 10 -Height $titleH -Font $t.FontBig)
-           Width   = $lay.Width }
-    ))
-
-    $note = 'Пароль уходит только на сервер Roblox и нигде не сохраняется — ни в аккаунте, ни в журнале. Обратно берётся тот же вход, что и при других способах.'
-    $nh = (Measure-RamText -Text $note -Font $t.FontSmall -MaxWidth $lay.Width).Height + 2
-    [void](Add-RamRow -Layout $lay -Height $nh -Gap $m.GapSm -Items @(
-        @{ Control = (New-RamLabel -Text $note -X 0 -Y 0 -Width 10 -Height $nh -Font $t.FontSmall -Color $t.Muted)
-           Width   = $lay.Width }
-    ))
-
-    $warn = 'Roblox часто просит капчу. Тогда откроем страницу входа в браузере — пройдёшь её сам, за тебя её никто не разгадывает. Самый простой путь всё равно «Из приложения Roblox»: там пароль не нужен.'
-    $wh = (Measure-RamText -Text $warn -Font $t.FontSmall -MaxWidth $lay.Width).Height + 2
-    [void](Add-RamRow -Layout $lay -Height $wh -Gap $m.GapSm -Items @(
-        @{ Control = (New-RamLabel -Text $warn -X 0 -Y 0 -Width 10 -Height $wh -Font $t.FontSmall -Color $t.Warn)
-           Width   = $lay.Width }
-    ))
-    [void](Add-RamGap -Layout $lay -Height $m.Gap)
-
-    $tbUser = New-RamTextBox -Width $lay.Width -Height $m.RowHSm
-    [void](Add-RamField -Layout $lay -Caption 'Логин или почта' -Control $tbUser)
-
-    $tbPass = New-RamTextBox -Width $lay.Width -Height $m.RowHSm
-    $tbPass.Tag.UseSystemPasswordChar = $true
-    [void](Add-RamField -Layout $lay -Caption 'Пароль' -Control $tbPass)
-
-    [void](Add-RamGap -Layout $lay -Height $m.GapSm)
-    $lblState = New-RamLabel -Text '' -X 0 -Y 0 -Width 10 `
-                             -Height ((Measure-RamText -Text 'Ay' -Font $t.FontSmall).Height + 2) `
-                             -Font $t.FontSmall -Color $t.Muted
-    $lblState.Name = 'ramLoginState'
-    [void](Add-RamRow -Layout $lay -Height $lblState.Height -Items @(@{ Control = $lblState; Width = $lay.Width }))
-
-    $result = @{ Ok = $false }
-
-    $btnGo = New-RamButton -Text 'Войти' -Width 1 -Height $m.RowH -Kind 'primary' -OnClick ({
-        $user = ([string]$tbUser.Tag.Text).Trim()
-        $pass = [string]$tbPass.Tag.Text
-        if (-not $user -or -not $pass) { Show-RamInfo 'Заполни логин и пароль.'; return }
-
-        $form = $this.FindForm()
-        $form.Cursor = [System.Windows.Forms.Cursors]::WaitCursor
-        $lblState.Text = 'Спрашиваю Roblox...'
-        $lblState.Refresh()
-        try {
-            $r = Get-RamLoginCookie -Username $user -Password $pass
-
-            # Двухфакторка: код вводит сам человек, это не обход.
-            if (-not $r.Ok -and $r.Need -eq '2fa') {
-                $code = Show-RamInputDialog -Title 'Код подтверждения' `
-                          -Prompt "Roblox прислал код на $($r.MediaType). Введи его:"
-                if ([string]::IsNullOrWhiteSpace($code)) { $lblState.Text = 'Отменено.'; return }
-                $r = Complete-RamLoginTwoStep -UserId $r.UserId -MediaType $r.MediaType `
-                                              -Ticket $r.Ticket -Code ([string]$code).Trim()
-            }
-
-            # Капча: доводим человека до настоящей страницы Roblox, где он
-            # пройдёт её сам. Дальше вход подхватывается любым обычным способом.
-            if (-not $r.Ok -and $r.Need -eq 'captcha') {
-                $lblState.Text = ''
-                $ans = Show-RamMessage -Title 'Roblox просит капчу' -Kind 'warn' -Message (
-                    $r.Message + "`n`n" +
-                    "Как закончить вход после капчи:`n" +
-                    "  1. Пройди капчу и войди на открывшейся странице`n" +
-                    "  2. Вернись сюда и нажми «Из приложения Roblox» — или скопируй вход через F12`n`n" +
-                    "Проще всего: войти под этим аккаунтом в приложении Roblox — тогда пароль не нужен вовсе."
-                ) -Buttons @(
-                    @{ Text = 'Открыть вход Roblox'; Value = 'open'; Kind = 'primary' },
-                    @{ Text = 'Из приложения';       Value = 'app'  },
-                    @{ Text = 'Закрыть';             Value = 'no'   }
-                )
-                switch ([string]$ans) {
-                    'open' { try { Start-Process 'https://www.roblox.com/login' } catch { } }
-                    'app'  {
-                        $form.Close()
-                        [void](Show-RamAddWizard)
-                    }
-                }
-                return
-            }
-
-            if (-not $r.Ok) {
-                $lblState.Text = ''
-                Show-RamError $r.Message
-                return
-            }
-
-            $added = Add-RamAccountFromCookie -Cookie $r.Cookie
-            $result.Ok = $true
-            Build-RamCards
-            Update-RamHeaderCounts
-            Write-RamLog "Добавлен аккаунт «$($added.User.Name)» входом по паролю." 'ok'
-            Show-RamInfo "Готово, добавлен «$($added.User.Name)»."
-            $form.Close()
-        } catch {
-            $lblState.Text = ''
-            Show-RamError $_.Exception.Message
-        } finally {
-            # Пароль в памяти больше не нужен.
-            $pass = $null
-            $tbPass.Tag.Text = ''
-            $form.Cursor = [System.Windows.Forms.Cursors]::Default
-        }
-    }.GetNewClosure())
-
-    $btnNo = New-RamButton -Text 'Закрыть' -Width 1 -Height $m.RowH -OnClick {
-        $this.FindForm().Close()
-    }
-    [void](Add-RamButtonBar -Layout $lay -Primary $btnGo -Secondary @($btnNo))
-    [void](Complete-RamLayout -Layout $lay -ClampToScreen)
-    $stripe.Size = New-Object System.Drawing.Size($dlg.ClientSize.Width, $m.StripeH)
-
-    if ($BuildOnly) { return $dlg }
-
-    [void]$dlg.ShowDialog()
-    $dlg.Dispose()
-    return [bool]$result.Ok
-}
-
 function Update-RamAddedList {
     <#
       Перерисовывает список «Добавлено за этот заход» и раздвигает окно под
@@ -995,9 +838,6 @@ function Show-RamAddWizard {
     }.GetNewClosure()))
     [void](Add-RamMenuItem -Menu $moreMenu -Text 'Из браузера (Chrome, Edge, ...)' -OnClick ({
         if (Show-RamBrowserGuide) { & $refreshAdded 1 'из браузера' }
-    }.GetNewClosure()))
-    [void](Add-RamMenuItem -Menu $moreMenu -Text 'По логину и паролю (Roblox часто просит капчу)' -OnClick ({
-        if (Show-RamPasswordLoginDialog) { & $refreshAdded 1 'по паролю' }
     }.GetNewClosure()))
     [void](Add-RamMenuItem -Menu $moreMenu -Separator)
     [void](Add-RamMenuItem -Menu $moreMenu -Text 'Из файла (список кук или приглашений)...' -OnClick {
@@ -2347,18 +2187,7 @@ function Show-RamSettingsDialog {
     # описывало только минус, а про крестик не говорило ничего — и никто, включая
     # автора, не мог сказать наверняка, что делает каждая кнопка.
     & $addHead $pm 'КУДА ДЕВАЕТСЯ ОКНО'
-
-    $minItems = @(
-        [pscustomobject]@{ Text = 'свернуть в панель задач'; Value = 'taskbar' },
-        [pscustomobject]@{ Text = 'убрать в часы';           Value = 'tray'    }
-    )
-    $cbOnMin = New-RamCombo -X 0 -Y 0 -Width ([int](250 * $m.Scale)) -Items $minItems -Value ([string]$s.OnMinimize)
-    [void](Add-RamRow -Layout $pm -VAlign 'middle' -Items @(
-        @{ Control = (New-RamLabel -Text 'Кнопка свернуть' -X 0 -Y 0 -Width 10 `
-                                   -Height ((Measure-RamText -Text 'Кнопка свернуть' -Font $t.FontBody).Height + 2))
-           Width   = ($pm.Width - $cbOnMin.Width - $m.Gap) },
-        @{ Control = $cbOnMin; Width = $cbOnMin.Width }
-    ))
+    [void](& $addNote $pm 'Кнопка «свернуть» всегда сворачивает окно в панель задач — так его невозможно потерять. Настраивается только крестик.')
 
     $closeItems = @(
         [pscustomobject]@{ Text = 'закрыть менеджер'; Value = 'exit' },
@@ -2458,7 +2287,6 @@ function Show-RamSettingsDialog {
         $cbCompact.Tag.Checked = [bool]$def.CompactCards
         $cbEmoji.Tag.Checked   = [bool]$def.ShowEmoji
         $cbConfirm.Tag.Checked = [bool]$def.ConfirmOnExit
-        Set-RamComboItems -Combo $cbOnMin   -Items $cbOnMin.Tag   -Value ([string]$def.OnMinimize)
         Set-RamComboItems -Combo $cbOnClose -Items $cbOnClose.Tag -Value ([string]$def.OnClose)
         $cbLogFile.Tag.Checked = [bool]$def.LogToFile
         foreach ($c in @($cbRename,$cbRestart,$cbCheck,$cbTile,$cbSavedW,$cbHotkey,$cbCompact,$cbEmoji,$cbConfirm,$cbLogFile)) {
@@ -2505,7 +2333,6 @@ function Show-RamSettingsDialog {
         $s.ShowEmoji        = [bool]$cbEmoji.Tag.Checked
         $s.LogToFile        = [bool]$cbLogFile.Tag.Checked
         $s.HotkeySwitch     = [bool]$cbHotkey.Tag.Checked
-        $s.OnMinimize       = Get-RamComboValue $cbOnMin
         $s.OnClose          = Get-RamComboValue $cbOnClose
         $s.CheckOnStart     = [bool]$cbCheck.Tag.Checked
         $Global:RamShowEmoji = $s.ShowEmoji

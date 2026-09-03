@@ -938,8 +938,8 @@ Check 'Поля ввода читаются через .Tag.Text' {
 }
 
 Check 'Пароль не попадает в журнал' {
-    # Вход по логину появился в 1.2. Сам пароль в журнал не отправляется
-    # никогда, но текст ошибки может принести с собой тело запроса — поэтому
+    # Вход по паролю убран, но вырезка пароля в журнале осталась: он не должен
+    # попасть в журнал ни при каких обстоятельствах, даже из текста ошибки.
     # вырезаем его в Write-RamLog, до вывода и на экран, и в файл.
     $keepUi = $script:UI
     try {
@@ -965,141 +965,25 @@ Check 'Пароль не попадает в журнал' {
     'пароль и кука вырезаются до вывода'
 }
 
-Check 'Капча не обходится, а передаётся человеку' {
-    # Просьба была «пусть люди проходят капчу сами». Значит в коде не должно
-    # быть ни решателей, ни сервисов разгадывания — только открытие настоящей
-    # страницы Roblox.
+Check 'Нет обхода защиты от ботов' {
+    # Вход по логину и паролю убран: Roblox закрыл его проверкой proofofwork —
+    # вычислительной головоломкой против ботов. Решать её за человека нельзя,
+    # это ровно обход защиты. Проверяем, что ни решателей капчи, ни этой
+    # головоломки в коде не появилось.
     $src = Get-RamAllSource
     foreach ($bad in @('anti-captcha', 'anticaptcha', '2captcha', 'rucaptcha', 'capmonster', 'capsolver')) {
         if ($src -match [regex]::Escape($bad)) { throw "в коде появился сервис разгадывания капчи: $bad" }
     }
-    if ($src -notmatch 'https://www\.roblox\.com/login') {
-        throw 'нет передачи человека на настоящую страницу входа Roblox'
+    # Вход по паролю ходил ровно на этот адрес. Его возвращение и означало бы,
+    # что кто-то снова полез в закрытую Roblox дверь.
+    if ($src -match 'auth\.roblox\.com/v2/login') {
+        throw 'вернулся вход по паролю — Roblox закрыл его проверкой proofofwork'
     }
-    if ($src -notmatch "Need = '2fa'|Need -eq '2fa'") { throw 'двухфакторка перестала обрабатываться' }
-    'решателей капчи нет, человека уводим на страницу Roblox'
+    if ($src -match 'challenge/v1/continue') {
+        throw 'вернулось прохождение «вызова» Roblox — это часть входа по паролю'
+    }
+    'решателей капчи нет, вход по паролю не вернулся'
 }
-
-Check 'Значок в часах не пустой' {
-    # Регрессия 1.2: ради утечки handle сюда добавили DestroyIcon, а значок,
-    # полученный через Icon.FromHandle, на этот handle ещё ссылался. NotifyIcon
-    # при этом честно говорил Visible = true, но рисовать системе было нечего —
-    # окно уходило «в часы», а значка там не появлялось.
-    $icon = New-RamTrayIcon -Accent ([System.Drawing.Color]::FromArgb(0, 122, 214))
-    if ($null -eq $icon) { throw 'значок не создался' }
-    try {
-        if ($icon.Width -le 0 -or $icon.Height -le 0) { throw 'у значка нулевой размер' }
-
-        # Если бы значок зависел от освобождённого handle, картинка была бы
-        # пустой или ToBitmap() свалился бы.
-        $bmp = $icon.ToBitmap()
-        try {
-            $solid = 0
-            for ($x = 0; $x -lt $bmp.Width; $x += 4) {
-                for ($y = 0; $y -lt $bmp.Height; $y += 4) {
-                    if ($bmp.GetPixel($x, $y).A -gt 0) { $solid++ }
-                }
-            }
-            if ($solid -lt 5) { throw "значок пустой ($solid непрозрачных точек) — в часах его не будет видно" }
-        } finally { $bmp.Dispose() }
-    } finally { $icon.Dispose() }
-
-    # И он не должен собираться через Clone(): именно этот путь и ломался.
-    $src = Get-RamAllSource
-    if ($src -match '\$icon\.Clone\(\)') { throw 'значок снова собирается через Clone() от FromHandle' }
-
-    'значок рисуется и переживает освобождение handle'
-}
-
-Check 'Запускающие файлы в правильной кодировке' {
-    # cmd.exe читает пакетный файл в кодировке OEM и требует CRLF. Файл,
-    # записанный в UTF-8 с переводами строк LF, он разбирает как мусор и
-    # пытается выполнить обрывки русских слов как команды — именно так и
-    # получилось: «'Филась.' is not recognized as an internal command».
-    # Поэтому .cmd у нас строго ASCII + CRLF, а весь текст по-русски живёт
-    # в .ps1 и README.
-    $bad = @()
-
-    foreach ($n in @('Запустить.cmd', 'Запустить с окном.cmd', 'Ярлык на рабочий стол.cmd')) {
-        $p = Join-Path $root $n
-        if (-not (Test-Path -LiteralPath $p)) { $bad += "$n : файла нет"; continue }
-        $b = [System.IO.File]::ReadAllBytes($p)
-
-        for ($i = 0; $i -lt $b.Length; $i++) {
-            if ($b[$i] -gt 127) { $bad += "$n : не-ASCII байт (позиция $i) — cmd прочитает его как мусор"; break }
-        }
-        $lone = 0
-        for ($i = 0; $i -lt $b.Length; $i++) {
-            if ($b[$i] -eq 10 -and ($i -eq 0 -or $b[$i-1] -ne 13)) { $lone++ }
-        }
-        if ($lone -gt 0) { $bad += "$n : $lone переводов строки без CR — cmd такой файл разбирает неверно" }
-    }
-
-    # .vbs — UTF-16LE с BOM: wscript такой понимает, и русские комментарии
-    # в нём остаются читаемыми.
-    $v = Join-Path $root 'AltHub.vbs'
-    if (-not (Test-Path -LiteralPath $v)) { $bad += 'AltHub.vbs : файла нет' }
-    else {
-        $vb = [System.IO.File]::ReadAllBytes($v)
-        $utf16 = ($vb.Length -ge 2 -and $vb[0] -eq 0xFF -and $vb[1] -eq 0xFE)
-        $ascii = $true
-        foreach ($x in $vb) { if ($x -gt 127) { $ascii = $false; break } }
-        if (-not $utf16 -and -not $ascii) {
-            $bad += 'AltHub.vbs : ни UTF-16 с BOM, ни чистый ASCII — wscript прочитает текст неверно'
-        }
-    }
-
-    if ($bad.Count) { throw ($bad -join ' | ') }
-    'cmd — ASCII и CRLF, vbs — UTF-16 с BOM'
-}
-
-Check 'Запуск не прячет главное окно' {
-    # Самая дорогая ошибка 1.2: AltHub.vbs запускал PowerShell с режимом окна 0.
-    # Это SW_HIDE в STARTUPINFO, а Windows применяет его к ПЕРВОМУ окну
-    # процесса — главное окно рождалось скрытым. Программа работала, но её
-    # нигде не было видно: со стороны «не запускается, сразу закрывается».
-    $vbs = Join-Path $root 'AltHub.vbs'
-    if (-not (Test-Path -LiteralPath $vbs)) { throw 'AltHub.vbs пропал' }
-    $v = Get-Content -LiteralPath $vbs -Raw
-
-    if ($v -match 'shell\.Run\s+[^,]+,\s*0\s*,') {
-        throw 'AltHub.vbs снова запускает с режимом окна 0 — главное окно будет скрытым'
-    }
-    if ($v -notmatch 'shell\.Run\s+[^,]+,\s*1\s*,') {
-        throw 'AltHub.vbs должен запускать с обычным режимом окна (1)'
-    }
-    if ($v -notmatch '-WindowStyle Hidden') {
-        throw 'консоль должен прятать сам PowerShell ключом -WindowStyle Hidden'
-    }
-
-    # Подстраховка в самой программе: окно проверяется через Win32, потому что
-    # свойство .Visible у формы при SW_HIDE остаётся true.
-    $src = Get-RamAllSource
-    if ($src -notmatch 'IsWindowVisible\(\$h\)') {
-        throw 'в Add_Shown пропала проверка видимости окна через Win32'
-    }
-    'запуск не прячет окно, в программе есть подстраховка'
-}
-
-Check 'Номера аккаунтов не ломаются об Int32' {
-    # Номера аккаунтов Roblox давно перевалили за два миллиарда: 4062608487
-    # в Int32 не влезает. Из-за [int] такой аккаунт ронял такт обновления.
-    $big = 4062608487
-    if ($big -gt [int]::MaxValue) {
-        # так и должно быть — это и есть суть проверки
-    } else { throw 'проверочный номер вдруг влез в Int32, проверку надо переписать' }
-
-    $src = Get-RamAllSource
-    foreach ($pat in @('\[int\]\$user\.Id', '\[int\]\$u\.Id', '\[int\]\$j\.userId', '\[int\]\$data\.userId')) {
-        if ($src -match $pat) { throw "номер аккаунта снова приводится к Int32: $pat" }
-    }
-    # И параметры функций, куда передаётся номер аккаунта.
-    if ($src -match '\[Parameter\(Mandatory\)\]\[int\]\$UserId') {
-        throw 'параметр UserId объявлен как [int] вместо [int64]'
-    }
-    'номера аккаунтов везде int64'
-}
-
 Check 'Окно не прячется без значка в часах' {
     # Самая дорогая ошибка 1.1: значок в часах не создавался, а окно всё равно
     # уходило по Hide(). Программа исчезала целиком — ни в панели задач, ни
@@ -1124,40 +1008,13 @@ Check 'Окно не прячется без значка в часах' {
 
     # 3. Умолчания скучные: без настройки окно остаётся в панели задач.
     $d = Get-RamDefaultSettings
-    if ($d.OnMinimize -ne 'taskbar') { throw "по умолчанию сворачивание = $($d.OnMinimize), а должно быть taskbar" }
-    if ($d.OnClose    -ne 'exit')    { throw "по умолчанию крестик = $($d.OnClose), а должен быть exit" }
+    if ($d.PSObject.Properties.Name -contains 'OnMinimize') {
+        throw 'настройка OnMinimize вернулась — минус обязан ВСЕГДА сворачивать в панель задач'
+    }
+    if ($d.OnClose -notin @('exit','tray')) { throw "непонятное умолчание крестика: $($d.OnClose)" }
+    if ([bool]$d.TrayConfirmed) { throw 'по умолчанию значок в часах не может считаться подтверждённым' }
 
     'прятать окно можно только при живом значке, умолчания безопасные'
-}
-
-Check 'Старая настройка сворачивания переносится' {
-    # У тех, кто уже привык к сворачиванию в часы, поведение не должно
-    # молча поменяться при обновлении.
-    $tmp = Join-Path $env:TEMP ('ram-mig-' + [guid]::NewGuid().ToString('N').Substring(0,8) + '.json')
-    $keepData = $env:RAM_DATA_DIR
-    try {
-        # Готовим файл настроек старого образца.
-        $old = [pscustomobject]@{ MinimizeToTray = $true; Theme = 'dark' }
-        ConvertTo-Json -InputObject $old -Depth 3 | Set-Content -LiteralPath $tmp -Encoding UTF8
-
-        $loaded = Get-Content -LiteralPath $tmp -Raw -Encoding UTF8 | ConvertFrom-Json
-        $s = Get-RamDefaultSettings
-        $names = $loaded.PSObject.Properties.Name
-        if (($names -contains 'MinimizeToTray') -and -not ($names -contains 'OnMinimize')) {
-            $s.OnMinimize = $(if ([bool]$loaded.MinimizeToTray) { 'tray' } else { 'taskbar' })
-        }
-        if ($s.OnMinimize -ne 'tray') { throw 'старое «сворачивать в часы» не перенеслось' }
-
-        # А выключенное старое — остаётся выключенным.
-        $old2 = [pscustomobject]@{ MinimizeToTray = $false }
-        $s2 = Get-RamDefaultSettings
-        if ([bool]$old2.MinimizeToTray) { $s2.OnMinimize = 'tray' } else { $s2.OnMinimize = 'taskbar' }
-        if ($s2.OnMinimize -ne 'taskbar') { throw 'выключенное старое превратилось в «в часы»' }
-    } finally {
-        if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Force }
-        $env:RAM_DATA_DIR = $keepData
-    }
-    'MinimizeToTray = true превращается в OnMinimize = tray, false остаётся taskbar'
 }
 
 Check 'Очередь запуска идёт по порядку списка' {
@@ -1755,6 +1612,37 @@ Check 'Подхват уже работающих клиентов' {
     'чужой процесс не присваивается, btid сохраняется, подхват подключён к старту'
 }
 
+Check 'Главное окно живёт в Application.Run' {
+    # Самая глубокая ошибка всей этой истории. ShowDialog завершается не
+    # только когда окно закрыли, но и когда его ПРЯЧУТ: как только Visible
+    # становится false, модальный цикл выходит, скрипт доходит до конца и
+    # процесс завершается. Поэтому любая попытка «убрать в часы» убивала
+    # программу — со стороны это выглядело как «свернул, и оно закрылось».
+    $src = Get-RamAllSource
+
+    if ($src -match '\$form\.ShowDialog\(\)') {
+        throw 'главное окно снова показывается через ShowDialog — Hide() будет убивать программу'
+    }
+    if ($src -notmatch '\[System\.Windows\.Forms\.Application\]::Run\(\$form\)') {
+        throw 'пропал Application::Run — окно должно жить в обычном цикле сообщений'
+    }
+    if ($src -match '(?s)Add_Resize\(\{.{0,600}?\$this\.Hide\(\)') {
+        throw 'сворачивание снова прячет окно — так его и теряли'
+    }
+    'окно живёт в Application.Run, сворачивание его не прячет'
+}
+
+Check 'Одна копия программы на компьютер' {
+    # Без этого потерянное окно вернуть нечем: повторный клик по ярлыку
+    # открывал вторую копию, а первая оставалась висеть невидимой и держала
+    # горячие клавиши.
+    $src = Get-RamAllSource
+    foreach ($need in @('Test-RamAlreadyRunning', 'Show-RamRunningInstance', 'Clear-RamSingleInstance')) {
+        if ($src -notmatch [regex]::Escape($need)) { throw "пропала защита от второго запуска: $need" }
+    }
+    if ($src -notmatch 'AltHubSingleInstance') { throw 'пропал именованный замок одной копии' }
+    'замок на месте, повторный запуск возвращает окно'
+}
 Check 'Окна и оформление собираются' {
     $form = New-RamMainForm
     if ($form.Controls.Count -lt 5) { throw "в главном окне только $($form.Controls.Count) элементов" }
@@ -1957,12 +1845,12 @@ Check 'Вёрстка держится на 100%, 125% и 150%' {
     $keepGames   = $script:Settings.Games
     $keepProf    = $script:Settings.Profiles
     $keepCompact = $script:Settings.CompactCards
-    $keepTray    = $script:Settings.OnMinimize
+    $keepTray    = $script:Settings.OnClose
     $keepScale   = $Global:RamForceScale
     $keepTheme   = $script:Settings.Theme
 
     try {
-        $script:Settings.OnMinimize = 'taskbar'
+        $script:Settings.OnClose = 'exit'
 
         $a1 = New-RamAccount -Alias 'Основной' -Cookie 'x' -PlaceId '1'
         $a1.Username = 'TestPlayer'; $a1.UserId = 1234567
@@ -2041,7 +1929,7 @@ Check 'Вёрстка держится на 100%, 125% и 150%' {
         $script:Settings.Games = $keepGames
         $script:Settings.Profiles = $keepProf
         $script:Settings.CompactCards = $keepCompact
-        $script:Settings.OnMinimize = $keepTray
+        $script:Settings.OnClose = $keepTray
         $Global:RamForceScale = $keepScale
         $Global:RamForceWorkArea = $null
         $script:RamDpiScale = $null

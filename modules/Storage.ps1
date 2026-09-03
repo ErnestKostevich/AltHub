@@ -370,13 +370,17 @@ function Get-RamDefaultSettings {
         WatchGroup      = ''          # набор, который держать в игре
         Profiles        = @()         # профили запуска: @{ Name; Group; PlaceId; LinkCode; GameName }
         HotkeySwitch    = $true       # Ctrl+1..9 переключают окна аккаунтов
-        # Куда девается окно. Раньше был один флаг MinimizeToTray, и он
-        # описывал только сворачивание — а люди ждут выбора и для крестика.
-        # Умолчания скучные нарочно: программа не должна пропадать у того,
-        # кто ничего не настраивал. См. перенос старого флага в Load-RamSettings.
-        OnMinimize      = 'taskbar'   # taskbar | tray
-        OnClose         = 'exit'      # exit    | tray
+        # Куда девается окно.
+        #
+        # Настройки «куда девать по минусу» БОЛЬШЕ НЕТ, и это намеренно: минус
+        # всегда сворачивает в панель задач. Когда он прятал окно, а значок в
+        # часах оказывался невидим, программа пропадала совсем — вернуть её
+        # было нечем. В часы уводит только крестик и только после того, как
+        # человек подтвердил, что значок видит (см. Confirm-RamTrayVisible).
+        OnClose         = 'tray'      # exit | tray
         TrayHintShown   = $false      # показывали ли подсказку «ищи под стрелкой»
+        TrayConfirmed   = $false      # человек подтвердил, что значок видно
+        WindowFixApplied = $false     # разовая починка настроек из сломанных версий
         CheckOnStart    = $true       # проверять входы при открытии менеджера
         AutoRestart     = $false # поднимать аккаунт заново, если клиент вылетел
         AutoRestartMax  = 3      # сколько раз подряд пытаться
@@ -400,20 +404,27 @@ function Load-RamSettings {
                 if ($loaded.PSObject.Properties.Name -contains $p) { $s.$p = $loaded.$p }
             }
 
-            # Перенос со старого флага. Недостающие поля доливаются из умолчаний
-            # сами, но тогда у того, кто уже привык к сворачиванию в часы, оно
-            # молча выключилось бы. Переносим один раз: если в файле остался
-            # MinimizeToTray и ещё нет нового OnMinimize — уважаем старый выбор.
+            # РАЗОВАЯ ПОЧИНКА ТЕХ, КОГО СЛОМАЛО.
+            #
+            # В версиях 1.2 старый флаг MinimizeToTray переносился в
+            # OnMinimize = 'tray', и минус начинал ПРЯТАТЬ окно. Если значок
+            # в часах был не виден, программа пропадала насовсем. Настройки
+            # такого вида надо обезвредить, иначе обновившиеся так и останутся
+            # со сломанным поведением.
             $names = $loaded.PSObject.Properties.Name
-            if (($names -contains 'MinimizeToTray') -and -not ($names -contains 'OnMinimize')) {
-                $s.OnMinimize = $(if ([bool]$loaded.MinimizeToTray) { 'tray' } else { 'taskbar' })
+            if (-not [bool]$s.WindowFixApplied) {
+                $s.WindowFixApplied = $true
+                # Если крестик раньше просто закрывал, а человек ничего не
+                # трогал — оставляем как было, чтобы поведение не менялось
+                # внезапно. Новый выбор он сделает сам в настройках.
+                if ($names -contains 'OnClose') { $s.OnClose = [string]$loaded.OnClose }
+                $s.TrayConfirmed = $false
             }
         } catch { }
     }
 
     # Мусор в файле не должен превращаться в непонятное поведение окна.
-    if ($s.OnMinimize -notin @('taskbar', 'tray')) { $s.OnMinimize = 'taskbar' }
-    if ($s.OnClose    -notin @('exit', 'tray'))    { $s.OnClose    = 'exit' }
+    if ($s.OnClose -notin @('exit', 'tray')) { $s.OnClose = 'exit' }
     return $s
 }
 
