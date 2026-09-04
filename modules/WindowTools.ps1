@@ -56,6 +56,9 @@ namespace Ram {
         [DllImport("user32.dll")]
         public static extern bool ShowWindow(IntPtr hWnd, int cmd);
 
+        [DllImport("user32.dll")]
+        public static extern bool IsIconic(IntPtr hWnd);
+
         [StructLayout(LayoutKind.Sequential)]
         public struct RECT { public int Left, Top, Right, Bottom; }
 
@@ -162,9 +165,17 @@ function Set-RamWindowBounds {
     )
     if ($Handle -eq [IntPtr]::Zero) { return $false }
     try {
-        # 1 = SW_SHOWNORMAL: выводим из свёрнутого/развёрнутого состояния,
-        # иначе окно не подвинется.
-        [Ram.Native]::ShowWindow($Handle, 1) | Out-Null
+        # ShowWindow(SW_SHOWNORMAL) не просто «восстанавливает из свёрнутого» —
+        # это Win32-команда АКТИВИРОВАТЬ окно, то есть поднять его поверх
+        # остальных и забрать фокус. Раньше она вызывалась безусловно для
+        # КАЖДОГО окна в цикле раскладки (Invoke-RamTileWindows), поэтому при
+        # автораскладке после массового запуска все окна Roblox по очереди
+        # выпрыгивали поверх всего, включая то, на котором в этот момент
+        # играл человек. Зовём её, только если окно и правда свёрнуто —
+        # иначе просто двигаем и меняем размер, без активации.
+        if ([Ram.Native]::IsIconic($Handle)) {
+            [Ram.Native]::ShowWindow($Handle, 1) | Out-Null   # SW_SHOWNORMAL
+        }
         $flags = $script:SWP_NOZORDER -bor $script:SWP_NOACTIVATE -bor $script:SWP_SHOWWINDOW
         return [Ram.Native]::SetWindowPos($Handle, [IntPtr]::Zero, $X, $Y, $Width, $Height, $flags)
     } catch { return $false }

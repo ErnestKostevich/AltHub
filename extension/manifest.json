@@ -1,0 +1,27 @@
+{
+  "manifest_version": 3,
+  "name": "AltHub Cookie Bridge",
+  "version": "1.3",
+  "description": "Локальный мост между твоим браузером и AltHub. Отдаёт вход текущего аккаунта Roblox (.ROBLOSECURITY) только на 127.0.0.1, где его ждёт запущенный AltHub. Наружу не отправляет ничего и никогда.",
+
+  "permissions": ["cookies", "webNavigation"],
+  "host_permissions": [
+    "*://*.roblox.com/*",
+    "http://127.0.0.1/*"
+  ],
+
+  "background": {
+    "service_worker": "background.js"
+  },
+
+  "action": {
+    "default_title": "Передать этот аккаунт Roblox в AltHub"
+  },
+
+  "commands": {
+    "althub-grab": {
+      "suggested_key": { "default": "Alt+Shift+A" },
+      "description": "Передать этот аккаунт Roblox в AltHub"
+    }
+  }
+}
