@@ -30,6 +30,33 @@ $script:Settings = Load-RamSettings
 $total  = 0
 $passed = 0
 
+function Remove-RamComments {
+    <#
+      Убирает из исходника комментарии: и блочные, и строчные.
+
+      Без этого проверки ловили сами объяснения. Скажем, «в коде нет флагов,
+      прячущих автоматизацию» падала на абзаце, который рассказывает, ПОЧЕМУ
+      такой флаг убрали: слова в объяснении не отличить от кода, если их не
+      выкинуть заранее.
+
+      Строчные убираем только целиком закомментированные строки. Хвостовые
+      комментарии после кода не трогаем: отличить их от решётки внутри
+      строки-литерала без полного разбора нельзя, а испортить код проверке
+      хуже, чем пропустить пару слов.
+    #>
+    param([Parameter(Mandatory)][string]$Text)
+    $open  = [char]0x3C + [char]0x23    # начало блочного комментария
+    $close = [char]0x23 + [char]0x3E    # конец блочного
+    $rx    = '(?s)' + [regex]::Escape($open) + '.*?' + [regex]::Escape($close)
+    $t = [regex]::Replace($Text, $rx, '')
+    $lines = @()
+    foreach ($ln in ($t -split "`r?`n")) {
+        if ($ln -match '^\s*#') { continue }
+        $lines += $ln
+    }
+    return ($lines -join "`n")
+}
+
 function Get-RamAllSource {
     <# Весь исходный код одной строкой: AltHub.ps1 плюс все модули.
        После разбиения файла по смыслу искать только в AltHub.ps1 нельзя —
@@ -1809,12 +1836,24 @@ Check 'Вёрстка держится на 100%, 125% и 150%' {
             if ($Control.Left -lt -1 -or $Control.Top -lt -1) {
                 $script:bad += "${Where}: элемент за левым/верхним краем ($($Control.Left),$($Control.Top))"
             }
+            # Кто именно вылез — по надписи или типу. Без этого сообщение
+            # «вылезает вниз (край 754 при высоте 736)» ничего не говорит о
+            # том, ЧТО чинить, и приходится искать вслепую.
+            $who = if ($Control.Text) { "«$($Control.Text)»" }
+                   elseif ($null -ne $Control.Tag -and $Control.Tag.PSObject.Properties.Name -contains 'Caption') { "кнопка «$($Control.Tag.Caption)»" }
+                   else { $Control.GetType().Name }
+            if ($Control.Name) { $who += " [$($Control.Name)]" }
+            $kids = @($Control.Controls | ForEach-Object {
+                if ($_.Text) { $_.Text } elseif ($null -ne $_.Tag -and $_.Tag.PSObject.Properties.Name -contains 'Caption') { $_.Tag.Caption } else { '' }
+            } | Where-Object { $_ }) 
+            if ($kids.Count) { $who += ' с ' + (($kids | Select-Object -First 3) -join '/') }
+            $who += " в $($par.GetType().Name)[$($par.Name)]"
             if ($Control.Right -gt $box.Width + 1) {
-                $script:bad += "${Where}: вылезает вправо (край $($Control.Right) при ширине $($box.Width))"
+                $script:bad += "${Where}: $who вылезает вправо (край $($Control.Right) при ширине $($box.Width))"
             }
             # Прокручиваемым разрешаем расти вниз, но не вбок.
             if (-not $scrollable -and $Control.Bottom -gt $box.Height + 1) {
-                $script:bad += "${Where}: вылезает вниз (край $($Control.Bottom) при высоте $($box.Height))"
+                $script:bad += "${Where}: $who вылезает вниз (край $($Control.Bottom) при высоте $($box.Height))"
             }
         }
 
@@ -2006,12 +2045,167 @@ Check 'В коде нет опасных конструкций и постор�
             ForEach-Object { if ($_ -match '^https?://([^/?#]+)') { $Matches[1] } } |
             Sort-Object -Unique
     if (-not $urls) { throw 'не найдено ни одного адреса — проверка не сработала' }
+
+    # ПОИМЁННЫЙ СПИСОК, А НЕ «ТОЛЬКО roblox.com».
+    # Раньше здесь стояло короткое правило: всё, кроме roblox.com и rbxcdn.com,
+    # считалось посторонним. Правило было честным ровно до тех пор, пока в
+    # программе не появились локальный мост и скачивание Chrome for Testing.
+    # Расширять его молча значит незаметно ослабить обещание, поэтому каждый
+    # адрес теперь назван поимённо и с причиной. Любой НЕ перечисленный
+    # по-прежнему валит проверку.
+    $allowed = @(
+        @{ Rx = '(^|\.)roblox\.com$';         Why = 'сам Roblox' },
+        @{ Rx = '(^|\.)rbxcdn\.com$';         Why = 'картинки и аватарки Roblox' },
+        @{ Rx = '^127\.0\.0\.1(:.*)?$';      Why = 'петля внутри этого компьютера: мост с расширением браузера' },
+        @{ Rx = '^googlechromelabs\.github\.io$'; Why = 'список сборок Chrome for Testing, только по кнопке согласия' },
+        @{ Rx = '^storage\.googleapis\.com$'; Why = 'сам архив Chrome for Testing, только по кнопке согласия' },
+        @{ Rx = '^developer\.microsoft\.com$'; Why = 'страница загрузки, открывается в браузере' }
+    )
+
+    $seen = @()
     foreach ($h in $urls) {
-        if ($h -notmatch '(^|\.)roblox\.com$' -and $h -notmatch '(^|\.)rbxcdn\.com$') {
-            throw "посторонний адрес в коде: $h"
+        $hit = $null
+        foreach ($a in $allowed) { if ($h -match $a.Rx) { $hit = $a; break } }
+        if ($null -eq $hit) { throw "посторонний адрес в коде: $h" }
+        $seen += ('{0} — {1}' -f $h, $hit.Why)
+    }
+    ($seen -join '; ')
+}
+
+Check 'В коде нет флагов, прячущих автоматизацию' {
+    # Запирает границу навсегда. Капчу и проверку на бота человек проходит
+    # сам; флаги, которые прячут от сайта факт автоматизации, — это уже обход
+    # защиты от ботов, и в этом проекте их быть не должно. Один такой флаг
+    # (--disable-blink-features=AutomationControlled) в коде побывал и был
+    # убран — чтобы он не вернулся тихо, проверка стоит здесь.
+    $src = Remove-RamComments -Text (Get-RamAllSource)
+    $bad = @()
+    foreach ($pat in @(
+        'AutomationControlled',
+        'disable-blink-features',
+        'excludeSwitches',
+        'enable-automation',
+        '--headless',
+        'navigator\.webdriver')) {
+        # Свои же объяснения в комментариях не считаем: ищем строки кода.
+        foreach ($m in [regex]::Matches($src, "(?m)^(?!\s*#).*$pat.*$")) {
+            $bad += $m.Value.Trim()
         }
     }
-    "домены в коде: $($urls -join ', ')"
+    if ($bad.Count) { throw ('нашлось: ' + (($bad | Select-Object -First 3) -join ' | ')) }
+    'флагов сокрытия автоматизации нет'
+}
+
+Check 'Расширение браузера стучит только на 127.0.0.1' {
+    # Расширение получает доступ к куке аккаунта, поэтому его код разбираем
+    # отдельно от PowerShell: любой адрес, кроме петли на этом компьютере,
+    # означал бы, что кука может уйти наружу.
+    $dir = Join-Path $root 'extension'
+    if (-not (Test-Path -LiteralPath $dir)) { throw 'папки extension нет' }
+    $js = @(Get-ChildItem -LiteralPath $dir -Filter *.js -File)
+    if ($js.Count -eq 0) { throw 'в extension нет ни одного .js — проверка не сработала' }
+
+    $bad = @()
+    foreach ($f in $js) {
+        $txt = Get-Content -LiteralPath $f.FullName -Raw
+        foreach ($m in [regex]::Matches($txt, "https?://[^\s'`"+)]+")) {
+            $u = $m.Value
+            if ($u -notmatch '^https?://127\.0\.0\.1') {
+                # Адреса roblox.com в вызовах chrome.cookies — это не отправка
+                # данных, а указание, ЧЬЮ куку читать: наружу по ним ничего не
+                # уходит. Но fetch на них был бы отправкой, поэтому проверяем
+                # именно строки с fetch/XMLHttpRequest.
+                $line = ($txt -split "`r?`n" | Where-Object { $_ -like "*$u*" } | Select-Object -First 1)
+                if ($line -match 'fetch\s*\(|XMLHttpRequest|sendBeacon|WebSocket') {
+                    $bad += $u
+                }
+            }
+        }
+    }
+    if ($bad.Count) { throw ('расширение отправляет данные на: ' + (($bad | Select-Object -Unique) -join ', ')) }
+    "проверено файлов: $($js.Count), отправка только на 127.0.0.1"
+}
+
+Check 'Расширение читает только .ROBLOSECURITY' {
+    $dir = Join-Path $root 'extension'
+    $js  = @(Get-ChildItem -LiteralPath $dir -Filter *.js -File)
+    $txt = ($js | ForEach-Object { Get-Content -LiteralPath $_.FullName -Raw }) -join "`n"
+
+    # Все имена кук, которые упоминаются в вызовах chrome.cookies.
+    $names = @()
+    foreach ($m in [regex]::Matches($txt, "name:\s*'([^']+)'")) { $names += $m.Groups[1].Value }
+    foreach ($m in [regex]::Matches($txt, 'name:\s*"([^"]+)"')) { $names += $m.Groups[1].Value }
+    $names = @($names | Sort-Object -Unique)
+    if ($names.Count -eq 0) { throw 'ни одного имени куки не нашлось — проверка не сработала' }
+    foreach ($n in $names) {
+        if ($n -ne '.ROBLOSECURITY') { throw "расширение трогает чужую куку: $n" }
+    }
+
+    # И права в манифесте: ни истории, ни закладок, ни доступа ко всем сайтам.
+    $man = Get-Content -LiteralPath (Join-Path $dir 'manifest.json') -Raw
+    foreach ($p in @('history', 'bookmarks', 'downloads', 'management', 'debugger', '<all_urls>', 'nativeMessaging')) {
+        if ($man -match [regex]::Escape($p)) { throw "в manifest.json лишнее право: $p" }
+    }
+    "куки: $($names -join ', ')"
+}
+
+Check 'Chrome for Testing качается только по согласию' {
+    # Скачивание ~150 МБ чужого исполняемого файла должно начинаться только
+    # после кнопки в окне согласия. Проверяем, что установщик не зовут ниоткуда,
+    # кроме единственной обёртки Request-RamChromeForTesting.
+    $src = Remove-RamComments -Text (Get-RamAllSource)
+    $callers = @()
+    foreach ($m in [regex]::Matches($src, '(?m)^.*Install-RamChromeForTesting.*$')) {
+        $line = $m.Value.Trim()
+        if ($line -match '^function\s') { continue }
+        $callers += $line
+    }
+    if ($callers.Count -ne 1) {
+        throw ('установщик зовут из ' + $callers.Count + ' мест: ' + (($callers | Select-Object -First 3) -join ' | '))
+    }
+
+    # И сама обёртка должна вызываться только из окна согласия.
+    $users = @([regex]::Matches($src, '(?m)^.*Request-RamChromeForTesting.*$') |
+               ForEach-Object { $_.Value.Trim() } |
+               Where-Object { $_ -notmatch '^function\s' })
+    if ($users.Count -ne 1) {
+        throw ('обёртку зовут из ' + $users.Count + ' мест, ожидалось одно (окно согласия)')
+    }
+    'скачивание только из окна согласия'
+}
+
+Check 'Мост не слушает порт, пока приём выключен' {
+    $src = Remove-RamComments -Text (Get-RamAllSource)
+    # Единственное место, где начинается прослушивание, — Start-RamCookieBridge,
+    # и звать его можно только под проверкой настройки BridgeEnabled.
+    $starts = @([regex]::Matches($src, '(?m)^.*Start-RamCookieBridge.*$') |
+                ForEach-Object { $_.Value.Trim() } |
+                Where-Object { $_ -notmatch '^function\s' })
+    if ($starts.Count -eq 0) { throw 'мост не запускается ниоткуда — проверка не сработала' }
+
+    if ($src -notmatch 'BridgeEnabled') { throw 'настройки BridgeEnabled нет' }
+    if ($src -notmatch '\$want\s*=\s*\[bool\]\$script:Settings\.BridgeEnabled') {
+        throw 'Update-RamCookieBridgeState больше не смотрит на настройку'
+    }
+    # По умолчанию выключено: иначе порт занимался бы у всех подряд.
+    $def = Get-RamDefaultSettings
+    if ([bool]$def.BridgeEnabled) { throw 'по умолчанию приём включён, а должен быть выключен' }
+    "мест запуска: $($starts.Count), по умолчанию выключено"
+}
+
+Check 'Главное окно не задаёт кнопки числами' {
+    # Та самая болезнь, из-за которой «Удалить» пропадала на 150%: ширины и
+    # координаты, вписанные числом, не растут вместе со шрифтом. Ловим возврат
+    # готовых чисел в верхнюю полосу главного окна.
+    $txt = Remove-RamComments -Text (Get-Content -LiteralPath (Join-Path $root 'modules\UiMain.ps1') -Raw)
+    $bad = @()
+    foreach ($m in [regex]::Matches($txt, "(?m)^.*New-RamButton[^\r\n]*-Height\s+\d+")) {
+        $bad += $m.Value.Trim()
+    }
+    if ($bad.Count) {
+        throw ('высота кнопки задана числом: ' + (($bad | Select-Object -First 2) -join ' | '))
+    }
+    'высоты кнопок главного окна берутся из метрик'
 }
 
 Check 'README не врёт числом проверок' {

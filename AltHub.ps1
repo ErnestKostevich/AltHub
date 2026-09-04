@@ -4,15 +4,20 @@
  AltHub — менеджер аккаунтов Roblox
 ================================================================================
  Автор: Эрнест Костевич (Ernest Kostevich)
- Версия: 1.2
+ Версия: 1.3
  Лицензия: MIT — см. файл LICENSE рядом. Можно свободно передавать друзьям,
  менять под себя и распространять дальше, сохраняя это указание авторства.
 
  Запуск нескольких аккаунтов Roblox одновременно, каждый в своём окне,
  каждый в нужной игре.
 
- Ничего не устанавливается, ничего не скачивается, ничего не компилируется.
- Это обычные текстовые .ps1-файлы — открой любым блокнотом и прочитай.
+ Ничего не устанавливается и не компилируется. Это обычные текстовые файлы —
+ .ps1 и .js — открой любым блокнотом и прочитай.
+
+ Скачать программа может ровно одно и только если ты сам нажмёшь кнопку:
+ Chrome for Testing, официальную сборку Chromium от Google (~150 МБ), для
+ способа входа «окно браузера». Без этого нажатия в сеть за ним никто не
+ ходит, и все остальные способы работают без него.
 
  Запускать через "AltHub.vbs" или "Запустить.cmd" (или: powershell -ExecutionPolicy Bypass
  -STA -File AltHub.ps1).
@@ -25,6 +30,11 @@
      modules\Storage.ps1      — шифрование и хранение аккаунтов на диске
      modules\RobloxApi.ps1    — ЕДИНСТВЕННЫЙ файл, который ходит в сеть
      modules\CookieImport.ps1 — забирает куку из открытого приложения Roblox
+     modules\CookieBridge.ps1 — приём входа из ТВОЕГО браузера по горячей
+                                клавише: расширение из extension\ отдаёт куку
+                                на 127.0.0.1, наружу не уходит ничего
+     modules\ExternalBrowserLogin.ps1 — отдельное окно настоящего Chrome для
+                                входа руками; капчу проходит человек
      modules\RobloxSettings.ps1 — графика, звук и FPS для каждого аккаунта
      modules\Presets.ps1      — железо компьютера и готовые наборы настроек
      modules\Launcher.ps1     — мультизапуск и старт клиента
@@ -89,6 +99,8 @@ $script:Root = $PSScriptRoot
 . (Join-Path $script:Root 'modules\Storage.ps1')
 . (Join-Path $script:Root 'modules\RobloxApi.ps1')
 . (Join-Path $script:Root 'modules\CookieImport.ps1')
+. (Join-Path $script:Root 'modules\CookieBridge.ps1')
+. (Join-Path $script:Root 'modules\ExternalBrowserLogin.ps1')
 . (Join-Path $script:Root 'modules\Hotkeys.ps1')
 . (Join-Path $script:Root 'modules\RobloxSettings.ps1')
 . (Join-Path $script:Root 'modules\Presets.ps1')
@@ -145,7 +157,7 @@ $script:RestartCount   = @{}      # Id аккаунта -> сколько раз
 $script:ReadOnly = [bool]$NoAutoStart
 
 $script:AppName    = 'AltHub'
-$script:AppVersion = '1.2'
+$script:AppVersion = '1.3'
 $script:AppAuthor  = 'Эрнест Костевич'
 
 function Get-RamAvatarDir { Join-Path (Get-RamDataDir) 'avatars' }
@@ -537,15 +549,39 @@ function Start-AltHub {
 
     Remove-RamOldLogs
 
-    if ($script:Settings.HotkeySwitch) {
+    # Окно горячих клавиш нужно и для Ctrl+1..9, и для клавиши приёма из
+    # браузера, поэтому создаём его, если включено хоть что-то из двух.
+    if ($script:Settings.HotkeySwitch -or $script:Settings.BridgeEnabled) {
         $cnt = Register-RamHotkeys -OnPressed {
             param($sender, $e)
-            Invoke-RamFocusAccountByIndex -Index $e.Id
+            if ($e.Id -eq 20) {
+                Invoke-RamSafe -What 'приём входа из браузера' -Body { [void](Invoke-RamBrowserGrab) }
+            } else {
+                Invoke-RamFocusAccountByIndex -Index $e.Id
+            }
+        } -SkipSwitchKeys:(-not $script:Settings.HotkeySwitch)
+
+        if ($script:Settings.HotkeySwitch) {
+            if ($cnt -gt 0) {
+                Write-RamLog "Горячие клавиши Ctrl+1..Ctrl+$cnt переключают окна аккаунтов — работают и из игры." 'ok'
+            } else {
+                Write-RamLog 'Глобальные горячие клавиши занял кто-то другой — Ctrl+1..9 работать не будут.' 'warn'
+            }
         }
-        if ($cnt -gt 0) {
-            Write-RamLog "Горячие клавиши Ctrl+1..Ctrl+$cnt переключают окна аккаунтов — работают и из игры." 'ok'
-        } else {
-            Write-RamLog 'Глобальные горячие клавиши занял кто-то другой — Ctrl+1..9 работать не будут.' 'warn'
+    }
+
+    # Приём входа из браузера. Порт занимаем, только если человек его включил.
+    if ($script:Settings.BridgeEnabled) {
+        Invoke-RamSafe -What 'запуск приёма из браузера' -Body {
+            $bport = Start-RamCookieBridge
+            if ($bport -gt 0) {
+                $key = [string]$script:Settings.BridgeHotkey
+                if (Register-RamBridgeHotkey -Key $key) {
+                    Write-RamLog "Приём из браузера: жми $key на странице roblox.com — аккаунт добавится сам." 'ok'
+                } else {
+                    Write-RamLog "Клавишу $key занял кто-то другой. Возьми другую в настройках или жми кнопку AltHub на панели браузера." 'warn'
+                }
+            }
         }
     }
 
@@ -591,6 +627,11 @@ function Start-AltHub {
     #
     # Application.Run живёт до закрытия окна и переживает Hide() спокойно.
     [System.Windows.Forms.Application]::Run($form)
+
+    # Порт освобождаем явно, а не надеемся на завершение процесса: если
+    # программу перезапустят быстро, следующий запуск наткнётся на занятый
+    # порт и приём молча не включится.
+    Invoke-RamSafe -What 'остановка приёма из браузера' -Body { Stop-RamCookieBridge }
     $form.Dispose()
 }
 

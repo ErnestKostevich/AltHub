@@ -95,7 +95,13 @@ function Register-RamHotkeys {
       Если сочетание уже занято другой программой, Windows просто откажет —
       это не ошибка, просто та цифра работать не будет.
     #>
-    param([Parameter(Mandatory)][scriptblock]$OnPressed)
+    param(
+        [Parameter(Mandatory)][scriptblock]$OnPressed,
+        # Создать окно-приёмник, но НЕ занимать Ctrl+1..9. Нужно, когда
+        # переключение окон выключено, а приём входа из браузера — включён:
+        # обоим нужно одно и то же скрытое окно, но клавиши разные.
+        [switch]$SkipSwitchKeys
+    )
 
     Unregister-RamHotkeys
 
@@ -110,6 +116,7 @@ function Register-RamHotkeys {
 
     $MOD_CONTROL = 0x0002
     $ok = 0
+    if ($SkipSwitchKeys) { return 0 }
     for ($i = 1; $i -le 9; $i++) {
         $vk = 0x30 + $i          # VK_1 .. VK_9
         if ($Global:RamHotkeyWindow.Register($i, $MOD_CONTROL, $vk)) {
@@ -118,6 +125,56 @@ function Register-RamHotkeys {
         }
     }
     return $ok
+}
+
+function Get-RamBridgeHotkeyChoices {
+    <# Клавиши, которые можно назначить на приём входа из браузера. #>
+    return @('F8', 'F9', 'F10', 'F11', 'Ctrl+Alt+A')
+}
+
+function Get-RamBridgeHotkeySpec {
+    <#
+      Переводит название клавиши в пару «модификаторы, код клавиши» для
+      RegisterHotKey. Возвращает $null, если название незнакомое.
+    #>
+    param([string]$Name)
+    $MOD_CONTROL = 0x0002
+    $MOD_ALT     = 0x0001
+    switch ($Name) {
+        'F8'         { return @{ Mods = 0;                        Vk = 0x77 } }
+        'F9'         { return @{ Mods = 0;                        Vk = 0x78 } }
+        'F10'        { return @{ Mods = 0;                        Vk = 0x79 } }
+        'F11'        { return @{ Mods = 0;                        Vk = 0x7A } }
+        'Ctrl+Alt+A' { return @{ Mods = ($MOD_CONTROL -bor $MOD_ALT); Vk = 0x41 } }
+    }
+    return $null
+}
+
+function Register-RamBridgeHotkey {
+    <#
+      Клавиша приёма входа из браузера. Регистрируется ОТДЕЛЬНО от Ctrl+1..9
+      и только пока приём включён: глобальная клавиша отбирается у всей
+      системы разом, и держать F10 занятой без надобности нельзя.
+
+      Номер 20 — чтобы не пересечься с 1..9 у переключения окон.
+    #>
+    param([Parameter(Mandatory)][string]$Key)
+    if ($null -eq $Global:RamHotkeyWindow) { return $false }
+
+    $spec = Get-RamBridgeHotkeySpec -Name $Key
+    if ($null -eq $spec) { return $false }
+
+    if ($Global:RamHotkeyWindow.Register(20, $spec.Mods, $spec.Vk)) {
+        $Global:RamHotkeyIds += 20
+        return $true
+    }
+    return $false
+}
+
+function Unregister-RamBridgeHotkey {
+    if ($null -eq $Global:RamHotkeyWindow) { return }
+    try { $Global:RamHotkeyWindow.Unregister(20) } catch { }
+    $Global:RamHotkeyIds = @($Global:RamHotkeyIds | Where-Object { $_ -ne 20 })
 }
 
 function Unregister-RamHotkeys {

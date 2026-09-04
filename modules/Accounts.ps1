@@ -1885,4 +1885,66 @@ function Invoke-RamWatchCheck {
     Write-RamLog "Присмотр за набором «$group»: не в игре $($missing.Count), поднимаю." 'warn'
     Add-RamToLaunchQueue -Accounts $missing
 }
+function Invoke-RamRelogin {
+    <#
+      Войти заново в конкретный аккаунт — то, что нужно, когда вход умер.
 
+      ЧЕСТНО О ГЛАВНОМ. Продлить .ROBLOSECURITY снаружи невозможно: ни один
+      запрос к Roblox не присылает свежую куку, это проверено опытом и лежит
+      рядом отдельным скриптом «Проверка входов.ps1». Поэтому «починить» вход
+      можно ровно одним способом — войти ещё раз. Здесь это делается в один
+      клик и без потерь: свежая кука встаёт на место старой, а игра, набор,
+      метка, заметка и место в списке остаются прежними, потому что аккаунт
+      узнаётся по UserId и обновляется, а не создаётся заново.
+    #>
+    param([Parameter(Mandatory)][string]$Id)
+
+    $acc = Get-RamAccountById -Id $Id
+    if ($null -eq $acc) { return }
+
+    $ways = @()
+    $ways += 'Открыть окно браузера и войти руками'
+    if ([bool]$script:Settings.BridgeEnabled) {
+        $ways += "Или: открой roblox.com в своём браузере под «$($acc.Alias)» и нажми $($script:Settings.BridgeHotkey)"
+    }
+
+    $msg = "Вход в «$($acc.Alias)» умер." + [Environment]::NewLine + [Environment]::NewLine +
+           'Продлить его нечем — Roblox не отдаёт новую куку ни на один запрос, это проверено. Нужно войти заново.' +
+           [Environment]::NewLine + [Environment]::NewLine + ($ways -join ([Environment]::NewLine)) +
+           [Environment]::NewLine + [Environment]::NewLine + 'Открыть окно браузера сейчас?'
+
+    if (-not (Confirm-Ram $msg)) { return }
+
+    $cookie = $null
+    try {
+        $cookie = Show-RamExternalBrowserLoginWindow
+    } catch {
+        Write-RamLog "Повторный вход: $($_.Exception.Message)" 'err'
+        Show-RamError -Text ('Не удалось открыть окно входа:' + [Environment]::NewLine + [Environment]::NewLine + $_.Exception.Message)
+        return
+    }
+    if (-not $cookie) {
+        Write-RamLog 'Повторный вход: окно закрыто без входа.' 'warn'
+        return
+    }
+
+    $r = Import-RamAccountLine -Line $cookie
+    if ($null -eq $r -or -not $r.Ok) {
+        $why = if ($r -and $r.Error) { $r.Error } else { 'Roblox не подтвердил вход' }
+        Show-RamError -Text ('Вход не подошёл:' + [Environment]::NewLine + [Environment]::NewLine + $why)
+        return
+    }
+
+    Save-RamState
+    Build-RamCards
+    if ($r.Alias -eq $acc.Alias) {
+        Write-RamLog "Вход в «$($acc.Alias)» обновлён." 'ok'
+        Show-RamMessage -Message "Готово: вход в «$($acc.Alias)» снова живой."
+    } else {
+        # Вошли под другим аккаунтом — не молчим об этом: старый как был
+        # мёртвым, так и остался, а в списке появился ещё один.
+        Write-RamLog "Ожидался «$($acc.Alias)», а вошли под «$($r.Alias)» — добавлен отдельным аккаунтом." 'warn'
+        Show-RamMessage -Message ("Вошли под «$($r.Alias)», а не под «$($acc.Alias)»." + [Environment]::NewLine + [Environment]::NewLine +
+                                  "Он добавлен в список, но вход в «$($acc.Alias)» так и остался мёртвым.")
+    }
+}

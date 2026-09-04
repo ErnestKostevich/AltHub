@@ -110,10 +110,14 @@ function Build-RamCards {
     if (-not $script:UI.ContainsKey('Cards')) { return }
 
     $t      = $Global:RamTheme
+    # НЕ $m: ниже есть foreach ($m in ...), он бы её затёр.
+    $metrics = $t.M
     $host_  = $script:UI.Cards
     $W      = Get-RamCardWidth
     $compact = [bool]$script:Settings.CompactCards
-    $cardH  = if ($compact) { 56 } else { 92 }
+    # Высота тоже от масштаба: при 150% в прежние 92px не помещались имя,
+    # подпись и заметка, набранные полуторным шрифтом.
+    $cardH  = [int][Math]::Round($(if ($compact) { 56 } else { 92 }) * $Global:RamTheme.M.Scale)
 
     # Запоминаем отметки, чтобы не сбрасывались.
     $checked = @{}
@@ -178,24 +182,66 @@ function Build-RamCards {
                 $b.Dispose(); $path.Dispose()
             })
 
+            # ВСЁ ВНУТРИ КАРТОЧКИ СЧИТАЕТСЯ ОТ МАСШТАБА, А НЕ ЧИСЛАМИ.
+            # Раньше здесь стояли готовые координаты (nameX = 112, gameX = 360,
+            # высота 92). Шрифт при 125% и 150% растёт, а колонки оставались на
+            # месте: ник с номером не влезал в отведённые 234px и обрезался
+            # многоточием, «ИГРА» жалась к имени, а точка состояния уезжала.
+            # Числа ниже — те же самые пропорции при 100%, просто умноженные.
+            $sk = { param($n) [int][Math]::Round($n * $metrics.Scale) }
+            $pad = & $sk 18
             if ($compact) {
-                $chk = New-RamCheckBox -X 18 -Y 18
+                $chk = New-RamCheckBox -X $pad -Y (& $sk 18)
                 # Аватарку сдвигаем за галочкой: та растёт вместе со шрифтом.
-                $avSize = 32; $avY = 12; $avX = [Math]::Max(46, (18 + $chk.Width + 8))
-                # 5, а не 7: имя рисуется шрифтом покрупнее и высотой 24,
-                # поэтому при подписи на Y=26 они налезали друг на друга.
-                $nameY = 4; $subY = 28; $nameX = 88; $nameW = 200
-                $gameX = 300; $gameY = 17; $gameW = 210
-                $dotX  = 528; $dotY = 17
-                $btnY  = 12; $btnH = 32
+                $avSize = & $sk 32
+                $avY    = & $sk 12
+                $avX    = [Math]::Max((& $sk 46), ($pad + $chk.Width + (& $sk 8)))
+                $nameY  = & $sk 4;   $subY = & $sk 28;  $gameY = & $sk 17
+                $dotY   = & $sk 17
+                $btnY   = & $sk 12;  $btnH = $metrics.RowHSm
             } else {
-                $chk = New-RamCheckBox -X 18 -Y 36
-                $avSize = 52; $avY = 20; $avX = [Math]::Max(48, (18 + $chk.Width + 8))
-                $nameY = 13; $subY = 37; $nameX = 112; $nameW = 236
-                $gameX = 360; $gameY = 32; $gameW = 240
-                $dotX  = 640; $dotY = 36
-                $btnY  = 29; $btnH = 34
+                $chk = New-RamCheckBox -X $pad -Y (& $sk 36)
+                $avSize = & $sk 52
+                $avY    = & $sk 20
+                $avX    = [Math]::Max((& $sk 48), ($pad + $chk.Width + (& $sk 8)))
+                $nameY  = & $sk 13;  $subY = & $sk 37;  $gameY = & $sk 32
+                $dotY   = & $sk 36
+                $btnY   = & $sk 29;  $btnH = $metrics.RowH
             }
+            $nameX = $avX + $avSize + (& $sk 8)
+
+            # Правая тройка значков — ОТ ПРАВОГО КРАЯ карточки. Раньше они
+            # стояли на $W-172 / $W-120 / $W-68 при ширине 46: три числа,
+            # подогнанные под 100%. На 150% значки вырастали, шаг оставался
+            # прежним, и они налезали друг на друга.
+            $icoW     = & $sk 46
+            $icoGap   = & $sk 6
+            $icoRight = $W - (& $sk 22)
+            $stopX = $icoRight - $icoW
+            $editX = $stopX - $icoGap - $icoW
+            $playX = $editX - $icoGap - $icoW
+
+            # ТРИ КОЛОНКИ ДЕЛЯТ ОСТАТОК, А НЕ СТОЯТ НА ГОТОВЫХ СДВИГАХ.
+            # Раньше было gameX = nameX + 248, gameW = 240, dotX = +40 — при
+            # 150% на узком экране их сумма выходила шире самой карточки, и
+            # точка состояния вылезала за правый край. Теперь берём всё, что
+            # осталось между именем и значками, и делим по долям: имени
+            # больше всех, потому что там ник и номер.
+            # Высоту строк меряем по шрифту. Раньше стояло 20 и 22 — при 150%
+            # строка текста выше 22px, и название игры не рисовалось ВООБЩЕ:
+            # надпись обрезалась по вертикали до пустого места. Подпись под
+            # именем спасал только более мелкий шрифт.
+            $hSm   = (Measure-RamText -Text 'Ay' -Font $t.FontSmall).Height + 4
+            $hBody = (Measure-RamText -Text 'Ay' -Font $t.FontBody).Height + 4
+
+            $colGap = & $sk 14
+            $avail  = $playX - $colGap - $nameX
+            if ($avail -lt (& $sk 260)) { $avail = & $sk 260 }
+            $textW = [int]($avail * 0.42)
+            $gameW = [int]($avail * 0.31)
+            $gameX = $nameX + $textW + $colGap
+            $dotX  = $gameX + $gameW + $colGap
+            $dotW  = [Math]::Max((& $sk 60), ($playX - $colGap - $dotX))
 
             $chk.Tag | Add-Member -NotePropertyName AccountId -NotePropertyValue $a.Id -Force
             if ($checked.ContainsKey($a.Id)) { $chk.Tag.Checked = $true }
@@ -220,7 +266,7 @@ function Build-RamCards {
             # Место сначала отдаём набору (он короткий и должен читаться целиком),
             # остаток — имени. Раньше было наоборот, и название набора обрезалось
             # посреди слова.
-            $maxTextW = $gameX - $nameX - 14
+            $maxTextW = $textW
 
             $groupW = 0
             $showGroup = (-not $compact) -and (-not [string]::IsNullOrWhiteSpace($a.Group))
@@ -247,7 +293,7 @@ function Build-RamCards {
             $lblGroup = $null
             if ($showGroup) {
                 $lblGroup = New-RamLabel -Text $a.Group -X ($nameX + $aliasW + 8) -Y ($nameY + 3) `
-                                         -Width $groupW -Height 20 -Font $t.FontSmall -Color $t.Accent -Truncatable
+                                         -Width $groupW -Height $hSm -Font $t.FontSmall -Color $t.Accent -Truncatable
                 $card.Controls.Add($lblGroup)
             }
 
@@ -257,33 +303,33 @@ function Build-RamCards {
             if ([string]$a.CookieOk -eq 'no') { $sub = 'вход мёртв   ·   ' + $sub }
             if ($compact -and -not [string]::IsNullOrWhiteSpace($a.Group)) { $sub = "[$($a.Group)]  $sub" }
             $subColor = if ([string]$a.CookieOk -eq 'no') { $t.Danger } else { $t.Muted }
-            $lblSub = New-RamLabel -Text $sub -X $nameX -Y $subY -Width $maxTextW -Height 20 `
+            $lblSub = New-RamLabel -Text $sub -X $nameX -Y $subY -Width $maxTextW -Height $hSm `
                                    -Font $t.FontSmall -Color $subColor -Truncatable
             $card.Controls.Add($lblSub)
 
             $lblNote = $null
             if (-not $compact -and -not [string]::IsNullOrWhiteSpace($a.Note)) {
-                $lblNote = New-RamLabel -Text $a.Note -X $nameX -Y 60 -Width $maxTextW -Height 20 `
+                $lblNote = New-RamLabel -Text $a.Note -X $nameX -Y (& $sk 60) -Width $maxTextW -Height $hSm `
                                         -Font $t.FontSmall -Color $t.Muted -Truncatable
                 $card.Controls.Add($lblNote)
             }
 
             if (-not $compact) {
-                $card.Controls.Add((New-RamLabel -Text 'ИГРА' -X $gameX -Y 14 -Width 100 -Height 16 -Font $t.FontSmall -Color $t.Muted))
+                $card.Controls.Add((New-RamLabel -Text 'ИГРА' -X $gameX -Y (& $sk 14) -Width $gameW -Height (& $sk 16) -Font $t.FontSmall -Color $t.Muted))
             }
 
             $gameTxt = if ($a.GameName) { $a.GameName }
                        elseif ($a.PlaceId) { "ID $($a.PlaceId)" }
                        else { 'просто Roblox' }
             if ($a.LinkCode) { $gameTxt += '  · приват' }
-            $lblGame = New-RamLabel -Text $gameTxt -X $gameX -Y $gameY -Width $gameW -Height 22 `
+            $lblGame = New-RamLabel -Text $gameTxt -X $gameX -Y $gameY -Width $gameW -Height $hBody `
                                     -Color $(if ($a.PlaceId) { $t.Text } else { $t.Muted }) -Truncatable
             $card.Controls.Add($lblGame)
 
             if (-not $compact) {
                 $summary = Get-RamAccountSettingsSummary -Account $a
                 if ($summary) {
-                    $card.Controls.Add((New-RamLabel -Text $summary -X $gameX -Y 58 -Width 280 -Height 20 `
+                    $card.Controls.Add((New-RamLabel -Text $summary -X $gameX -Y (& $sk 58) -Width ($dotX - $gameX - $colGap) -Height $hSm `
                                                     -Font $t.FontSmall -Color $t.Muted -Truncatable))
                 }
 
@@ -296,24 +342,36 @@ function Build-RamCards {
                     # Truncatable: это справка, а не управление. На крупном
                     # масштабе она длиннее места, и многоточие тут уместнее,
                     # чем распирать карточку.
-                    $card.Controls.Add((New-RamLabel -Text ($facts -join '  ·  ') -X 660 -Y 58 -Width 220 -Height 20 `
+                    $card.Controls.Add((New-RamLabel -Text ($facts -join '  ·  ') -X $dotX -Y (& $sk 58) -Width $dotW -Height $hSm `
                                                     -Font $t.FontSmall -Color $t.Muted -Truncatable))
                 }
             }
 
-            $dot = New-RamStatusDot -X $dotX -Y $dotY -Width 150
+            $dot = New-RamStatusDot -X $dotX -Y $dotY -Width $dotW
             $card.Controls.Add($dot)
 
             # -Fixed: это квадратные значки, их ширина задана намеренно.
             # Без него кнопка подгоняется под текст и налезает на соседнюю.
-            $bPlay = New-RamButton -Text '▶' -Width 46 -Height $btnH -Fixed -Kind 'primary' -Tooltip 'Запустить этот аккаунт' -OnClick {
-                Add-RamToLaunchQueue -Accounts @((Get-RamAccountById -Id $this.Tag.AccountId))
+            # У аккаунта с умершим входом «пуск» бесполезен: клиент откроется
+            # и выкинет на страницу входа. Вместо него ставим «войти заново» —
+            # то самое действие, которое человеку и нужно в этот момент.
+            # Продлить куку снаружи нечем (проверено, см. «Проверка входов.ps1»),
+            # поэтому единственный рабочий выход — войти ещё раз.
+            if ([string]$a.CookieOk -eq 'no') {
+                $bPlay = New-RamButton -Text '↻' -Width $icoW -Height $btnH -Fixed -Kind 'danger' `
+                                       -Tooltip 'Войти в этот аккаунт заново — вход умер' -OnClick {
+                    Invoke-RamRelogin -Id $this.Tag.AccountId
+                }
+            } else {
+                $bPlay = New-RamButton -Text '▶' -Width $icoW -Height $btnH -Fixed -Kind 'primary' -Tooltip 'Запустить этот аккаунт' -OnClick {
+                    Add-RamToLaunchQueue -Accounts @((Get-RamAccountById -Id $this.Tag.AccountId))
+                }
             }
             $bPlay.Tag | Add-Member -NotePropertyName AccountId -NotePropertyValue $a.Id -Force
-            $bPlay.Location = New-Object System.Drawing.Point(($W - 172), $btnY)
+            $bPlay.Location = New-Object System.Drawing.Point($playX, $btnY)
             $card.Controls.Add($bPlay)
 
-            $bEdit = New-RamButton -Text '✎' -Width 46 -Height $btnH -Fixed -Tooltip 'Настройки аккаунта' -OnClick {
+            $bEdit = New-RamButton -Text '✎' -Width $icoW -Height $btnH -Fixed -Tooltip 'Настройки аккаунта' -OnClick {
                 $old = Get-RamAccountById -Id $this.Tag.AccountId
                 if ($null -eq $old) { return }
                 $new = Show-RamAccountDialog -Account $old
@@ -325,10 +383,10 @@ function Build-RamCards {
                 }
             }
             $bEdit.Tag | Add-Member -NotePropertyName AccountId -NotePropertyValue $a.Id -Force
-            $bEdit.Location = New-Object System.Drawing.Point(($W - 120), $btnY)
+            $bEdit.Location = New-Object System.Drawing.Point($editX, $btnY)
             $card.Controls.Add($bEdit)
 
-            $bStop = New-RamButton -Text '■' -Width 46 -Height $btnH -Fixed -Tooltip 'Закрыть окно этого аккаунта' -OnClick {
+            $bStop = New-RamButton -Text '■' -Width $icoW -Height $btnH -Fixed -Tooltip 'Закрыть окно этого аккаунта' -OnClick {
                 $inst = $script:Instances[$this.Tag.AccountId]
                 if ($null -eq $inst) { return }
                 $acc = Get-RamAccountById -Id $this.Tag.AccountId
@@ -339,7 +397,7 @@ function Build-RamCards {
                 Update-RamCardStates
             }
             $bStop.Tag | Add-Member -NotePropertyName AccountId -NotePropertyValue $a.Id -Force
-            $bStop.Location = New-Object System.Drawing.Point(($W - 68), $btnY)
+            $bStop.Location = New-Object System.Drawing.Point($stopX, $btnY)
             $card.Controls.Add($bStop)
 
             # --- клик по пустому месту переключает отметку
@@ -362,16 +420,65 @@ function Build-RamCards {
                 $c = $s
                 while ($null -ne $c -and $null -eq $c.Tag.AccountId) { $c = $c.Parent }
                 if ($null -eq $c) { return }
-                $script:DragId    = $c.Tag.AccountId
-                $script:DragMoved = $false
-                $script:DragStart = [System.Windows.Forms.Cursor]::Position.Y
+                $script:DragId     = $c.Tag.AccountId
+                $script:DragMoved  = $false
+                $script:DragStart  = [System.Windows.Forms.Cursor]::Position.Y
+                $script:DragOverId = ''
+
+                # Подсветка сразу по нажатию, ещё до сдвига мыши — чтобы захват
+                # ощущался мгновенным, а не только после порога. Обычному клику
+                # (переключение отметки) это не мешает: $toggle смотрит на
+                # DragMoved, а не на подсветку.
+                $c.Tag.Selected = $true
+                $c.Invalidate()
             }
             $dragMove = {
                 param($s, $e)
                 if ([string]::IsNullOrEmpty($script:DragId)) { return }
-                if ([Math]::Abs([System.Windows.Forms.Cursor]::Position.Y - $script:DragStart) -gt 12) {
+
+                # Порог снижен с 12 до 6 пикселей: раньше карточку надо было
+                # заметно протащить, и при обычном неуверенном движении мыши
+                # перетаскивание выглядело неработающим.
+                if (-not $script:DragMoved -and
+                    [Math]::Abs([System.Windows.Forms.Cursor]::Position.Y - $script:DragStart) -gt 6) {
                     $script:DragMoved = $true
                     $script:UI.Cards.Cursor = [System.Windows.Forms.Cursors]::SizeNS
+                }
+                if (-not $script:DragMoved) { return }
+
+                # Ищем карточку под курсором и рисуем черту у её верхнего или
+                # нижнего края — туда карточка встанет, если отпустить сейчас.
+                $host2 = $script:UI.Cards
+                $pt = $host2.PointToClient([System.Windows.Forms.Cursor]::Position)
+                $overId = ''
+                $wantLine = $null
+                foreach ($ctl in $host2.Controls) {
+                    if ([string]::IsNullOrEmpty($ctl.Tag.AccountId)) { continue }
+                    $top = $ctl.Location.Y
+                    if ($pt.Y -ge $top -and $pt.Y -lt ($top + $ctl.Height)) {
+                        $overId   = $ctl.Tag.AccountId
+                        $wantLine = if ($pt.Y -lt ($top + $ctl.Height / 2)) { 'before' } else { 'after' }
+                        break
+                    }
+                }
+                if ($overId -eq $script:DragId) { $overId = ''; $wantLine = $null }
+
+                # Перерисовываем ТОЛЬКО когда черта действительно должна
+                # переехать. Сравниваем и карточку, и край: иначе при переходе
+                # из верхней половины карточки в нижнюю черта осталась бы
+                # сверху, а перерисовка на каждое движение мыши даёт мерцание.
+                $curCard  = if ($script:DragOverId -and $script:Cards.ContainsKey($script:DragOverId)) {
+                    $script:Cards[$script:DragOverId].Card
+                } else { $null }
+                $curLine  = if ($null -ne $curCard) { $curCard.Tag.DropLine } else { $null }
+                if ($overId -ne $script:DragOverId -or $wantLine -ne $curLine) {
+                    if ($null -ne $curCard) { $curCard.Tag.DropLine = $null; $curCard.Invalidate() }
+                    $script:DragOverId = $overId
+                    if ($overId -and $script:Cards.ContainsKey($overId)) {
+                        $newCard = $script:Cards[$overId].Card
+                        $newCard.Tag.DropLine = $wantLine
+                        $newCard.Invalidate()
+                    }
                 }
             }
             $dragUp = {
@@ -380,11 +487,27 @@ function Build-RamCards {
                 $id = $script:DragId
                 $script:DragId = ''
                 $script:UI.Cards.Cursor = [System.Windows.Forms.Cursors]::Default
+
+                # Снимаем и подсветку схваченной карточки, и черту вставки.
+                # Обе могут указывать на карточки, которых уже нет после
+                # Build-RamCards, поэтому проверяем наличие в словаре.
+                if ($script:Cards.ContainsKey($id)) {
+                    $script:Cards[$id].Card.Tag.Selected = $false
+                    $script:Cards[$id].Card.Invalidate()
+                }
+                if ($script:DragOverId -and $script:Cards.ContainsKey($script:DragOverId)) {
+                    $script:Cards[$script:DragOverId].Card.Tag.DropLine = $null
+                    $script:Cards[$script:DragOverId].Card.Invalidate()
+                }
+                $script:DragOverId = ''
+
                 if (-not $script:DragMoved) { return }
 
                 $host2 = $script:UI.Cards
                 $pt = $host2.PointToClient([System.Windows.Forms.Cursor]::Position)
-                $rowH = $(if ($script:Settings.CompactCards) { 56 } else { 92 }) + 8
+                # Та же формула, что в Build-RamCards: иначе на 125% и 150%
+                # карточка отпускалась не в ту строку, куда её вели.
+                $rowH = [int][Math]::Round($(if ($script:Settings.CompactCards) { 56 } else { 92 }) * $Global:RamTheme.M.Scale) + 8
                 $logicalY = $pt.Y - $host2.AutoScrollPosition.Y
                 $idx = [int][math]::Floor($logicalY / $rowH)
 
@@ -1251,6 +1374,70 @@ function Show-RamSection {
     if ($Key -eq 'profiles') { Update-RamProfilesPanel }
 }
 
+function Update-RamAccountsBar {
+    <#
+      Держит левую полосу кнопок ровно в том месте, что осталось слева от
+      правой, и ставит всё, что ниже, от её фактического низа. Вызывается при
+      сборке окна и на каждое изменение размера панели аккаунтов.
+    #>
+    if (-not $script:UI.ContainsKey('AccBar')) { return }
+    $bar  = $script:UI.AccBar
+    $barR = $script:UI.AccBarR
+    if ($null -eq $bar -or $null -eq $barR -or $bar.IsDisposed -or $barR.IsDisposed) { return }
+
+    $m = $Global:RamTheme.M
+    $w = $barR.Left - $m.GapLg
+    if ($w -lt [int](260 * $m.Scale)) { $w = [int](260 * $m.Scale) }
+    if ($bar.Width -ne $w) {
+        $bar.Width = $w
+        $bar.PerformLayout()
+    }
+
+    # Высота — по ФАКТИЧЕСКОМУ низу кнопок, а не по PreferredSize.
+    # У FlowLayoutPanel с переносом PreferredSize отдаёт размер БЕЗ переноса:
+    # на 150% он говорил «974x57», хотя панель шириной 708 и кнопки уже
+    # уехали на вторую строку. Высота оставалась в одну строку, и вторая
+    # строка кнопок обрезалась краем панели — «Метка» и «Удалить» были
+    # видны наполовину. Низ последней кнопки не врёт никогда.
+    $bottom = $script:UI.AccBarH
+    foreach ($c in $bar.Controls)  { if ($c.Bottom + $c.Margin.Bottom -gt $bottom) { $bottom = $c.Bottom + $c.Margin.Bottom } }
+    foreach ($c in $barR.Controls) { if ($c.Bottom + $c.Margin.Bottom -gt $bottom) { $bottom = $c.Bottom + $c.Margin.Bottom } }
+    if ($bar.Height -ne $bottom) { $bar.Height = $bottom }
+
+    $gb = $script:UI.AccGroupBar
+    $cards = $script:UI.Cards
+    if ($null -ne $gb -and -not $gb.IsDisposed) {
+        $y = $bottom + $m.GapSm
+        if ($gb.Top -ne $y) { $gb.Location = New-Object System.Drawing.Point($gb.Left, $y) }
+    }
+    if ($null -ne $cards -and -not $cards.IsDisposed) {
+        $y = $bottom + $m.GapSm + 40
+        if ($cards.Top -ne $y) {
+            # Высоту задаём ОТ НИЗА панели, а не поправкой к прежней. Поправка
+            # накапливала ошибку: когда полоса кнопок переставала переносить
+            # строку и становилась ниже, список рос вниз и вылезал за край
+            # панели — на 18 пикселей, ровно на разницу.
+            $cards.Location = New-Object System.Drawing.Point($cards.Left, $y)
+            $free = $cards.Parent.ClientSize.Height - $y
+            $cards.Height = [Math]::Max(80, $free)
+        }
+
+        # Карточки собираются по ширине панели на момент сборки, а панель
+        # к тому моменту ещё не села на свой настоящий размер: на 150%
+        # карточки получались 1533px внутри панели в 1241px и торчали за
+        # правый край. Пересобираем, когда ширина действительно изменилась —
+        # ResizeEnd этого не ловит, он бывает только при протаскивании
+        # мышью, а не при первой раскладке или развороте окна.
+        $w = Get-RamCardWidth
+        if ($script:LastCardW -ne $w) {
+            $script:LastCardW = $w
+            if ($script:UI.ContainsKey('Cards') -and $null -ne $script:Accounts) {
+                Invoke-RamSafe -What 'пересборка карточек по ширине' -Body { Build-RamCards }
+            }
+        }
+    }
+}
+
 function Update-RamGroupBar {
     <# Полоска наборов над списком: Все + по одной кнопке на набор. #>
     if (-not $script:UI.ContainsKey('GroupBar')) { return }
@@ -1271,7 +1458,7 @@ function Update-RamGroupBar {
             $active = ([string]$script:GroupFilter -eq [string]$it.Key)
             $w = [System.Windows.Forms.TextRenderer]::MeasureText($it.Text, $t.FontSmall).Width + 28
 
-            $b = New-RamButton -Text $it.Text -Width $w -Height 28 -Radius 14 `
+            $b = New-RamButton -Text $it.Text -Width $w -Height (Get-RamScaled 28) -Radius 14 `
                                -Kind $(if ($active) { 'primary' } else { 'ghost' }) -OnClick {
                 $script:GroupFilter = $this.Tag.GroupKey
                 Build-RamCards
@@ -1311,7 +1498,7 @@ function Update-RamStatsPanel {
                                          -X 24 -Y 34 -Width ($W - 48) -Height 26 -Font $t.FontTitle))
 
         foreach ($a in (Get-RamOrderedAccounts)) {
-            $row = New-RamCard -Width $W -Height 64
+            $row = New-RamCard -Width $W -Height (Get-RamScaled 64)
             $h.Controls.Add($row)
 
             $stripe = Get-RamLabelColor -Key ([string]$a.Color)
@@ -1438,12 +1625,12 @@ function Show-RamPopularGamesDialog {
         }
     }.GetNewClosure()
 
-    $btnRefresh = New-RamButton -Text 'Обновить' -Width 130 -Height 34 -Kind 'ghost' -OnClick ({ & $fill }.GetNewClosure())
+    $btnRefresh = New-RamButton -Text 'Обновить' -Width 130 -Height (Get-RamScaled 34) -Kind 'ghost' -OnClick ({ & $fill }.GetNewClosure())
     $btnRefresh.Location = New-Object System.Drawing.Point(24, 500)
     $refreshW = (Measure-RamControl -Control $btnRefresh).Width
     $dlg.Controls.Add($btnRefresh)
 
-    $btnAdd = New-RamButton -Text 'Добавить отмеченные' -Width 220 -Height 34 -Kind 'primary' -OnClick ({
+    $btnAdd = New-RamButton -Text 'Добавить отмеченные' -Width 220 -Height (Get-RamScaled 34) -Kind 'primary' -OnClick ({
         $picked = @($rowChecks.Values | Where-Object { $_.Check.Tag.Checked })
         if ($picked.Count -eq 0) { Show-RamInfo 'Отметь галочками нужные игры.'; return }
         foreach ($row in $picked) { Add-RamSavedGame -PlaceId $row.Game.PlaceId -LinkCode '' -Title $row.Game.Title }
@@ -1455,7 +1642,7 @@ function Show-RamPopularGamesDialog {
     $addW = (Measure-RamControl -Control $btnAdd).Width
     $dlg.Controls.Add($btnAdd)
 
-    $btnClose = New-RamButton -Text 'Закрыть' -Width 100 -Height 34 -OnClick { $this.FindForm().Close() }
+    $btnClose = New-RamButton -Text 'Закрыть' -Width 100 -Height (Get-RamScaled 34) -OnClick { $this.FindForm().Close() }
     $closeW = (Measure-RamControl -Control $btnClose).Width
     $btnClose.Location = New-Object System.Drawing.Point(($popW - 24 - $closeW), 500)
     $addX = [Math]::Max((24 + $refreshW + 12), ($popW - 24 - $closeW - 12 - $addW))
@@ -1493,7 +1680,7 @@ function Update-RamGamesPanel {
 
         foreach ($g in $games) {
             if ($null -eq $g) { continue }
-            $row = New-RamCard -Width $W -Height 64
+            $row = New-RamCard -Width $W -Height (Get-RamScaled 64)
             $h.Controls.Add($row)
 
             $row.Controls.Add((New-RamLabel -Text ([string]$g.Title) -X 24 -Y 10 -Width 460 -Height 22 -Font $t.FontTitle -Truncatable))
@@ -1501,7 +1688,7 @@ function Update-RamGamesPanel {
             if ($g.LinkCode) { $meta += '   ·   приватный сервер' }
             $row.Controls.Add((New-RamLabel -Text $meta -X 24 -Y 32 -Width 460 -Height 20 -Font $t.FontSmall -Color $t.Muted -Truncatable))
 
-            $bSet = New-RamButton -Text 'Назначить отмеченным' -Width 210 -Height 34 -Kind 'primary' -OnClick {
+            $bSet = New-RamButton -Text 'Назначить отмеченным' -Width 210 -Height (Get-RamScaled 34) -Kind 'primary' -OnClick {
                 $targets = @(Get-RamTargetAccounts)
                 if ($targets.Count -eq 0) { Show-RamInfo 'Сначала отметь аккаунты в разделе «Аккаунты».'; return }
                 $g2 = $this.Tag.Game
@@ -1517,7 +1704,7 @@ function Update-RamGamesPanel {
             $bSet.Tag | Add-Member -NotePropertyName Game -NotePropertyValue $g -Force
             $row.Controls.Add($bSet)
 
-            $bDel = New-RamButton -Text 'Убрать' -Width 100 -Height 34 -OnClick {
+            $bDel = New-RamButton -Text 'Убрать' -Width 100 -Height (Get-RamScaled 34) -OnClick {
                 $g2 = $this.Tag.Game
                 $script:Settings.Games = @(@($script:Settings.Games) | Where-Object {
                     -not ($_.PlaceId -eq $g2.PlaceId -and [string]$_.LinkCode -eq [string]$g2.LinkCode)
@@ -1534,8 +1721,8 @@ function Update-RamGamesPanel {
             # давали наложение.
             $bDelW = (Measure-RamControl -Control $bDel).Width
             $bSetW = (Measure-RamControl -Control $bSet).Width
-            $bDel.Location = New-Object System.Drawing.Point(($W - 24 - $bDelW), 15)
-            $bSet.Location = New-Object System.Drawing.Point(($W - 24 - $bDelW - 12 - $bSetW), 15)
+            $bDel.Location = New-Object System.Drawing.Point(($W - 24 - $bDelW), (Get-RamScaled 15))
+            $bSet.Location = New-Object System.Drawing.Point(($W - 24 - $bDelW - 12 - $bSetW), (Get-RamScaled 15))
         }
     } finally {
         $h.ResumeLayout()
@@ -1602,7 +1789,7 @@ function Update-RamProfilesPanel {
         }
 
         foreach ($pr in $profiles) {
-            $row = New-RamCard -Width $W -Height 64
+            $row = New-RamCard -Width $W -Height (Get-RamScaled 64)
             $h.Controls.Add($row)
 
             $row.Controls.Add((New-RamLabel -Text ([string]$pr.Name) -X 24 -Y 10 -Width 420 -Height 22 -Font $t.FontTitle -Truncatable))
@@ -1616,13 +1803,13 @@ function Update-RamProfilesPanel {
             if ($pr.LinkCode) { $meta += '   ·   приватный сервер' }
             $row.Controls.Add((New-RamLabel -Text $meta -X 24 -Y 32 -Width 560 -Height 20 -Font $t.FontSmall -Color $t.Muted -Truncatable))
 
-            $bRun = New-RamButton -Text '▶  Запустить профиль' -Width 200 -Height 34 -Kind 'primary' -OnClick {
+            $bRun = New-RamButton -Text '▶  Запустить профиль' -Width 200 -Height (Get-RamScaled 34) -Kind 'primary' -OnClick {
                 Invoke-RamRunProfile -Profile $this.Tag.Profile
             }
             $bRun.Tag | Add-Member -NotePropertyName Profile -NotePropertyValue $pr -Force
             $row.Controls.Add($bRun)
 
-            $bDel = New-RamButton -Text 'Убрать' -Width 100 -Height 34 -OnClick {
+            $bDel = New-RamButton -Text 'Убрать' -Width 100 -Height (Get-RamScaled 34) -OnClick {
                 $nm = $this.Tag.Profile.Name
                 $script:Settings.Profiles = @(Get-RamProfiles | Where-Object { $_.Name -ne $nm })
                 Save-RamSettings -Settings $script:Settings
@@ -1634,8 +1821,8 @@ function Update-RamProfilesPanel {
 
             $bDelW = (Measure-RamControl -Control $bDel).Width
             $bRunW = (Measure-RamControl -Control $bRun).Width
-            $bDel.Location = New-Object System.Drawing.Point(($W - 24 - $bDelW), 15)
-            $bRun.Location = New-Object System.Drawing.Point(($W - 24 - $bDelW - 12 - $bRunW), 15)
+            $bDel.Location = New-Object System.Drawing.Point(($W - 24 - $bDelW), (Get-RamScaled 15))
+            $bRun.Location = New-Object System.Drawing.Point(($W - 24 - $bDelW - 12 - $bRunW), (Get-RamScaled 15))
         }
     } finally {
         $h.ResumeLayout()
@@ -1709,6 +1896,9 @@ function Get-RamCheckableWindows {
         @{ Name = 'конструктор';   Build = { Show-RamThemeConstructor -BuildOnly } }
         @{ Name = 'пачкой';        Build = { Show-RamBatchAddDialog -BuildOnly } }
         @{ Name = 'из браузера';   Build = { Show-RamBrowserGuide -BuildOnly } }
+        @{ Name = 'выбор способа'; Build = { Show-RamAddChooser -BuildOnly } }
+        @{ Name = 'расширение';    Build = { Show-RamExtensionGuide -BuildOnly } }
+        @{ Name = 'согласие CfT';  Build = { Show-RamChromeForTestingConsent -BuildOnly } }
         @{ Name = 'популярные';    Build = { Show-RamPopularGamesDialog -BuildOnly } }
         @{ Name = 'быстрая';       Build = { Show-RamQuickSetup -BuildOnly } }
         @{ Name = 'мастер1';       Build = { Show-RamFirstRun -StartStep 0 -BuildOnly }; Pages = $true }
@@ -1825,13 +2015,22 @@ function New-RamMainForm {
     $side.Anchor    = 'Top,Left,Bottom'
     $form.Controls.Add($side)
 
-    $side.Controls.Add((New-RamLabel -Text $script:AppName -X ($metrics.GapLg + 6) -Y 22 -Width ($sideW - $metrics.GapLg * 2) -Height 32 -Font $t.FontBig))
-    $side.Controls.Add((New-RamLabel -Text "v$($script:AppVersion)" -X ($metrics.GapLg + 8) -Y 54 -Width ($sideW - $metrics.GapLg * 2) -Height 18 `
+    $nameH = (Measure-RamText -Text 'Ay' -Font $t.FontBig).Height + 4
+    $verH  = (Measure-RamText -Text 'Ay' -Font $t.FontSmall).Height + 2
+    $side.Controls.Add((New-RamLabel -Text $script:AppName -X ($metrics.GapLg + 6) -Y (Get-RamScaled 22) -Width ($sideW - $metrics.GapLg * 2) -Height $nameH -Font $t.FontBig))
+    $side.Controls.Add((New-RamLabel -Text "v$($script:AppVersion)" -X ($metrics.GapLg + 8) -Y ((Get-RamScaled 22) + $nameH) -Width ($sideW - $metrics.GapLg * 2) -Height $verH `
                                      -Font $t.FontSmall -Color $t.Muted))
 
-    $y = 96
+    # Шаг между кнопками бокового меню считается от ИХ ВЫСОТЫ, а не задан
+    # числом. Раньше высота была 40, а шаг 46 — оба вписаны под 100%. Когда
+    # высоту привязали к масштабу, шаг остался прежним, и на 125% кнопки
+    # наехали друг на друга на 4 пикселя. Число в одном месте всегда рано
+    # или поздно разъезжается с числом в другом.
+    $navH  = Get-RamScaled 40
+    $navGap = Get-RamScaled 6
+    $y = Get-RamScaled 96
     foreach ($sec in Get-RamSections) {
-        $b = New-RamButton -Text ('   ' + $sec.Text) -Width $navBtnW -Height 40 -Radius 8 -OnClick {
+        $b = New-RamButton -Text ('   ' + $sec.Text) -Width $navBtnW -Height (Get-RamScaled 40) -Radius 8 -OnClick {
             Show-RamSection -Key $this.Tag.SectionKey
         }
         $b.Tag | Add-Member -NotePropertyName SectionKey -NotePropertyValue $sec.Key -Force
@@ -1839,24 +2038,25 @@ function New-RamMainForm {
         $b.Location = New-Object System.Drawing.Point($metrics.GapLg, $y)
         $side.Controls.Add($b)
         $script:UI.NavButtons[$sec.Key] = $b
-        $y += 46
+        $y += $navH + $navGap
     }
 
-    $bQuick = New-RamButton -Text '   Быстрая настройка' -Width $navBtnW -Height 40 -Radius 8 -Kind 'ghost' `
+    $bQuick = New-RamButton -Text '   Быстрая настройка' -Width $navBtnW -Height (Get-RamScaled 40) -Radius 8 -Kind 'ghost' `
                             -Tooltip 'Разложить всё под расклад «основной + твины на випке»' -OnClick {
         Show-RamQuickSetup
     }
-    $bQuick.Location = New-Object System.Drawing.Point($metrics.GapLg, ($y + 14))
+    $bQuick.Location = New-Object System.Drawing.Point($metrics.GapLg, ($y + $metrics.Gap))
     $side.Controls.Add($bQuick)
-    $y += 46
+    $y += $navH + $navGap
 
-    $bSettings = New-RamButton -Text '   Настройки' -Width $navBtnW -Height 40 -Radius 8 -Kind 'ghost' -OnClick {
+    $bSettings = New-RamButton -Text '   Настройки' -Width $navBtnW -Height (Get-RamScaled 40) -Radius 8 -Kind 'ghost' -OnClick {
         Show-RamSettingsDialog
     }
-    $bSettings.Location = New-Object System.Drawing.Point($metrics.GapLg, ($y + 14))
+    $bSettings.Location = New-Object System.Drawing.Point($metrics.GapLg, ($y + $metrics.Gap))
     $side.Controls.Add($bSettings)
+    $y += $navH + $navGap
 
-    $bHelp = New-RamButton -Text '   Справка' -Width $navBtnW -Height 40 -Radius 8 -Kind 'ghost' -OnClick {
+    $bHelp = New-RamButton -Text '   Справка' -Width $navBtnW -Height (Get-RamScaled 40) -Radius 8 -Kind 'ghost' -OnClick {
         $ans = Show-RamMessage -Title 'Справка' -Kind 'info' -Message (
             "Пройти настройку заново — тот самый мастер первого запуска: железо, тема, аккаунты, наборы.`n`n" +
             "Открыть README — подробное описание всего, что умеет AltHub."
@@ -1877,10 +2077,16 @@ function New-RamMainForm {
             }
         }
     }
-    $bHelp.Location = New-Object System.Drawing.Point($metrics.GapLg, ($y + 60))
+    $bHelp.Location = New-Object System.Drawing.Point($metrics.GapLg, ($y + $metrics.Gap))
     $side.Controls.Add($bHelp)
 
-    $lblAuthor = New-RamLabel -Text $script:AppAuthor -X 24 -Y 780 -Width 170 -Height 20 `
+    # Подпись автора ставится ОТ НИЗА панели, а не с вписанного Y=780.
+    # Якорь Left,Bottom считает расстояние до низа В МОМЕНТ СОЗДАНИЯ: если
+    # окно тогда было ниже 800, подпись рождалась уже за краем и там же и
+    # оставалась. На невысоких экранах и при 150% её просто не было видно.
+    $authH = (Measure-RamText -Text 'Ay' -Font $t.FontSmall).Height + 4
+    $lblAuthor = New-RamLabel -Text $script:AppAuthor -X 24 -Y ($formH - $authH - $metrics.GapLg) `
+                              -Width ($sideW - 40) -Height $authH `
                               -Font $t.FontSmall -Color $t.Muted
     $lblAuthor.Anchor = 'Left,Bottom'
     $side.Controls.Add($lblAuthor)
@@ -1893,7 +2099,11 @@ function New-RamMainForm {
     # Ширина обрывается до поля поиска: на крупном масштабе подпись
     # дорастала до него и налезала.
     $sub = New-RamLabel -Text '' -X ($contentX + 8) -Y 22 -Width ($formW - $contentX - 340) -Height 22 -Font $t.FontSmall -Color $t.Muted -Truncatable
-    $sub.Anchor = 'Top,Left'
+    # Якорь И СПРАВА: с одним только Left ширина оставалась той, что была при
+    # сборке, и при сужении окна строка «аккаунтов: N» вылезала за правый край
+    # прямо под поле поиска. Теперь правый край держится на постоянном
+    # расстоянии от края окна, а лишнее укорачивается многоточием.
+    $sub.Anchor = 'Top,Left,Right'
     $form.Controls.Add($sub)
     $script:UI.Subtitle = $sub
 
@@ -1958,60 +2168,77 @@ function New-RamMainForm {
     $form.Controls.Add($pAcc)
     $script:UI.Panels['accounts'] = $pAcc
 
-    # Две панели: левая растёт слева направо, правая прижата к правому краю.
-    # Одной панелью не обойтись — при узком окне кнопки уезжали за край.
+    # Две полосы кнопок: левая растёт слева направо, правая прижата к правому
+    # краю. Одной панелью не обойтись — при узком окне кнопки уезжали за край.
+    #
+    # ПОЧЕМУ ПРАВАЯ СОЗДАЁТСЯ ПЕРВОЙ И МЕРИТСЯ, А НЕ ЗАДАЁТСЯ ЧИСЛОМ.
+    # Раньше её ширина была прибита как 390*масштаб, а левая считалась как
+    # «всё остальное». Оба числа брались из головы и на 150% расходились с
+    # действительностью: левая полоса выходила шире оставшегося места, и
+    # полосы налезали друг на друга. Правая рисуется поверх — поэтому кнопка
+    # «Удалить» пропадала с экрана. Она была на месте и работала, её просто
+    # закрывали сверху. Теперь правая полоса сама говорит, сколько ей нужно,
+    # а левая берёт ровно то, что осталось слева от неё.
+    $barH = [Math]::Max(44, $metrics.RowHLg + 6)
+    # Минимальные ширины кнопок. Числа те же, что были подобраны для 100%,
+    # но теперь это МИНИМУМЫ, растущие вместе со шрифтом: New-RamButton всё
+    # равно расширит кнопку, если надпись длиннее. Без множителя на 150%
+    # надписи вырастали, а минимумы оставались — кнопки лезли друг на друга.
+    $bw = { param($n) [int][Math]::Round($n * $metrics.Scale) }
+
+    $barR = New-Object System.Windows.Forms.FlowLayoutPanel
+    $barR.AutoSize      = $true
+    $barR.AutoSizeMode  = 'GrowAndShrink'
+    $barR.BackColor     = $t.Bg
+    $barR.FlowDirection = 'RightToLeft'
+    $barR.WrapContents  = $false
+    $pAcc.Controls.Add($barR)
+
+    # Правая группа выкладывается справа налево, поэтому порядок обратный.
+    $bTile = New-RamButton -Text 'Окна' -Width (& $bw 92) -Height $metrics.RowHLg `
+                           -Tooltip 'Левый клик — разложить, правый — выбрать раскладку' -OnClick { Invoke-RamTileWindows }
+    $barR.Controls.Add($bTile)
+
+    $barR.Controls.Add((New-RamButton -Text '■  Закрыть' -Width (& $bw 116) -Height $metrics.RowHLg -Tooltip 'Закрыть окна отмеченных' -OnClick { Invoke-RamStopSelected }))
+
+    $bPlay = New-RamButton -Text '▶  Запустить' -Width (& $bw 150) -Height $metrics.RowHLg -Kind 'primary' -OnClick {
+        $targets = @(Get-RamTargetAccounts)
+        if ($targets.Count -eq 0) { $targets = @(Get-RamVisibleAccounts) }
+        Add-RamToLaunchQueue -Accounts $targets
+    }
+    $barR.Controls.Add($bPlay)
+
+    # Теперь правая полоса знает свой размер — ставим её по правому краю.
+    $barR.PerformLayout()
+    $barRW = $barR.PreferredSize.Width
+    $barR.Location = New-Object System.Drawing.Point(($contentW - $barRW), 0)
+    $barR.Anchor   = 'Top,Right'
+
     $bar = New-Object System.Windows.Forms.FlowLayoutPanel
     $bar.Location      = New-Object System.Drawing.Point(0, 0)
-    # Ширина с запасом: кнопки автоматически расширяются под длину надписи,
-    # и «Удалить» при ровно 700px уже не помещалась.
-    # Левая панель забирает всё, что осталось от правой, и ПЕРЕНОСИТ кнопки
-    # на вторую строку, если не влезли. Раньше ширина была прибита к 720, и на
-    # крупном масштабе «Удалить» просто уезжала за край.
-    $barRW = [int](390 * $metrics.Scale)
-    $bar.Size          = New-Object System.Drawing.Size(($contentW - $barRW - $metrics.GapLg), 44)
-    # Перенос ОБЯЗАН быть включён. Ниже высота панели считается по факту
-    # (см. $barBottom), то есть вторая строка кнопок предусмотрена. Строкой
-    # ниже перенос когда-то выключили обратно — и на масштабе 150% кнопка
-    # «Удалить» просто обрезалась краем панели.
+    # Ровно то, что осталось слева от правой полосы, — от её фактического
+    # положения, а не от предположения о её ширине.
+    $bar.Size          = New-Object System.Drawing.Size([Math]::Max(200, ($barR.Left - $metrics.GapLg)), $barH)
+    # Перенос ОБЯЗАН быть включён: если кнопки не влезли в одну строку, они
+    # уходят на вторую, а высота полосы считается по факту (см. $barBottom).
     $bar.WrapContents  = $true
     $bar.BackColor     = $t.Bg
     $bar.FlowDirection = 'LeftToRight'
     $bar.Anchor        = 'Top,Left'
     $pAcc.Controls.Add($bar)
 
-    $barR = New-Object System.Windows.Forms.FlowLayoutPanel
-    $barR.Location      = New-Object System.Drawing.Point(($contentW - $barRW), 0)
-    $barR.Size          = New-Object System.Drawing.Size($barRW, 44)
-    $barR.BackColor     = $t.Bg
-    $barR.FlowDirection = 'RightToLeft'
-    $barR.WrapContents  = $false
-    $barR.Anchor        = 'Top,Right'
-    $pAcc.Controls.Add($barR)
-
-    $bar.Controls.Add((New-RamButton -Text '＋  Добавить' -Width 138 -Height 38 -Kind 'primary' -Tooltip 'Мастер добавления аккаунтов' -OnClick { Show-RamAddWizard }))
-    $bar.Controls.Add((New-RamButton -Text 'Все' -Width 70 -Height 38 -Tooltip 'Отметить или снять отметку со всех' -OnClick {
+    # Ширину кнопок не задаём: New-RamButton меряет надпись сам, а любое
+    # число здесь снова разъедется с текстом на другом масштабе.
+    $bar.Controls.Add((New-RamButton -Text '＋  Добавить' -Width (& $bw 138) -Height $metrics.RowHLg -Kind 'primary' -Tooltip 'Все способы добавить аккаунт' -OnClick { Show-RamAddChooser }))
+    $bar.Controls.Add((New-RamButton -Text 'Все' -Width (& $bw 70) -Height $metrics.RowHLg -Tooltip 'Отметить или снять отметку со всех' -OnClick {
         $any = $false
         foreach ($id in $script:Cards.Keys) { if (-not $script:Cards[$id].Check.Tag.Checked) { $any = $true } }
         Set-RamAllChecked $any
     }))
-    $bar.Controls.Add((New-RamButton -Text 'Игра' -Width 86 -Height 38 -Tooltip 'Назначить игру отмеченным аккаунтам' -OnClick { Invoke-RamAssignGame }))
-    $bar.Controls.Add((New-RamButton -Text 'Набор' -Width 92 -Height 38 -Tooltip 'Собрать отмеченные аккаунты в набор' -OnClick { Invoke-RamAssignGroup }))
-    $bar.Controls.Add((New-RamButton -Text 'Метка' -Width 92 -Height 38 -Tooltip 'Цветная метка для отмеченных' -OnClick { Invoke-RamAssignColor }))
-    $bar.Controls.Add((New-RamButton -Text 'Удалить' -Width 96 -Height 38 -Tooltip 'Убрать отмеченные из менеджера' -OnClick { Invoke-RamDeleteSelected }))
-
-    # Правая группа выкладывается справа налево, поэтому порядок обратный.
-    $bTile = New-RamButton -Text 'Окна' -Width 92 -Height 38 `
-                           -Tooltip 'Левый клик — разложить, правый — выбрать раскладку' -OnClick { Invoke-RamTileWindows }
-    $barR.Controls.Add($bTile)
-
-    $barR.Controls.Add((New-RamButton -Text '■  Закрыть' -Width 116 -Height 38 -Tooltip 'Закрыть окна отмеченных' -OnClick { Invoke-RamStopSelected }))
-
-    $bPlay = New-RamButton -Text '▶  Запустить' -Width 150 -Height 38 -Kind 'primary' -OnClick {
-        $targets = @(Get-RamTargetAccounts)
-        if ($targets.Count -eq 0) { $targets = @(Get-RamVisibleAccounts) }
-        Add-RamToLaunchQueue -Accounts $targets
-    }
-    $barR.Controls.Add($bPlay)
+    $bar.Controls.Add((New-RamButton -Text 'Игра' -Width (& $bw 86) -Height $metrics.RowHLg -Tooltip 'Назначить игру отмеченным аккаунтам' -OnClick { Invoke-RamAssignGame }))
+    $bar.Controls.Add((New-RamButton -Text 'Набор' -Width (& $bw 92) -Height $metrics.RowHLg -Tooltip 'Собрать отмеченные аккаунты в набор' -OnClick { Invoke-RamAssignGroup }))
+    $bar.Controls.Add((New-RamButton -Text 'Метка' -Width (& $bw 92) -Height $metrics.RowHLg -Tooltip 'Цветная метка для отмеченных' -OnClick { Invoke-RamAssignColor }))
+    $bar.Controls.Add((New-RamButton -Text 'Удалить' -Width (& $bw 96) -Height $metrics.RowHLg -Tooltip 'Убрать отмеченные из менеджера' -OnClick { Invoke-RamDeleteSelected }))
 
     # Здесь жёлоб убирали, но отрисовщика темы не ставили: рамка и подсветка
     # наведения оставались системными. Обёртка делает и то, и другое.
@@ -2022,8 +2249,13 @@ function New-RamMainForm {
         @{ K = 'cascade'; T = 'Каскадом' },
         @{ K = 'columns'; T = 'Колонками' },
         @{ K = 'rows';    T = 'Строками' })) {
-        $mi = New-Object System.Windows.Forms.ToolStripMenuItem($metrics.T)
-        $mi.Tag = $metrics.K
+        # $m — элемент списка выше. Когда-то по файлу прошлись заменой
+        # «$m.» на «$metrics.», и здесь она сработала не по адресу: все пять
+        # пунктов получали пустое имя и Tag = $null, то есть меню выбора
+        # раскладки состояло из пяти безымянных строк, а клик по любой из них
+        # записывал в настройки пустой режим.
+        $mi = New-Object System.Windows.Forms.ToolStripMenuItem($m.T)
+        $mi.Tag = $m.K
         $mi.Add_Click({
             $script:Settings.TileMode = $this.Tag
             Save-RamSettings -Settings $script:Settings
@@ -2053,7 +2285,12 @@ function New-RamMainForm {
 
     # Высота панели кнопок зависит от того, перенеслись ли они на вторую
     # строку, поэтому следующий ряд ставим от её фактического низа.
-    $barBottom = [Math]::Max(44, $bar.PreferredSize.Height)
+    $script:UI.AccBar    = $bar
+    $script:UI.AccBarR   = $barR
+    $script:UI.AccBarH   = $barH
+    $barBottom = $barH
+    foreach ($c in $bar.Controls)  { if ($c.Bottom + $c.Margin.Bottom -gt $barBottom) { $barBottom = $c.Bottom + $c.Margin.Bottom } }
+    foreach ($c in $barR.Controls) { if ($c.Bottom + $c.Margin.Bottom -gt $barBottom) { $barBottom = $c.Bottom + $c.Margin.Bottom } }
     $bar.Height = $barBottom
     $bar.PerformLayout()
     $groupBar.Location      = New-Object System.Drawing.Point(0, ($barBottom + $metrics.GapSm))
@@ -2071,6 +2308,18 @@ function New-RamMainForm {
     $cards.Anchor   = 'Top,Left,Right,Bottom'
     $pAcc.Controls.Add($cards)
     $script:UI.Cards = $cards
+    $script:UI.AccGroupBar = $groupBar
+
+    # ПОЧЕМУ ЭТО ЗДЕСЬ, А НЕ ОДИН РАЗ ПРИ СБОРКЕ.
+    # $contentW считается от предполагаемой ширины окна ($formW), а фактическая
+    # ширина панели после раскладки Windows оказывается другой — на 150% это
+    # 1241 вместо 1557. Правая полоса прижата якорем и уезжает на своё место,
+    # левая с якорем Top,Left остаётся прежней ширины — и накрывается правой.
+    # Поэтому ширину левой полосы держим от ФАКТИЧЕСКОГО левого края правой, и
+    # пересчитываем на каждое изменение размера, а не однажды при создании.
+    # Заодно это чинит то же самое при обычном растягивании окна мышью.
+    $pAcc.Add_SizeChanged({ Update-RamAccountsBar })
+    Update-RamAccountsBar
 
     # =================================================== раздел: игры =======
     $pGames = New-Object System.Windows.Forms.Panel
@@ -2091,7 +2340,7 @@ function New-RamMainForm {
     # взять готовую из популярных, а свою приходилось назначать через карточку
     # аккаунта. Теперь обе кнопки рядом и прижаты к правому краю по факту
     # своей ширины, а не по вписанному числу.
-    $btnOwnGame = New-RamButton -Text '＋ Своя игра' -Width 1 -Height 36 -Kind 'primary' `
+    $btnOwnGame = New-RamButton -Text '＋ Своя игра' -Width 1 -Height (Get-RamScaled 36) -Kind 'primary' `
                                 -Tooltip 'Добавить игру по ссылке, приглашению на приватный сервер или по номеру' -OnClick {
         $val = Show-RamInputDialog -Title 'Своя игра' `
                  -Prompt ("Вставь ссылку на игру, приглашение на приватный сервер или просто её номер.`n" +
@@ -2114,28 +2363,33 @@ function New-RamMainForm {
     }
     $ownW = (Measure-RamControl -Control $btnOwnGame).Width
 
-    $btnPopular = New-RamButton -Text 'Популярные из Roblox' -Width 1 -Height 36 -Kind 'ghost' `
+    $btnPopular = New-RamButton -Text 'Популярные из Roblox' -Width 1 -Height (Get-RamScaled 36) -Kind 'ghost' `
                                 -Tooltip 'Показать игры, в которые сейчас играют больше всего, и добавить их в список' -OnClick {
         Show-RamPopularGamesDialog
         Update-RamGamesPanel
     }
     $popW = (Measure-RamControl -Control $btnPopular).Width
 
-    $btnPopular.Location = New-Object System.Drawing.Point(($contentW - $popW), 8)
+    # Высота шапки — от фактической высоты кнопок, а не от числа 66:
+    # на 150% кнопка вырастала и вылезала за край своей же шапки.
+    $headBtnH = [Math]::Max($btnPopular.Height, $btnOwnGame.Height)
+    $headH    = $headBtnH + (Get-RamScaled 8) + (Measure-RamText -Text 'Ay' -Font $t.FontSmall).Height + $metrics.GapSm
+    $btnPopular.Location = New-Object System.Drawing.Point(($contentW - $popW), (Get-RamScaled 4))
     $btnPopular.Anchor   = 'Top,Right'
     $pGames.Controls.Add($btnPopular)
 
-    $btnOwnGame.Location = New-Object System.Drawing.Point(($contentW - $popW - $metrics.Gap - $ownW), 8)
+    $btnOwnGame.Location = New-Object System.Drawing.Point(($contentW - $popW - $metrics.Gap - $ownW), (Get-RamScaled 4))
     $btnOwnGame.Anchor   = 'Top,Right'
     $pGames.Controls.Add($btnOwnGame)
 
     $gamesHintW = $btnOwnGame.Left - $metrics.GapLg
     if ($gamesHintW -lt 200) { $gamesHintW = 200 }
-    $pGames.Controls.Add((New-RamLabel -Text $gamesHintText -X 0 -Y 32 -Width $gamesHintW -Height 22 `
+    $gamesHintH = (Measure-RamText -Text 'Ay' -Font $t.FontSmall).Height + 4
+    $pGames.Controls.Add((New-RamLabel -Text $gamesHintText -X 0 -Y ($headBtnH + (Get-RamScaled 8)) -Width $gamesHintW -Height $gamesHintH `
                                        -Font $t.FontSmall -Color $t.Muted -Truncatable))
 
-    $gamesHost = New-RamScrollPanel -Width $contentW -Height ($contentH - 66)
-    $gamesHost.Location = New-Object System.Drawing.Point(0, 66)
+    $gamesHost = New-RamScrollPanel -Width $contentW -Height ($contentH - $headH)
+    $gamesHost.Location = New-Object System.Drawing.Point(0, $headH)
     $gamesHost.Anchor   = 'Top,Left,Right,Bottom'
     $pGames.Controls.Add($gamesHost)
     $script:UI.GamesHost = $gamesHost
@@ -2157,7 +2411,7 @@ function New-RamMainForm {
     $pProf.Controls.Add((New-RamLabel -Text 'Связка «набор аккаунтов + игра». Одной кнопкой ставит игру всем и запускает.' `
                                       -X 0 -Y 34 -Width 540 -Height 22 -Font $t.FontSmall -Color $t.Muted -Truncatable))
 
-    $bStarter = New-RamButton -Text '＋ Готовый профиль  ▾' -Width 220 -Height 32 -Kind 'primary' `
+    $bStarter = New-RamButton -Text '＋ Готовый профиль  ▾' -Width 220 -Height (Get-RamScaled 32) -Kind 'primary' `
                               -Tooltip 'Добавить готовый профиль с популярной игрой — работает сразу' -OnClick {
         $menu = New-RamContextMenu
         foreach ($sp in Get-RamStarterProfiles) {
@@ -2171,7 +2425,7 @@ function New-RamMainForm {
     # Ставим ниже, после создания обеих: ширина зависит от надписи и масштаба.
     $pProf.Controls.Add($bStarter)
 
-    $bSaveProf = New-RamButton -Text 'Сохранить текущее как профиль' -Width 280 -Height 32 -Kind 'ghost' -OnClick {
+    $bSaveProf = New-RamButton -Text 'Сохранить текущее как профиль' -Width 280 -Height (Get-RamScaled 32) -Kind 'ghost' -OnClick {
         Invoke-RamSaveProfile
     }
     $pProf.Controls.Add($bSaveProf)
@@ -2182,8 +2436,9 @@ function New-RamMainForm {
     $bSaveProf.Location = New-Object System.Drawing.Point(($contentW - $saveW), 0)
     $bStarter.Location  = New-Object System.Drawing.Point(($contentW - $saveW - $metrics.Gap - $starterW), 0)
 
-    $profHost = New-RamScrollPanel -Width $contentW -Height ($contentH - 66)
-    $profHost.Location = New-Object System.Drawing.Point(0, 66)
+    $profHeadH = [Math]::Max($bSaveProf.Height, $bStarter.Height) + $metrics.GapLg
+    $profHost = New-RamScrollPanel -Width $contentW -Height ($contentH - $profHeadH)
+    $profHost.Location = New-Object System.Drawing.Point(0, $profHeadH)
     $profHost.Anchor   = 'Top,Left,Right,Bottom'
     $pProf.Controls.Add($profHost)
     $script:UI.ProfilesHost = $profHost
@@ -2200,7 +2455,7 @@ function New-RamMainForm {
 
     $pStats.Controls.Add((New-RamLabel -Text 'Статистика' -X 0 -Y 0 -Width 400 -Height 32 -Font $t.FontBig))
 
-    $bResetStats = New-RamButton -Text 'Обнулить' -Width 120 -Height 32 -Kind 'ghost' -OnClick {
+    $bResetStats = New-RamButton -Text 'Обнулить' -Width 120 -Height (Get-RamScaled 32) -Kind 'ghost' -OnClick {
         if (-not (Confirm-Ram 'Обнулить всю статистику? Сами аккаунты и игры останутся на месте.')) { return }
         foreach ($a in $script:Accounts) { $a.LaunchCount = 0; $a.CrashCount = 0; $a.PlaySeconds = 0 }
         Save-RamState
@@ -2210,12 +2465,13 @@ function New-RamMainForm {
     # К ПРАВОМУ КРАЮ, а не к вписанному числу 420. Раньше кнопка висела
     # посреди пустой шапки: слева заголовок, справа половина панели пустая.
     $resetW = (Measure-RamControl -Control $bResetStats).Width
-    $bResetStats.Location = New-Object System.Drawing.Point(($contentW - $resetW), 2)
+    $statHeadH = $bResetStats.Height + $metrics.GapSm * 2
+    $bResetStats.Location = New-Object System.Drawing.Point(($contentW - $resetW), $metrics.GapSm)
     $bResetStats.Anchor   = 'Top,Right'
     $pStats.Controls.Add($bResetStats)
 
-    $statsHost = New-RamScrollPanel -Width $contentW -Height ($contentH - 46)
-    $statsHost.Location = New-Object System.Drawing.Point(0, 46)
+    $statsHost = New-RamScrollPanel -Width $contentW -Height ($contentH - $statHeadH)
+    $statsHost.Location = New-Object System.Drawing.Point(0, $statHeadH)
     $statsHost.Anchor   = 'Top,Left,Right,Bottom'
     $pStats.Controls.Add($statsHost)
     $script:UI.StatsHost = $statsHost
@@ -2232,14 +2488,14 @@ function New-RamMainForm {
 
     $pLog.Controls.Add((New-RamLabel -Text 'Журнал' -X 0 -Y 0 -Width 400 -Height 32 -Font $t.FontBig))
 
-    $bCopyLog = New-RamButton -Text 'Скопировать' -Width 130 -Height 32 -Kind 'ghost' -OnClick {
+    $bCopyLog = New-RamButton -Text 'Скопировать' -Width 130 -Height (Get-RamScaled 32) -Kind 'ghost' -OnClick {
         try { [System.Windows.Forms.Clipboard]::SetText($script:UI.Log.Text); Write-RamLog 'Журнал скопирован в буфер.' 'ok' } catch { }
     }
     # По фактической ширине: на крупном масштабе надписи длиннее и кнопки
     # налезали друг на друга.
     $copyW  = (Measure-RamControl -Control $bCopyLog).Width
 
-    $bClearLog = New-RamButton -Text 'Очистить' -Width 120 -Height 32 -Kind 'ghost' -OnClick {
+    $bClearLog = New-RamButton -Text 'Очистить' -Width 120 -Height (Get-RamScaled 32) -Kind 'ghost' -OnClick {
         $script:UI.Log.Clear()
     }
     $clearW = (Measure-RamControl -Control $bClearLog).Width
@@ -2247,17 +2503,18 @@ function New-RamMainForm {
     # Обе кнопки к ПРАВОМУ краю: «Очистить» крайняя, «Скопировать» слева от
     # неё. Раньше обе стояли от вписанного числа 420 и висели посреди шапки,
     # а справа зияла пустота во всю ширину окна.
-    $bClearLog.Location = New-Object System.Drawing.Point(($contentW - $clearW), 2)
+    $logHeadH = [Math]::Max($bClearLog.Height, $bCopyLog.Height) + $metrics.GapSm * 2
+    $bClearLog.Location = New-Object System.Drawing.Point(($contentW - $clearW), $metrics.GapSm)
     $bClearLog.Anchor   = 'Top,Right'
     $pLog.Controls.Add($bClearLog)
 
-    $bCopyLog.Location = New-Object System.Drawing.Point(($contentW - $clearW - $metrics.Gap - $copyW), 2)
+    $bCopyLog.Location = New-Object System.Drawing.Point(($contentW - $clearW - $metrics.Gap - $copyW), $metrics.GapSm)
     $bCopyLog.Anchor   = 'Top,Right'
     $pLog.Controls.Add($bCopyLog)
 
     $logHost = New-Object System.Windows.Forms.Panel
-    $logHost.Location  = New-Object System.Drawing.Point(0, 46)
-    $logHost.Size      = New-Object System.Drawing.Size($contentW, ($contentH - 46))
+    $logHost.Location  = New-Object System.Drawing.Point(0, $logHeadH)
+    $logHost.Size      = New-Object System.Drawing.Size($contentW, ($contentH - $logHeadH))
     $logHost.BackColor = $t.LogBack
     $logHost.Padding   = New-Object System.Windows.Forms.Padding(12, 10, 12, 10)
     $logHost.Anchor    = 'Top,Left,Right,Bottom'
@@ -2299,7 +2556,7 @@ function New-RamMainForm {
     # а фон у кнопок прозрачный: в этой полоске проступал фон окна вместо
     # фона панели. Заодно ставим фон сплошным — эмуляция прозрачности здесь
     # ни к чему.
-    $bFix = New-RamButton -Text 'Проверить входы' -Width $fixW -Height 26 -Fixed -Kind 'ghost' `
+    $bFix = New-RamButton -Text 'Проверить входы' -Width $fixW -Height (Get-RamScaled 26) -Fixed -Kind 'ghost' `
                           -Tooltip 'Проверить, живы ли входы. Если есть мёртвые — пройтись по ним и взять заново из приложения Roblox' `
                           -OnClick {
                               if ([string]$this.Tag.Mode -like 'fix*') { Invoke-RamRepairAll }

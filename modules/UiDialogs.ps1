@@ -1856,6 +1856,7 @@ function Show-RamSettingsDialog {
         @{ Key = 'look';   Text = 'Вид'        },
         @{ Key = 'auto';   Text = 'Автоматика' },
         @{ Key = 'store';  Text = 'Хранилище'  },
+        @{ Key = 'bridge'; Text = 'Из браузера' },
         @{ Key = 'misc';   Text = 'Прочее'     }
     )
     $navW = 0
@@ -2176,6 +2177,58 @@ function Show-RamSettingsDialog {
     [void](Add-RamRow -Layout $ps -Items @($btnExport, $btnImport) -Gap $m.Gap)
 
     # ------------------------------------------------------------ 6. «Прочее»
+    # -------------------------------------------------- N. «Из браузера»
+    $pb = & $newPage 'bridge'
+    & $addHead $pb 'ВХОД ИЗ ТВОЕГО БРАУЗЕРА' -First
+    [void](& $addNote $pb ('Ты уже сидишь на roblox.com под нужным аккаунтом. Жмёшь клавишу — ' +
+                           'и аккаунт в списке. Без F12 и без копирования куки.'))
+    [void](& $addNote $pb ('Чтобы это заработало, в браузер надо один раз поставить расширение-мост ' +
+                           'из папки extension. Иначе куку из твоего браузера не достать никак: она ' +
+                           'помечена HttpOnly, скриптам со страницы не видна, а в файле браузера ' +
+                           'зашифрована и заперта, пока браузер запущен. Лезть туда AltHub не будет — ' +
+                           'этим занимаются программы-воришки.'))
+
+    $cbBridge = & $addCheck $pb 'Принимать вход из браузера' ([bool]$s.BridgeEnabled) `
+                ('Пока выключено, AltHub не занимает ни одного порта и принимать ему нечего. ' +
+                 'Включённый приём слушает только 127.0.0.1 — петлю внутри твоего компьютера.')
+
+    $keyItems = @()
+    foreach ($k in (Get-RamBridgeHotkeyChoices)) {
+        $keyItems += [pscustomobject]@{ Text = $k; Value = $k }
+    }
+    $cbKey = New-RamCombo -X 0 -Y 0 -Width ([int](250 * $m.Scale)) -Items $keyItems -Value ([string]$s.BridgeHotkey)
+    [void](Add-RamRow -Layout $pb -VAlign 'middle' -Items @(
+        @{ Control = (New-RamLabel -Text 'Клавиша приёма' -X 0 -Y 0 -Width 10 `
+                                   -Height ((Measure-RamText -Text 'Клавиша приёма' -Font $t.FontBody).Height + 2))
+           Width   = ($pb.Width - $cbKey.Width - $m.Gap) },
+        @{ Control = $cbKey; Width = $cbKey.Width }
+    ))
+    [void](& $addNote $pb ('Клавиша глобальная: пока приём включён, она занята во всех программах сразу. ' +
+                           'Поэтому её можно поменять — а можно вообще не пользоваться ею и жать кнопку ' +
+                           'AltHub на панели браузера.'))
+    [void](Add-RamGap -Layout $pb -Height $m.GapSm)
+
+    $bHow = New-RamButton -Text 'Как поставить расширение' -Height $m.RowH -OnClick {
+        Show-RamExtensionGuide
+    }
+    [void](Add-RamRow -Layout $pb -Items @(@{ Control = $bHow; Width = (Measure-RamControl -Control $bHow).Width }))
+
+    & $addHead $pb 'ОКНО БРАУЗЕРА ДЛЯ ВХОДА'
+    [void](& $addNote $pb ('Отдельное окно настоящего Chrome, где ты входишь руками. Капчу, если она ' +
+                           'вылезет, проходишь сам — за тебя её никто не разгадывает.'))
+    if (Test-RamChromeForTestingReady) {
+        [void](& $addNote $pb 'Chrome for Testing уже скачан и используется — капча в нём выпадает реже всего.')
+    } else {
+        [void](& $addNote $pb ('Сейчас берётся Edge или Chrome, которые у тебя уже стоят. Можно скачать ' +
+                               'Chrome for Testing — официальную сборку Chromium от Google: у неё чистый ' +
+                               'профиль и обычный отпечаток браузера, поэтому Roblox выдаёт самую лёгкую ' +
+                               'капчу. Это ~150 МБ, и качается только по кнопке.'))
+        $bCft = New-RamButton -Text 'Скачать Chrome for Testing…' -Height $m.RowH -OnClick {
+            Show-RamChromeForTestingConsent
+        }
+        [void](Add-RamRow -Layout $pb -Items @(@{ Control = $bCft; Width = (Measure-RamControl -Control $bCft).Width }))
+    }
+
     $pm = & $newPage 'misc'
     & $addHead $pm 'МЕНЕДЖЕР' -First
     $cbConfirm = & $addCheck $pm 'Спрашивать при закрытии менеджера' ([bool]$s.ConfirmOnExit) `
@@ -2335,6 +2388,17 @@ function Show-RamSettingsDialog {
         $s.HotkeySwitch     = [bool]$cbHotkey.Tag.Checked
         $s.OnClose          = Get-RamComboValue $cbOnClose
         $s.CheckOnStart     = [bool]$cbCheck.Tag.Checked
+
+        # Приём из браузера включаем и выключаем СРАЗУ, не дожидаясь
+        # перезапуска: иначе человек ставит галочку, жмёт клавишу — и ничего
+        # не происходит, потому что порт ещё не занят.
+        $bridgeWas = [bool]$s.BridgeEnabled
+        $keyWas    = [string]$s.BridgeHotkey
+        $s.BridgeEnabled = [bool]$cbBridge.Tag.Checked
+        $s.BridgeHotkey  = Get-RamComboValue $cbKey
+        if ($bridgeWas -ne $s.BridgeEnabled -or $keyWas -ne $s.BridgeHotkey) {
+            Invoke-RamSafe -What 'переключение приёма из браузера' -Body { Update-RamCookieBridgeState }
+        }
         $Global:RamShowEmoji = $s.ShowEmoji
 
         $tm = $tbTime.Tag.Text.Trim()
@@ -2366,4 +2430,451 @@ function Show-RamSettingsDialog {
     $dlg.Dispose()
 }
 
+# ============================================================ вход из браузера
 
+function Show-RamExtensionGuide {
+    <#
+      Как поставить расширение-мост в СВОЙ браузер. Один раз, руками.
+
+      Почему руками, а не «нажми кнопку и всё»: Chrome 137 убрал флаг
+      командной строки --load-extension у обычных сборок именно затем, чтобы
+      программы не подсовывали расширения молча. Ручная установка через режим
+      разработчика работает по-прежнему — и это правильно: расширение получает
+      доступ к куке твоего аккаунта, такое решение должен принимать человек,
+      а не программа за него.
+    #>
+    param([switch]$BuildOnly)
+
+    $t = $Global:RamTheme
+    $m = $t.M
+    $dir = Get-RamExtensionDir
+
+    $steps = @'
+Один раз, минуты на две. Дальше вход добавляется одной клавишей.
+
+  1. Открой в браузере страницу расширений:
+       Chrome  —  chrome://extensions
+       Edge    —  edge://extensions
+  2. Включи «Режим разработчика» (справа сверху в Chrome, слева снизу в Edge).
+  3. Нажми «Загрузить распакованное» и укажи папку, путь к которой ниже.
+  4. Закрепи значок AltHub рядом с адресной строкой — по нему и жать.
+
+Готово. Теперь на любой странице roblox.com, где ты вошёл в нужный аккаунт:
+жми клавишу приёма — или значок AltHub на панели браузера.
+'@
+
+    $note = @'
+Что расширение может и чего не может. Оно читает ровно одну куку —
+.ROBLOSECURITY с roblox.com — и отправляет её на 127.0.0.1, то есть на этот же
+компьютер, запущенному AltHub. Наружу не уходит ничего: других адресов в его
+коде нет, и самопроверка падает, если они появятся. Прав на другие сайты,
+историю и закладки у него нет — это видно в manifest.json, он в той же папке
+и открывается блокнотом.
+'@
+
+    $w = 0
+    foreach ($line in (($steps + "`n" + $note) -split "`r?`n")) {
+        $lw = (Measure-RamText -Text $line -Font $t.FontBody).Width
+        if ($lw -gt $w) { $w = $lw }
+    }
+    $pageW = [Math]::Max($w + $m.GapLg, [int][Math]::Round(560 * $m.Scale))
+
+    $dlg = New-Object System.Windows.Forms.Form
+    $dlg.Text            = 'Расширение для входа из браузера'
+    $dlg.FormBorderStyle = 'FixedDialog'
+    $dlg.StartPosition   = 'CenterParent'
+    $dlg.MaximizeBox     = $false; $dlg.MinimizeBox = $false
+    $dlg.BackColor       = $t.Bg
+    $dlg.ForeColor       = $t.Text
+    $dlg.Font            = $t.FontBody
+    $dlg.ClientSize      = New-Object System.Drawing.Size(($pageW + $m.PadX * 2), 560)
+    $dlg.Add_HandleCreated({ Set-RamDarkTitleBar $this })
+    Set-RamWindowIcon $dlg
+
+    $stripe = New-Object System.Windows.Forms.Panel
+    $stripe.Location  = New-Object System.Drawing.Point(0, 0)
+    $stripe.Size      = New-Object System.Drawing.Size($dlg.ClientSize.Width, $m.StripeH)
+    $stripe.BackColor = $t.Accent
+    $dlg.Controls.Add($stripe)
+
+    $lay = New-RamLayout -Container $dlg
+    [void](Add-RamGap -Layout $lay -Height $m.StripeH)
+
+    $titleH = (Measure-RamText -Text 'Ay' -Font $t.FontBig).Height + 2
+    [void](Add-RamRow -Layout $lay -Height $titleH -Gap $m.GapSm -Items @(
+        @{ Control = (New-RamLabel -Text 'Расширение-мост' -X 0 -Y 0 -Width 10 -Height $titleH -Font $t.FontBig)
+           Width   = $lay.Width }
+    ))
+
+    $stepsH = (Measure-RamText -Text $steps -Font $t.FontBody -MaxWidth $lay.Width).Height + 4
+    [void](Add-RamRow -Layout $lay -Height $stepsH -Items @(
+        @{ Control = (New-RamLabel -Text $steps -X 0 -Y 0 -Width 10 -Height $stepsH -Font $t.FontBody)
+           Width   = $lay.Width }
+    ))
+    [void](Add-RamGap -Layout $lay -Height $m.GapSm)
+
+    $capH = (Measure-RamText -Text 'Ay' -Font $t.FontSmall).Height + 2
+    [void](Add-RamRow -Layout $lay -Height $capH -Gap $m.GapSm -Items @(
+        @{ Control = (New-RamLabel -Text 'ПАПКА РАСШИРЕНИЯ' -X 0 -Y 0 -Width 10 -Height $capH -Font $t.FontSmall -Color $t.Muted)
+           Width   = $lay.Width }
+    ))
+
+    $bOpen = New-RamButton -Text 'Открыть папку' -Height $m.RowHSm -OnClick {
+        $d = Get-RamExtensionDir
+        if (Test-Path -LiteralPath $d) { Start-Process 'explorer.exe' -ArgumentList "`"$d`"" | Out-Null }
+    }
+    $bCopy = New-RamButton -Text 'Скопировать путь' -Height $m.RowHSm -OnClick {
+        try { [System.Windows.Forms.Clipboard]::SetText((Get-RamExtensionDir)) } catch { }
+    }
+    $openW = (Measure-RamControl -Control $bOpen).Width
+    $copyW = (Measure-RamControl -Control $bCopy).Width
+    $tbDir = New-RamTextBox -Width ($lay.Width - $openW - $copyW - $m.Gap * 2) -Height $m.RowHSm -Value $dir
+    $tbDir.Tag.ReadOnly = $true
+    [void](Add-RamRow -Layout $lay -VAlign 'middle' -Items @(
+        @{ Control = $tbDir; Width = ($lay.Width - $openW - $copyW - $m.Gap * 2) },
+        @{ Control = $bOpen; Width = $openW },
+        @{ Control = $bCopy; Width = $copyW }
+    ))
+    [void](Add-RamGap -Layout $lay -Height $m.Gap)
+
+    $noteH = (Measure-RamText -Text $note -Font $t.FontSmall -MaxWidth $lay.Width).Height + 4
+    [void](Add-RamRow -Layout $lay -Height $noteH -Items @(
+        @{ Control = (New-RamLabel -Text $note -X 0 -Y 0 -Width 10 -Height $noteH -Font $t.FontSmall -Color $t.Muted)
+           Width   = $lay.Width }
+    ))
+
+    [void](Add-RamGap -Layout $lay -Height $m.Gap)
+    $bClose = New-RamButton -Text 'Понятно' -Height $m.RowHLg -Kind 'primary' -OnClick { $this.FindForm().Close() }
+    [void](Add-RamButtonBar -Layout $lay -Primary $bClose)
+    [void](Complete-RamLayout -Layout $lay -ClampToScreen)
+    $stripe.Size = New-Object System.Drawing.Size($dlg.ClientSize.Width, $m.StripeH)
+
+    if ($BuildOnly) { return $dlg }
+    [void]$dlg.ShowDialog()
+    $dlg.Dispose()
+}
+
+function Show-RamChromeForTestingConsent {
+    <#
+      Согласие на скачивание Chrome for Testing. Отдельное окно, а не молчаливая
+      закачка: ~150 МБ чужого исполняемого файла, который программа потом сама
+      же и запустит, — это ровно то, о чём человека надо спросить прямо.
+
+      Никакого «мы уже скачали, вот кнопка отмены»: до нажатия «Скачать» в сеть
+      за ним не уходит ни одного запроса.
+    #>
+    param([switch]$BuildOnly)
+
+    $t = $Global:RamTheme
+    $m = $t.M
+
+    $body = @'
+Зачем. Для способа «окно браузера» AltHub открывает настоящий Chrome, где ты
+входишь руками. Roblox выдаёт капчу тем сложнее, чем подозрительнее ему кажется
+браузер. У Chrome for Testing обычный отпечаток настоящего Chrome и свой чистый
+профиль, поэтому капча выпадает реже всего — а часто и вовсе не выпадает.
+
+Что качается. Chrome for Testing — официальная сборка Chromium, которую
+выпускает сама Google. Примерно 150 МБ, один раз, в папку data\chrome-for-testing
+рядом с программой. Твой обычный Chrome или Edge при этом не трогаются.
+
+Откуда качается. Список сборок — с googlechromelabs.github.io, сам архив — с
+storage.googleapis.com. Это единственные два адреса за пределами roblox.com, на
+которые AltHub вообще может обратиться, и только по этой кнопке.
+
+Можно и не качать. Без него вход через окно браузера тоже работает — возьмётся
+Edge или Chrome, которые у тебя уже стоят. Просто капча будет попадаться чаще.
+Все остальные способы добавить аккаунт от этого не зависят вовсе.
+'@
+
+    $w = 0
+    foreach ($line in ($body -split "`r?`n")) {
+        $lw = (Measure-RamText -Text $line -Font $t.FontBody).Width
+        if ($lw -gt $w) { $w = $lw }
+    }
+    $pageW = [Math]::Max($w + $m.GapLg, [int][Math]::Round(560 * $m.Scale))
+
+    $dlg = New-Object System.Windows.Forms.Form
+    $dlg.Text            = 'Скачать Chrome for Testing?'
+    $dlg.FormBorderStyle = 'FixedDialog'
+    $dlg.StartPosition   = 'CenterParent'
+    $dlg.MaximizeBox     = $false; $dlg.MinimizeBox = $false
+    $dlg.BackColor       = $t.Bg
+    $dlg.ForeColor       = $t.Text
+    $dlg.Font            = $t.FontBody
+    $dlg.ClientSize      = New-Object System.Drawing.Size(($pageW + $m.PadX * 2), 480)
+    $dlg.Add_HandleCreated({ Set-RamDarkTitleBar $this })
+    Set-RamWindowIcon $dlg
+
+    $stripe = New-Object System.Windows.Forms.Panel
+    $stripe.Location  = New-Object System.Drawing.Point(0, 0)
+    $stripe.Size      = New-Object System.Drawing.Size($dlg.ClientSize.Width, $m.StripeH)
+    $stripe.BackColor = $t.Accent
+    $dlg.Controls.Add($stripe)
+
+    $lay = New-RamLayout -Container $dlg
+    [void](Add-RamGap -Layout $lay -Height $m.StripeH)
+
+    $titleH = (Measure-RamText -Text 'Ay' -Font $t.FontBig).Height + 2
+    [void](Add-RamRow -Layout $lay -Height $titleH -Gap $m.GapSm -Items @(
+        @{ Control = (New-RamLabel -Text 'Скачать Chrome for Testing?' -X 0 -Y 0 -Width 10 -Height $titleH -Font $t.FontBig)
+           Width   = $lay.Width }
+    ))
+
+    $bodyH = (Measure-RamText -Text $body -Font $t.FontBody -MaxWidth $lay.Width).Height + 4
+    [void](Add-RamRow -Layout $lay -Height $bodyH -Items @(
+        @{ Control = (New-RamLabel -Text $body -X 0 -Y 0 -Width 10 -Height $bodyH -Font $t.FontBody -Color $t.Muted)
+           Width   = $lay.Width }
+    ))
+
+    [void](Add-RamGap -Layout $lay -Height $m.Gap)
+    $bGo = New-RamButton -Text 'Скачать (~150 МБ)' -Height $m.RowHLg -Kind 'primary' -OnClick {
+        $this.FindForm().Tag = $true; $this.FindForm().Close()
+    }
+    $bNo = New-RamButton -Text 'Не надо' -Height $m.RowHLg -OnClick {
+        $this.FindForm().Tag = $false; $this.FindForm().Close()
+    }
+    [void](Add-RamButtonBar -Layout $lay -Primary $bGo -Secondary @($bNo))
+    [void](Complete-RamLayout -Layout $lay -ClampToScreen)
+    $stripe.Size = New-Object System.Drawing.Size($dlg.ClientSize.Width, $m.StripeH)
+    $dlg.Tag = $false
+
+    if ($BuildOnly) { return $dlg }
+    [void]$dlg.ShowDialog()
+    $agreed = [bool]$dlg.Tag
+    $dlg.Dispose()
+    if (-not $agreed) { return $false }
+
+    return (Request-RamChromeForTesting)
+}
+
+function Show-RamAddChooser {
+    <#
+      Экран «Добавить аккаунты». То, что открывается по кнопке «＋ Добавить».
+
+      ПОЧЕМУ ТАК. Способов добавить аккаунт много, и это осознанно: если один
+      перестанет работать (Roblox уже закрывал вход по паролю), должны остаться
+      другие. Но вываливать все семь одинаковыми строками — значит заставлять
+      человека выбирать из того, в чём он не разбирается. Поэтому три главные
+      кнопки крупно, поле для вставки под ними, а остальное — под «Ещё способы»:
+      выбор не уменьшился, но глаза больше не разбегаются.
+    #>
+    param([switch]$BuildOnly)
+
+    $t = $Global:RamTheme
+    $m = $t.M
+
+    $ways = @(
+        @{ Title = 'Окно браузера'
+           Note  = 'Открою настоящий Chrome, войдёшь руками. Лучший способ для твинков: пароль остаётся между тобой и Roblox, капчу, если вылезет, проходишь сам.'
+           Key   = 'window' },
+        @{ Title = 'Из приложения Roblox'
+           Note  = 'Возьму тот вход, под которым ты уже сидишь в самом Roblox. Пароль не нужен вовсе — удобнее всего для основного аккаунта.'
+           Key   = 'app' },
+        @{ Title = 'Из своего браузера, по клавише'
+           Note  = 'Ты уже открыл roblox.com под нужным аккаунтом — жмёшь клавишу, и он здесь. Нужно один раз поставить расширение-мост.'
+           Key   = 'bridge' }
+    )
+
+    # Ширина — от самой длинной пояснительной строки, а не назначена числом.
+    $pageW = [int][Math]::Round(600 * $m.Scale)
+
+    $dlg = New-Object System.Windows.Forms.Form
+    $dlg.Text            = 'Добавить аккаунты'
+    $dlg.FormBorderStyle = 'FixedDialog'
+    $dlg.StartPosition   = 'CenterParent'
+    $dlg.MaximizeBox     = $false; $dlg.MinimizeBox = $false
+    $dlg.BackColor       = $t.Bg
+    $dlg.ForeColor       = $t.Text
+    $dlg.Font            = $t.FontBody
+    $dlg.ClientSize      = New-Object System.Drawing.Size(($pageW + $m.PadX * 2), 640)
+    $dlg.Add_HandleCreated({ Set-RamDarkTitleBar $this })
+    Set-RamWindowIcon $dlg
+
+    $stripe = New-Object System.Windows.Forms.Panel
+    $stripe.Location  = New-Object System.Drawing.Point(0, 0)
+    $stripe.Size      = New-Object System.Drawing.Size($dlg.ClientSize.Width, $m.StripeH)
+    $stripe.BackColor = $t.Accent
+    $dlg.Controls.Add($stripe)
+
+    $lay = New-RamLayout -Container $dlg
+    [void](Add-RamGap -Layout $lay -Height $m.StripeH)
+
+    $titleH = (Measure-RamText -Text 'Ay' -Font $t.FontBig).Height + 2
+    [void](Add-RamRow -Layout $lay -Height $titleH -Gap $m.GapSm -Items @(
+        @{ Control = (New-RamLabel -Text 'Добавить аккаунты' -X 0 -Y 0 -Width 10 -Height $titleH -Font $t.FontBig)
+           Width   = $lay.Width }
+    ))
+
+    $bigH = [int][Math]::Round($m.RowHLg * 1.35)
+    $first = $true
+    foreach ($way in $ways) {
+        # Яркая только первая: три одинаково кричащие кнопки не помогают
+        # выбрать, а наоборот — глазу не за что зацепиться.
+        $kind = if ($first) { 'primary' } else { 'normal' }
+        $first = $false
+        $b = New-RamButton -Text $way.Title -Height $bigH -Kind $kind
+        $b.Tag | Add-Member -NotePropertyName WayKey -NotePropertyValue $way.Key -Force
+        $b.Add_Click({
+            $f = $this.FindForm()
+            $f.Tag = $this.Tag.WayKey
+            $f.Close()
+        })
+        [void](Add-RamRow -Layout $lay -Height $bigH -Gap $m.GapSm -Items @(
+            @{ Control = $b; Width = $lay.Width }
+        ))
+        $nh = (Measure-RamText -Text $way.Note -Font $t.FontSmall -MaxWidth $lay.Width).Height + 2
+        [void](Add-RamRow -Layout $lay -Height $nh -Items @(
+            @{ Control = (New-RamLabel -Text $way.Note -X 0 -Y 0 -Width 10 -Height $nh -Font $t.FontSmall -Color $t.Muted)
+               Width   = $lay.Width }
+        ))
+    }
+
+    # ------------------------------------------------------------- поле вставки
+    [void](Add-RamGap -Layout $lay -Height $m.Gap)
+    $capH = (Measure-RamText -Text 'Ay' -Font $t.FontSmall).Height + 2
+    [void](Add-RamRow -Layout $lay -Height $capH -Gap $m.GapSm -Items @(
+        @{ Control = (New-RamLabel -Text 'ИЛИ ПРОСТО ВСТАВЬ СЮДА' -X 0 -Y 0 -Width 10 -Height $capH -Font $t.FontSmall -Color $t.Muted)
+           Width   = $lay.Width }
+    ))
+    $hint = 'Одна кука, список кук по строке на каждую или приглашение althub:// — разберусь само.'
+    $hh = (Measure-RamText -Text $hint -Font $t.FontSmall -MaxWidth $lay.Width).Height + 2
+    [void](Add-RamRow -Layout $lay -Height $hh -Gap $m.GapSm -Items @(
+        @{ Control = (New-RamLabel -Text $hint -X 0 -Y 0 -Width 10 -Height $hh -Font $t.FontSmall -Color $t.Muted)
+           Width   = $lay.Width }
+    ))
+
+    $boxH = [int][Math]::Round(96 * $m.Scale)
+    $tbPaste = New-RamTextBox -Width $lay.Width -Height $boxH -Value '' -Multiline
+    [void](Add-RamRow -Layout $lay -Height $boxH -Items @(@{ Control = $tbPaste; Width = $lay.Width }))
+    [void](Add-RamGap -Layout $lay -Height $m.GapSm)
+
+    $bPaste = New-RamButton -Text 'Добавить из поля' -Height $m.RowH -OnClick ({
+        $txt = $tbPaste.Tag.Text
+        if ([string]::IsNullOrWhiteSpace($txt)) {
+            Show-RamMessage -Message 'Поле пустое. Вставь туда куку или список кук.'
+            return
+        }
+        $r = Import-RamAccountBatch -Text $txt
+        Save-RamState
+        Build-RamCards
+        $tbPaste.Tag.Text = ''
+        $parts = @()
+        if ($r.Added   -gt 0) { $parts += "добавлено: $($r.Added)" }
+        if ($r.Updated -gt 0) { $parts += "обновлено: $($r.Updated)" }
+        if ($r.Failed  -gt 0) { $parts += "не вышло: $($r.Failed)" }
+        $msg = if ($parts.Count) { ($parts -join ', ') } else { 'ничего не разобрал' }
+        if ($r.Failed -gt 0 -and $r.Errors.Count -gt 0) {
+            $msg += [Environment]::NewLine + [Environment]::NewLine + 'Почему не вышло:' + [Environment]::NewLine +
+                    (($r.Errors | Select-Object -Unique -First 4) -join [Environment]::NewLine)
+        }
+        Show-RamMessage -Message $msg
+    }.GetNewClosure())
+
+    $bMore = New-RamButton -Text 'Ещё способы  ▾' -Height $m.RowH -Kind 'ghost'
+    $moreMenu = New-RamContextMenu
+    [void](Add-RamMenuItem -Menu $moreMenu -Text 'Из браузера через F12 — покажу по шагам' -OnClick {
+        [void](Show-RamBrowserGuide)
+        Build-RamCards
+    })
+    [void](Add-RamMenuItem -Menu $moreMenu -Text 'Вставить пачкой, в отдельном окне' -OnClick {
+        [void](Show-RamBatchAddDialog)
+        Build-RamCards
+    })
+    [void](Add-RamMenuItem -Menu $moreMenu -Separator)
+    [void](Add-RamMenuItem -Menu $moreMenu -Text 'Из файла (список кук или приглашений)...' -OnClick {
+        $ofd = New-Object System.Windows.Forms.OpenFileDialog
+        $ofd.Filter = 'Текст или JSON (*.txt;*.json)|*.txt;*.json|Все файлы (*.*)|*.*'
+        if ($ofd.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
+            Import-RamDroppedFile -Path $ofd.FileName
+            Build-RamCards
+        }
+    })
+    $bMore.Add_Click({ $moreMenu.Show($this, (New-Object System.Drawing.Point(0, $this.Height))) }.GetNewClosure())
+
+    $bDone = New-RamButton -Text 'Готово' -Height $m.RowH -OnClick { $this.FindForm().Close() }
+
+    $pw = (Measure-RamControl -Control $bPaste).Width
+    $mw = (Measure-RamControl -Control $bMore).Width
+    $dw = (Measure-RamControl -Control $bDone).Width
+    # «Готово» — своей шириной у правого края, а не растянутое на весь
+    # остаток строки: растянутая кнопка выглядит главной, хотя это выход.
+    $spacer = New-Object System.Windows.Forms.Panel
+    $spacer.BackColor = [System.Drawing.Color]::Transparent
+    [void](Add-RamRow -Layout $lay -VAlign 'middle' -Items @(
+        @{ Control = $bPaste;  Width = $pw },
+        @{ Control = $bMore;   Width = $mw },
+        @{ Control = $spacer;  Width = [Math]::Max(0, ($lay.Width - $pw - $mw - $dw - $m.Gap * 3)) },
+        @{ Control = $bDone;   Width = $dw }
+    ))
+
+    [void](Complete-RamLayout -Layout $lay -ClampToScreen)
+    $stripe.Size = New-Object System.Drawing.Size($dlg.ClientSize.Width, $m.StripeH)
+    $dlg.Tag = ''
+
+    if ($BuildOnly) { return $dlg }
+
+    [void]$dlg.ShowDialog()
+    $choice = [string]$dlg.Tag
+    $dlg.Dispose()
+
+    switch ($choice) {
+        'window' {
+            $cookie = $null
+            try {
+                $cookie = Show-RamExternalBrowserLoginWindow
+            } catch {
+                Write-RamLog "Окно входа: $($_.Exception.Message)" 'err'
+                Show-RamError -Text ('Не удалось открыть окно входа:' + [Environment]::NewLine + [Environment]::NewLine + $_.Exception.Message)
+                return
+            }
+            if ($cookie) {
+                $r = Import-RamAccountLine -Line $cookie
+                if ($r -and $r.Ok) {
+                    Save-RamState; Build-RamCards
+                    Write-RamLog "Через окно браузера добавлен аккаунт: $($r.Alias)" 'ok'
+                    Show-RamMessage -Message "Готово: $($r.Alias)"
+                } else {
+                    $why = if ($r -and $r.Error) { $r.Error } else { 'неизвестная ошибка' }
+                    Show-RamError -Text ('Вход прошёл, но аккаунт не добавился:' + [Environment]::NewLine + [Environment]::NewLine + $why)
+                }
+            } else {
+                Write-RamLog 'Окно входа закрыто без получения входа.' 'warn'
+            }
+        }
+        'app' {
+            Show-RamAddWizard
+        }
+        'bridge' {
+            Show-RamBridgeHowTo
+        }
+    }
+}
+
+function Show-RamBridgeHowTo {
+    <#
+      Что делать, если человек выбрал «из своего браузера». Либо приём уже
+      включён и расширение стоит — тогда просто напоминаем клавишу, либо
+      ведём к настройке. Разбираем случаи честно, а не показываем одну
+      инструкцию всем подряд.
+    #>
+    if (-not [bool]$script:Settings.BridgeEnabled) {
+        if (Confirm-Ram ('Приём из браузера сейчас выключен.' + [Environment]::NewLine + [Environment]::NewLine +
+                         'Включить его и показать, как поставить расширение-мост в браузер? Это делается один раз.')) {
+            $script:Settings.BridgeEnabled = $true
+            Save-RamSettings -Settings $script:Settings
+            Invoke-RamSafe -What 'включение приёма из браузера' -Body { Update-RamCookieBridgeState }
+            Show-RamExtensionGuide
+        }
+        return
+    }
+
+    if (-not (Test-RamBridgeExtensionSeen)) {
+        Show-RamExtensionGuide
+        return
+    }
+
+    $key = [string]$script:Settings.BridgeHotkey
+    Show-RamMessage -Message ('Всё готово.' + [Environment]::NewLine + [Environment]::NewLine +
+                              "Открой roblox.com под нужным аккаунтом и нажми $key — или значок AltHub на панели браузера.")
+}

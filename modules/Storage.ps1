@@ -391,6 +391,15 @@ function Get-RamDefaultSettings {
         KeepMutex       = $true  # держать мьютекс мультизапуска
         ConfirmOnExit   = $true
         FirstRunDone    = $false # прошёл ли человек мастер первого запуска
+
+        # Приём входа из ТВОЕГО браузера. Выключен по умолчанию намеренно:
+        # пока он выключен, AltHub не занимает ни одного порта и слушать его
+        # некому. Включается осознанно, вместе с установкой расширения.
+        BridgeEnabled   = $false
+        # Клавиша приёма. F10 — как просил Эрнест, но её можно поменять:
+        # глобальная горячая клавиша отбирает её у ВСЕХ программ сразу, а
+        # F10 во многих из них открывает меню.
+        BridgeHotkey    = 'F10'
     }
 }
 
@@ -429,6 +438,8 @@ function Load-RamSettings {
 
     # Мусор в файле не должен превращаться в непонятное поведение окна.
     if ($s.OnClose -notin @('exit', 'tray')) { $s.OnClose = 'exit' }
+    if ([string]::IsNullOrWhiteSpace([string]$s.BridgeHotkey)) { $s.BridgeHotkey = 'F10' }
+    if ($s.BridgeHotkey -notin (Get-RamBridgeHotkeyChoices)) { $s.BridgeHotkey = 'F10' }
     return $s
 }
 

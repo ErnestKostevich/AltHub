@@ -647,6 +647,22 @@ function Set-RamDoubleBuffered {
     } catch { }
 }
 
+function Get-RamScaled {
+    <#
+      Число, подогнанное под масштаб экрана.
+
+      Нужен потому, что высоты кнопок по всему главному окну были вписаны
+      числами (26, 28, 32, 34, 36). Шрифт при 125% и 150% растёт, высота
+      остаётся — и надпись обрезается по вертикали, вплоть до полностью
+      пустой кнопки. Ширина так не ломается: New-RamButton считает её от
+      надписи сам, а заданное число там — только минимум.
+    #>
+    param([Parameter(Mandatory)][int]$Value)
+    $sc = 1.0
+    if ($null -ne $Global:RamTheme -and $null -ne $Global:RamTheme.M) { $sc = $Global:RamTheme.M.Scale }
+    return [int][Math]::Round($Value * $sc)
+}
+
 function New-RamButton {
     <#
       Кнопка на основе Panel: рисуем сами, чтобы получить тёмный фон,
@@ -987,6 +1003,7 @@ function New-RamCard {
         IsHover  = $false
         Selected = $false
         AccountId = ''
+        DropLine = $null
     }
 
     $card.Add_Paint({
@@ -1006,6 +1023,17 @@ function New-RamCard {
         $pen = New-Object System.Drawing.Pen($(if ($st.Selected) { $t.Accent } else { $t.Border }), 1)
         $e.Graphics.DrawPath($pen, $path)
         $pen.Dispose(); $path.Dispose()
+
+        # Индикатор места вставки при перетаскивании: толстая акцентная черта
+        # у верхнего или нижнего края — видно, КУДА встанет карточка при
+        # отпускании, ещё до того как её отпустили. Без неё перетаскивание
+        # работало, но угадать результат было нельзя.
+        if ($st.DropLine) {
+            $lineY = if ($st.DropLine -eq 'before') { 1 } else { $s.Height - 3 }
+            $lp = New-Object System.Drawing.Pen($t.Accent, 3)
+            $e.Graphics.DrawLine($lp, 6, $lineY, ($s.Width - 6), $lineY)
+            $lp.Dispose()
+        }
     })
 
     return $card
