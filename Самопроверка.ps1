@@ -1828,7 +1828,10 @@ Check 'Вёрстка держится на 100%, 125% и 150%' {
         # --- не вылезает за контейнер. ТЕПЕРЬ И ДЛЯ ДЕТЕЙ САМОЙ ФОРМЫ:
         # раньше эта ветка их исключала, поэтому в диалогах, где всё лежит
         # прямо на окне, выход за край был невидим в принципе.
-        if ($null -ne $Control.Parent) {
+        if ($null -ne $Control.Parent -and $Control.Visible) {
+            # Скрытые не проверяем: они ничего не закрывают и никуда не лезут.
+            # Свёрнутая кнопка «С отмеченными» лежит на месте видимых — это
+            # нормально, показывается всегда только одна из двух раскладок.
             $par = $Control.Parent
             $box = $par.ClientSize
             $scrollable = ($par -is [System.Windows.Forms.FlowLayoutPanel] -and $par.AutoScroll)
@@ -1869,6 +1872,11 @@ Check 'Вёрстка держится на 100%, 125% и 150%' {
         $kids = @()
         foreach ($c in $Parent.Controls) {
             if ($c -is [System.Windows.Forms.FlowLayoutPanel]) { continue }
+            # Скрытые не участвуют: они ничего не закрывают. Верхняя полоса
+            # держит две раскладки кнопок — полную и свёрнутую в одну кнопку
+            # с меню, — и одна из них всегда спрятана. Их взаимное положение
+            # не значит ничего.
+            if (-not $c.Visible) { continue }
             $kids += $c
         }
 
@@ -2206,6 +2214,66 @@ Check 'Главное окно не задаёт кнопки числами' {
         throw ('высота кнопки задана числом: ' + (($bad | Select-Object -First 2) -join ' | '))
     }
     'высоты кнопок главного окна берутся из метрик'
+}
+
+Check 'Каждый вызов ведёт к существующей функции' {
+    # САМАЯ ВАЖНАЯ ПРОВЕРКА ПОСЛЕ СИНТАКСИСА.
+    # PowerShell не жалуется на вызов несуществующей функции при разборе — он
+    # падает только когда до строки дойдёт выполнение. То есть кнопка выглядит
+    # рабочей, человек её жмёт, и НИЧЕГО НЕ ПРОИСХОДИТ. Именно так в 1.3 уехал
+    # приём из браузера: правка не сохранилась целиком, функция осталась
+    # неопределённой, а её вызов — на месте, и с виду всё было нормально.
+    $defined = @{}
+    $calls   = @{}
+    $files = @((Join-Path $root 'AltHub.ps1')) + (Get-ChildItem (Join-Path $root 'modules\*.ps1')).FullName
+    foreach ($f in $files) {
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile($f, [ref]$null, [ref]$null)
+        foreach ($d in $ast.FindAll({ $args[0] -is [System.Management.Automation.Language.FunctionDefinitionAst] }, $true)) {
+            $defined[$d.Name] = $true
+        }
+        foreach ($c in $ast.FindAll({ $args[0] -is [System.Management.Automation.Language.CommandAst] }, $true)) {
+            $n = $c.GetCommandName()
+            if ($n) { $calls[$n] = ('{0}:{1}' -f (Split-Path -Leaf $f), $c.Extent.StartLineNumber) }
+        }
+    }
+    if ($defined.Count -lt 100) { throw "функций нашлось всего $($defined.Count) — проверка не сработала" }
+
+    $bad = @()
+    foreach ($n in $calls.Keys) {
+        if ($n -notmatch '\-Ram') { continue }
+        if ($defined.ContainsKey($n)) { continue }
+        $bad += ('{0} (зовут в {1})' -f $n, $calls[$n])
+    }
+    if ($bad.Count) { throw ('зовут несуществующее: ' + (($bad | Sort-Object) -join '; ')) }
+    "функций $($defined.Count), все вызовы разрешаются"
+}
+
+Check 'Мастер первого запуска не врёт про способы' {
+    # H₂O скачал 1.3, прошёл мастер, не увидел там входа через окно браузера и
+    # сделал единственный возможный вывод — что этого способа нет. Способ был.
+    # Врал мастер: он остался со старым списком из четырёх пунктов.
+    $wiz = Get-Content -LiteralPath (Join-Path $root 'modules\UiWizard.ps1') -Raw
+    if ($wiz -match 'Способов четыре') { throw 'мастер всё ещё обещает четыре способа' }
+    foreach ($must in @('Show-RamExternalBrowserLoginWindow', 'Show-RamAddChooser')) {
+        if ($wiz -notmatch [regex]::Escape($must)) {
+            throw "мастер не ведёт к $must — человек не найдёт этот способ"
+        }
+    }
+    'мастер ведёт и в окно браузера, и на общий экран добавления'
+}
+
+Check 'Успешный вход снимает метку «вход мёртв»' {
+    # «Готово: вход снова живой» — а карточка красная. Так и было: кука
+    # обновлялась, а CookieOk оставался 'no', потому что его тут просто не
+    # трогали. Причём ни при одном способе добавления, не только при новом.
+    $src = Get-Content -LiteralPath (Join-Path $root 'modules\Accounts.ps1') -Raw
+    $i = $src.IndexOf('function Add-RamAccountFromCookie')
+    if ($i -lt 0) { throw 'Add-RamAccountFromCookie не найдена' }
+    $body = $src.Substring($i, 1800)
+    if ($body -notmatch "CookieOk\s*=\s*'yes'") {
+        throw 'подтверждённая сервером кука не снимает метку «вход мёртв»'
+    }
+    'метка снимается при подтверждённой куке'
 }
 
 Check 'README не врёт числом проверок' {

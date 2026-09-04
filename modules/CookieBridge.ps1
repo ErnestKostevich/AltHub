@@ -232,7 +232,7 @@ function Receive-RamBridgeCookie {
         if ($script:UI.ContainsKey('Cards')) {
             Invoke-RamSafe -What 'обновление списка после приёма из браузера' -Body {
                 Build-RamCards
-                Update-RamHeader
+                Update-RamHeaderCounts
             }
         }
         Show-RamMainWindow
@@ -240,6 +240,57 @@ function Receive-RamBridgeCookie {
         $why = if ($r -and $r.Error) { $r.Error } else { 'Roblox не подтвердил вход' }
         Write-RamLog "Приём из браузера: кука пришла, но аккаунт не добавлен — $why" 'warn'
     }
+}
+
+function Set-RamBridgeHotkeyWithFallback {
+    <#
+      Вешает клавишу приёма, а если Windows её не отдала — берёт следующую
+      свободную и ГОВОРИТ об этом.
+
+      ПОЧЕМУ ЭТО ВАЖНО. F10 — обычная клавиша, её часто держит что-то другое:
+      игра, оверлей, другой менеджер. RegisterHotKey в таком случае просто
+      отвечает «нет». Раньше на этом всё и заканчивалось: в журнал уходила
+      строчка, которую никто не читает, а человек жал F10 на странице Roblox
+      и не понимал, почему ничего не происходит. Молчаливый отказ — худший
+      вид поломки: программа выглядит сломанной целиком, хотя не работает
+      одна клавиша.
+    #>
+    param(
+        [Parameter(Mandatory)][string]$Preferred,
+        [switch]$Announce
+    )
+
+    if (Register-RamBridgeHotkey -Key $Preferred) {
+        Write-RamLog "Приём из браузера: клавиша $Preferred." 'ok'
+        return $Preferred
+    }
+
+    foreach ($k in (Get-RamBridgeHotkeyChoices)) {
+        if ($k -eq $Preferred) { continue }
+        if (Register-RamBridgeHotkey -Key $k) {
+            $script:Settings.BridgeHotkey = $k
+            Save-RamSettings -Settings $script:Settings
+            Write-RamLog "Клавишу $Preferred держит другая программа — приём переехал на $k." 'warn'
+            if ($Announce) {
+                Show-RamMessage -Kind 'warn' -Message (
+                    "Клавишу $Preferred в этой системе уже занимает другая программа, и Windows не отдала её AltHub." +
+                    [Environment]::NewLine + [Environment]::NewLine +
+                    "Приём входа переехал на $k — жми её на странице roblox.com." +
+                    [Environment]::NewLine + [Environment]::NewLine +
+                    'Клавишу можно выбрать другую в настройках, раздел «Из браузера». А можно вообще не пользоваться клавишей: на панели браузера есть значок AltHub, он делает то же самое.')
+            }
+            return $k
+        }
+    }
+
+    Write-RamLog 'Все клавиши приёма заняты другими программами.' 'err'
+    if ($Announce) {
+        Show-RamMessage -Kind 'warn' -Message (
+            'Ни одну из клавиш приёма Windows не отдала — их держат другие программы.' +
+            [Environment]::NewLine + [Environment]::NewLine +
+            'Приём из браузера всё равно работает: нажми значок AltHub на панели браузера, он делает ровно то же самое.')
+    }
+    return ''
 }
 
 function Invoke-RamBrowserGrab {
@@ -254,7 +305,17 @@ function Invoke-RamBrowserGrab {
     #>
     $port = Get-RamBridgePort
     if ($port -le 0) {
-        Write-RamLog 'Приём из браузера выключен — включи его в настройках.' 'warn'
+        # Молча ничего не делать нельзя: человек нажал клавишу и ждёт
+        # результата. Если приёма нет — надо сказать и сразу предложить
+        # включить, а не отправлять искать настройку самому.
+        Write-RamLog 'Приём из браузера выключен.' 'warn'
+        if (Confirm-Ram ('Приём входа из браузера сейчас выключен, поэтому нажатие ничего не сделало.' +
+                         [Environment]::NewLine + [Environment]::NewLine + 'Включить его?')) {
+            $script:Settings.BridgeEnabled = $true
+            Save-RamSettings -Settings $script:Settings
+            Update-RamCookieBridgeState
+            if (-not (Test-RamBridgeExtensionSeen)) { Show-RamExtensionGuide }
+        }
         return $false
     }
     $url = "http://127.0.0.1:$port/grab?althub_grab=$port"
@@ -305,9 +366,5 @@ function Update-RamCookieBridgeState {
         } -SkipSwitchKeys:(-not $script:Settings.HotkeySwitch))
     }
 
-    if (Register-RamBridgeHotkey -Key $key) {
-        Write-RamLog "Приём из браузера: клавиша $key." 'ok'
-    } else {
-        Write-RamLog "Клавишу $key занял кто-то другой. Возьми другую в настройках или жми кнопку AltHub на панели браузера." 'warn'
-    }
+    [void](Set-RamBridgeHotkeyWithFallback -Preferred $key -Announce)
 }

@@ -1393,6 +1393,34 @@ function Update-RamAccountsBar {
         $bar.PerformLayout()
     }
 
+    # Влезают ли все кнопки в одну строку? Если нет — прячем четыре действия
+    # над отмеченными и показываем вместо них одну кнопку с меню.
+    $collapsed = $script:UI.AccBarCollapsed
+    if ($null -ne $collapsed -and -not $collapsed.IsDisposed) {
+        $full = 0
+        foreach ($c in $bar.Controls) {
+            if ($c -eq $collapsed) { continue }
+            $full += $c.Width + $c.Margin.Left + $c.Margin.Right
+        }
+        $short = 0
+        $keep = @('＋  Добавить', 'Все')
+        foreach ($c in $bar.Controls) {
+            if ($c -eq $collapsed -or ($null -ne $c.Tag -and $keep -contains [string]$c.Tag.Text)) {
+                $short += $c.Width + $c.Margin.Left + $c.Margin.Right
+            }
+        }
+        $needCollapse = ($full -gt $bar.Width) -and ($short -le $bar.Width)
+
+        $changed = $false
+        foreach ($c in $bar.Controls) {
+            $want = if ($c -eq $collapsed) { $needCollapse }
+                    elseif ($null -ne $c.Tag -and $keep -contains [string]$c.Tag.Text) { $true }
+                    else { -not $needCollapse }
+            if ($c.Visible -ne $want) { $c.Visible = $want; $changed = $true }
+        }
+        if ($changed) { $bar.PerformLayout() }
+    }
+
     # Высота — по ФАКТИЧЕСКОМУ низу кнопок, а не по PreferredSize.
     # У FlowLayoutPanel с переносом PreferredSize отдаёт размер БЕЗ переноса:
     # на 150% он говорил «974x57», хотя панель шириной 708 и кнопки уже
@@ -2239,6 +2267,25 @@ function New-RamMainForm {
     $bar.Controls.Add((New-RamButton -Text 'Набор' -Width (& $bw 92) -Height $metrics.RowHLg -Tooltip 'Собрать отмеченные аккаунты в набор' -OnClick { Invoke-RamAssignGroup }))
     $bar.Controls.Add((New-RamButton -Text 'Метка' -Width (& $bw 92) -Height $metrics.RowHLg -Tooltip 'Цветная метка для отмеченных' -OnClick { Invoke-RamAssignColor }))
     $bar.Controls.Add((New-RamButton -Text 'Удалить' -Width (& $bw 96) -Height $metrics.RowHLg -Tooltip 'Убрать отмеченные из менеджера' -OnClick { Invoke-RamDeleteSelected }))
+
+    # СВЁРНУТЫЙ ВИД НА УЗКОМ ОКНЕ.
+    # Шесть кнопок в одну строку помещаются не всегда. Раньше лишние просто
+    # переносились на вторую и третью строку, и полоса разъезжалась лесенкой —
+    # выглядит это плохо, а на глаз ещё и непонятно, где кончается одно и
+    # начинается другое. Теперь четыре действия над отмеченными сворачиваются
+    # в одну кнопку с меню: строка всегда одна, а список действий тот же.
+    $bSel = New-RamButton -Text 'С отмеченными  ▾' -Width (& $bw 170) -Height $metrics.RowHLg `
+                          -Tooltip 'Игра, набор, метка, удаление — для отмеченных аккаунтов'
+    $selMenu = New-RamContextMenu
+    [void](Add-RamMenuItem -Menu $selMenu -Text 'Назначить игру'   -OnClick { Invoke-RamAssignGame })
+    [void](Add-RamMenuItem -Menu $selMenu -Text 'Собрать в набор'  -OnClick { Invoke-RamAssignGroup })
+    [void](Add-RamMenuItem -Menu $selMenu -Text 'Поставить метку'  -OnClick { Invoke-RamAssignColor })
+    [void](Add-RamMenuItem -Menu $selMenu -Separator)
+    [void](Add-RamMenuItem -Menu $selMenu -Text 'Убрать из менеджера' -OnClick { Invoke-RamDeleteSelected })
+    $bSel.Add_Click({ $selMenu.Show($this, (New-Object System.Drawing.Point(0, $this.Height))) }.GetNewClosure())
+    $bSel.Visible = $false
+    $bar.Controls.Add($bSel)
+    $script:UI.AccBarCollapsed = $bSel
 
     # Здесь жёлоб убирали, но отрисовщика темы не ставили: рамка и подсветка
     # наведения оставались системными. Обёртка делает и то, и другое.

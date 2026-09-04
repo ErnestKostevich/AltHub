@@ -87,8 +87,8 @@ function Show-RamFirstRun {
     # Ширина — по самой длинной строке, которую нельзя переносить.
     $widest = 0
     foreach ($s in @('Менеджер прочитает вход из приложения Roblox',
-                     'Вставить пачкой  —  строки вида ник:кука',
-                     'Из браузера  —  через F12, покажу по шагам')) {
+                     'Окно браузера  —  войти руками, как на сайте',
+                     'Все способы  —  вставить пачкой, из своего браузера, из файла')) {
         $w = (Measure-RamText -Text $s -Font $t.FontBody).Width
         if ($w -gt $widest) { $widest = $w }
     }
@@ -219,19 +219,35 @@ function Show-RamFirstRun {
 
     # =========================================================== 3. аккаунты
     $p3 = & $newPage 'accounts'
-    [void](& $addText $p3 'Способов четыре. Начни с первого — он самый простой и не требует лезть в браузер.' $t.FontSmall $t.Muted)
+    # ЭТОТ СПИСОК ОБЯЗАН СОВПАДАТЬ С ЭКРАНОМ ДОБАВЛЕНИЯ.
+    # Он этого не делал: мастер первого запуска показывал четыре способа и
+    # ни словом не упоминал вход через окно браузера, хотя тот уже был в
+    # программе. Человек проходил мастер, не находил обещанного способа и
+    # делал единственный возможный вывод — что его нет. Самопроверка теперь
+    # сверяет эти два места между собой.
+    [void](& $addText $p3 'Способов много, но начать проще всего с первых двух. Остальные — на экране «Добавить».' $t.FontSmall $t.Muted)
     [void](Add-RamGap -Layout $p3 -Height $m.GapSm)
 
     $bApp = New-RamButton -Text 'Из приложения Roblox  —  проще всего' -Width 1 -Height $m.RowH -Kind 'primary' -OnClick {
         [void](Show-RamAddWizard)
         Update-RamWizardAccountCount -Form $this.FindForm()
     }
-    $bBatch = New-RamButton -Text 'Вставить пачкой  —  строки вида ник:кука' -Width 1 -Height $m.RowH -Kind 'ghost' -OnClick {
-        [void](Show-RamBatchAddDialog)
-        Update-RamWizardAccountCount -Form $this.FindForm()
+    $bWindow = New-RamButton -Text 'Окно браузера  —  войти руками, как на сайте' -Width 1 -Height $m.RowH -Kind 'ghost' -OnClick {
+        $f = $this.FindForm()
+        $cookie = $null
+        try { $cookie = Show-RamExternalBrowserLoginWindow }
+        catch {
+            Write-RamLog "Окно входа: $($_.Exception.Message)" 'err'
+            Show-RamError -Text ('Не удалось открыть окно входа:' + [Environment]::NewLine + [Environment]::NewLine + $_.Exception.Message)
+        }
+        if ($cookie) {
+            $r = Import-RamAccountLine -Line $cookie
+            if ($r -and $r.Ok) { Save-RamState; Write-RamLog "Через окно браузера добавлен аккаунт: $($r.Alias)" 'ok' }
+        }
+        Update-RamWizardAccountCount -Form $f
     }
-    $bBrowser = New-RamButton -Text 'Из браузера  —  через F12, покажу по шагам' -Width 1 -Height $m.RowH -Kind 'ghost' -OnClick {
-        [void](Show-RamBrowserGuide)
+    $bAll = New-RamButton -Text 'Все способы  —  вставить пачкой, из своего браузера, из файла' -Width 1 -Height $m.RowH -Kind 'ghost' -OnClick {
+        Show-RamAddChooser
         Update-RamWizardAccountCount -Form $this.FindForm()
     }
     $bManual = New-RamButton -Text 'Вручную  —  вставить куку самому' -Width 1 -Height $m.RowH -Kind 'ghost' -OnClick {
@@ -243,7 +259,7 @@ function Show-RamFirstRun {
         }
         Update-RamWizardAccountCount -Form $this.FindForm()
     }
-    [void](Add-RamStack -Layout $p3 -Items @($bApp, $bBatch, $bBrowser, $bManual) -Align 'fill' -Gap $m.GapSm)
+    [void](Add-RamStack -Layout $p3 -Items @($bApp, $bWindow, $bAll, $bManual) -Align 'fill' -Gap $m.GapSm)
 
     [void](Add-RamGap -Layout $p3 -Height $m.GapSm)
     $lblCount = New-RamLabel -Text '' -X 0 -Y 0 -Width 10 -Height $capH -Font $t.FontSmall -Color $t.Muted

@@ -2208,6 +2208,22 @@ function Show-RamSettingsDialog {
                            'AltHub на панели браузера.'))
     [void](Add-RamGap -Layout $pb -Height $m.GapSm)
 
+    # ЖИВОЕ СОСТОЯНИЕ, А НЕ ТОЛЬКО ГАЛОЧКА.
+    # Галочка говорит, чего человек хочет. Она не говорит, получилось ли:
+    # клавишу могла забрать другая программа, расширение могло быть не
+    # установлено. Без этой строки оставалось только жать клавишу и гадать.
+    $stateTxt = if (-not [bool]$s.BridgeEnabled) {
+        'Сейчас: приём выключен, порт не занят.'
+    } elseif ((Get-RamBridgePort) -le 0) {
+        'Сейчас: приём включён, но порт занять не вышло — все порты диапазона заняты.'
+    } elseif (Test-RamBridgeExtensionSeen) {
+        "Сейчас: жду на клавише $($s.BridgeHotkey), расширение на связи. Можно пользоваться."
+    } else {
+        "Сейчас: жду на клавише $($s.BridgeHotkey), но расширение ещё ни разу не отзывалось — похоже, оно не установлено в браузере."
+    }
+    [void](& $addNote $pb $stateTxt)
+    [void](Add-RamGap -Layout $pb -Height $m.GapSm)
+
     $bHow = New-RamButton -Text 'Как поставить расширение' -Height $m.RowH -OnClick {
         Show-RamExtensionGuide
     }

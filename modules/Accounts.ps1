@@ -210,9 +210,17 @@ function Add-RamAccountFromCookie {
 
     foreach ($a in $script:Accounts) {
         if ($a.UserId -eq $user.Id) {
-            # Аккаунт уже есть — просто обновляем куку.
+            # Аккаунт уже есть — обновляем куку.
             $a.Cookie   = $Cookie
             $a.Username = $user.Name
+            # И СНИМАЕМ МЕТКУ «ВХОД МЁРТВ». Её тут не снимали вообще, ни при
+            # одном способе добавления: человек заново входил в аккаунт, кука
+            # приезжала живая, программа отвечала «готово» — а карточка
+            # оставалась красной с надписью «вход мёртв». Мы только что
+            # получили от Roblox имя по этой куке через Get-RamAuthenticatedUser,
+            # то есть она заведомо рабочая — молчать об этом нельзя.
+            $a.CookieOk     = 'yes'
+            $a.CookieCheckedAt = (Get-Date).ToString('s')
             Save-RamState
             return [pscustomobject]@{ Account = $a; IsNew = $false; User = $user }
         }
@@ -221,6 +229,10 @@ function Add-RamAccountFromCookie {
     $acc = New-RamAccount -Alias $user.Name -Cookie $Cookie -PlaceId $PlaceId
     $acc.Username = $user.Name
     $acc.UserId   = $user.Id
+    # Кука только что подтверждена сервером — так и записываем, чтобы новый
+    # аккаунт не висел с неизвестным состоянием входа до первой проверки.
+    $acc.CookieOk = 'yes'
+    $acc.CookieCheckedAt = (Get-Date).ToString('s')
     $script:Accounts = @($script:Accounts) + $acc
     Save-RamState
 
@@ -502,22 +514,58 @@ function Invoke-RamRepairAll {
         $done = $false
         while (-not $done) {
             $left = $dead.Count - $fixed - $skipped
+            # ДВА ПУТИ, А НЕ ОДИН.
+            # Раньше починка умела только «войди в приложении Roblox и вернись
+            # сюда». Для твинков это мучение: приходится по очереди входить в
+            # приложение каждым, а Roblox держит только один вход разом. Теперь
+            # рядом стоит «Окно браузера» — там вход делается прямо здесь, без
+            # хождения в приложение.
             $msg  = "Аккаунт «$($acc.Alias)» — вход мёртв, его надо взять заново.`n`n" +
-                    "1. Открой приложение Roblox и войди под «$($acc.Alias)».`n" +
-                    "2. Вернись сюда и нажми «Забрать вход».`n`n" +
-                    "Если в приложении сейчас другой аккаунт — нажми «Сменить аккаунт»: " +
+                    "Способ первый, быстрее для твинков: нажми «Окно браузера» — откроется " +
+                    "настоящий Chrome, войдёшь в «$($acc.Alias)» руками, и вход встанет на место.`n`n" +
+                    "Способ второй, через приложение: открой Roblox под «$($acc.Alias)» и нажми " +
+                    "«Забрать вход». Если в приложении сейчас другой аккаунт — «Сменить аккаунт»: " +
                     "Roblox закроется и забудет вход, а на сервере он останется живым. " +
                     "Кнопку «Выйти» внутри Roblox не трогай, она убивает вход насовсем.`n`n" +
                     "Осталось починить: $left"
 
             $ans = Show-RamMessage -Message $msg -Title 'Починка входов' -Kind 'warn' -Buttons @(
-                @{ Text = 'Забрать вход';    Value = 'take';   Kind = 'primary' },
+                @{ Text = 'Окно браузера';   Value = 'window'; Kind = 'primary' },
+                @{ Text = 'Забрать вход';    Value = 'take'   },
                 @{ Text = 'Сменить аккаунт'; Value = 'switch' },
                 @{ Text = 'Пропустить';      Value = 'skip'   },
                 @{ Text = 'Хватит';          Value = 'stop'   }
             )
 
             switch ([string]$ans) {
+                'window' {
+                    $cookie = $null
+                    try { $cookie = Show-RamExternalBrowserLoginWindow }
+                    catch {
+                        Write-RamLog "Починка входов: $($_.Exception.Message)" 'err'
+                        Show-RamError -Text ('Не удалось открыть окно входа:' + [Environment]::NewLine +
+                                             [Environment]::NewLine + $_.Exception.Message)
+                    }
+                    if ($cookie) {
+                        $r = Import-RamAccountLine -Line $cookie
+                        if ($r -and $r.Ok) {
+                            if ($r.Alias -eq $acc.Alias) {
+                                $fixed++
+                                $done = $true
+                                Write-RamLog "'$($acc.Alias)': вход обновлён через окно браузера." 'ok'
+                            } else {
+                                # Вошли не под тем — говорим прямо, а не молча
+                                # засчитываем починку.
+                                Write-RamLog "Ожидался «$($acc.Alias)», вошли под «$($r.Alias)»." 'warn'
+                                Show-RamInfo ("Вошли под «$($r.Alias)», а не под «$($acc.Alias)»." + [Environment]::NewLine +
+                                              [Environment]::NewLine + "Он добавлен в список, но вход в «$($acc.Alias)» остался мёртвым.")
+                            }
+                        } else {
+                            $why = if ($r -and $r.Error) { $r.Error } else { 'Roblox не подтвердил вход' }
+                            Show-RamError -Text ('Вход не подошёл:' + [Environment]::NewLine + [Environment]::NewLine + $why)
+                        }
+                    }
+                }
                 'take' {
                     if (Invoke-RamRepairCookie -Account $acc) {
                         Set-RamCookieAlive -Account $acc
