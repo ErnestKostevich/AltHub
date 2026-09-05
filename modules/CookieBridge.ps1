@@ -77,6 +77,78 @@ function Get-RamBridgeGrabPage {
 '@
 }
 
+function Save-RamExtensionIcons {
+    <#
+      Рисует значки расширения прямо в папку extension\.
+
+      ЗАЧЕМ. Без значка Chrome не показывает кнопку расширения на панели —
+      она есть, но выглядит как безымянный кусочек в меню-пазле, и найти её
+      нельзя. Человек ставит расширение, смотрит на панель и справедливо
+      говорит: «поставил, а ничего нет».
+
+      ПОЧЕМУ РИСУЕМ, А НЕ КЛАДЁМ ФАЙЛ В РЕПОЗИТОРИЙ. Весь смысл проекта в том,
+      что внутри только читаемый текст. Значок — двоичный файл, и он рождается
+      здесь, на твоей машине, из того же рисунка, что и значок в часах.
+
+      Рисуем один раз: если файлы уже есть, ничего не делаем.
+    #>
+    param([switch]$Force)
+
+    $dir = Get-RamExtensionDir
+    if (-not (Test-Path -LiteralPath $dir)) { return $false }
+
+    $sizes = @(16, 48, 128)
+    $need = $false
+    foreach ($n in $sizes) {
+        if (-not (Test-Path -LiteralPath (Join-Path $dir ("icon{0}.png" -f $n)))) { $need = $true }
+    }
+    if (-not $need -and -not $Force) { return $true }
+
+    $accent = $Global:RamTheme.Accent
+    try {
+        foreach ($n in $sizes) {
+            $bmp = New-Object System.Drawing.Bitmap($n, $n)
+            $g = [System.Drawing.Graphics]::FromImage($bmp)
+            try {
+                $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
+                $g.TextRenderingHint = [System.Drawing.Text.TextRenderingHint]::AntiAlias
+                $g.Clear([System.Drawing.Color]::Transparent)
+
+                $pad = [Math]::Max(1, [int]($n * 0.06))
+                $r   = [int]($n * 0.22)
+                $rect = New-Object System.Drawing.Rectangle($pad, $pad, ($n - $pad * 2), ($n - $pad * 2))
+                $path = New-Object System.Drawing.Drawing2D.GraphicsPath
+                $d = $r * 2
+                $path.AddArc($rect.X, $rect.Y, $d, $d, 180, 90)
+                $path.AddArc(($rect.Right - $d), $rect.Y, $d, $d, 270, 90)
+                $path.AddArc(($rect.Right - $d), ($rect.Bottom - $d), $d, $d, 0, 90)
+                $path.AddArc($rect.X, ($rect.Bottom - $d), $d, $d, 90, 90)
+                $path.CloseFigure()
+                $br = New-Object System.Drawing.SolidBrush($accent)
+                $g.FillPath($br, $path)
+                $br.Dispose(); $path.Dispose()
+
+                # Буква A — та же, что на значке программы.
+                $fs = [float]($n * 0.62)
+                $fnt = New-Object System.Drawing.Font('Segoe UI', $fs, [System.Drawing.FontStyle]::Bold, [System.Drawing.GraphicsUnit]::Pixel)
+                $sf = New-Object System.Drawing.StringFormat
+                $sf.Alignment = 'Center'; $sf.LineAlignment = 'Center'
+                $wb = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::White)
+                $g.DrawString('A', $fnt, $wb, (New-Object System.Drawing.RectangleF(0, 0, $n, $n)), $sf)
+                $wb.Dispose(); $sf.Dispose(); $fnt.Dispose()
+            } finally { $g.Dispose() }
+
+            $bmp.Save((Join-Path $dir ("icon{0}.png" -f $n)), [System.Drawing.Imaging.ImageFormat]::Png)
+            $bmp.Dispose()
+        }
+        Write-RamLog 'Значки расширения нарисованы в папке extension.' 'info'
+        return $true
+    } catch {
+        Write-RamLog "Не вышло нарисовать значки расширения: $($_.Exception.Message)" 'warn'
+        return $false
+    }
+}
+
 function Start-RamCookieBridge {
     <#
       Занимает первый свободный порт из диапазона и начинает слушать.
@@ -183,6 +255,17 @@ function Invoke-RamBridgePump {
                     Receive-RamBridgeCookie -Cookie $body.Trim()
                 }
             }
+            '/problem' {
+                $script:Bridge.ExtSeen = $true
+                Write-RamBridgeText -Response $resp -Text 'ok' -Type 'text/plain'
+                if (-not [string]::IsNullOrWhiteSpace($body)) {
+                    $why = $body.Trim()
+                    Write-RamLog "Приём из браузера: $why" 'warn'
+                    Show-RamMessage -Kind 'warn' -Message ('Не вышло забрать вход из браузера.' +
+                        [Environment]::NewLine + [Environment]::NewLine + $why)
+                    Show-RamMainWindow
+                }
+            }
             default {
                 $resp.StatusCode = 404
                 Write-RamBridgeText -Response $resp -Text 'no' -Type 'text/plain'
@@ -235,7 +318,18 @@ function Receive-RamBridgeCookie {
                 Update-RamHeaderCounts
             }
         }
+
+        # УСПЕХ НЕ ДОЛЖЕН БЫТЬ МОЛЧАЛИВЫМ.
+        # Раньше он уходил ОДНОЙ СТРОКОЙ В ЖУРНАЛ — а окно AltHub в этот
+        # момент за браузером, человек его не видит. Кука доезжала, аккаунт
+        # обновлялся, в журнале стояло «добавлен» — и со стороны это выглядело
+        # как «нажал, ничего не произошло». Восемь раз подряд.
+        #
+        # Поэтому: поднимаем окно и говорим словами, что именно приехало.
         Show-RamMainWindow
+        $what = if ($r.New) { 'Добавлен аккаунт' } else { 'Обновлён вход' }
+        Show-RamMessage -Kind 'ok' -Message ("$what из браузера:" + [Environment]::NewLine + [Environment]::NewLine +
+                                             $r.Alias)
     } else {
         $why = if ($r -and $r.Error) { $r.Error } else { 'Roblox не подтвердил вход' }
         Write-RamLog "Приём из браузера: кука пришла, но аккаунт не добавлен — $why" 'warn'

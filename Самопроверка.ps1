@@ -1871,7 +1871,12 @@ Check 'Вёрстка держится на 100%, 125% и 150%' {
 
         $kids = @()
         foreach ($c in $Parent.Controls) {
-            if ($c -is [System.Windows.Forms.FlowLayoutPanel]) { continue }
+            # Прокручиваемые списки РАНЬШЕ здесь пропускались — и именно из-за
+            # этого проверка не заметила, как список профилей наехал на подпись
+            # под заголовком раздела. Список — такой же сосед, как остальные:
+            # если он лезет на шапку, это видно человеку, значит должно быть
+            # видно и проверке.
+            if ($c -is [System.Windows.Forms.FlowLayoutPanel] -and $c.Dock -ne 'None') { continue }
             # Скрытые не участвуют: они ничего не закрывают. Верхняя полоса
             # держит две раскладки кнопок — полную и свёрнутую в одну кнопку
             # с меню, — и одна из них всегда спрятана. Их взаимное положение
@@ -2274,6 +2279,135 @@ Check 'Успешный вход снимает метку «вход мёртв
         throw 'подтверждённая сервером кука не снимает метку «вход мёртв»'
     }
     'метка снимается при подтверждённой куке'
+}
+
+Check 'Список раздела не наезжает на его шапку' {
+    # ПОЧЕМУ ОТДЕЛЬНОЙ ПРОВЕРКОЙ, А НЕ ОБЩИМ ПОИСКОМ НАЛОЖЕНИЙ.
+    # Общий поиск эту поломку не увидел: до пары «подпись под заголовком» и
+    # «список» он не добирался. А человек увидел сразу — карточка профиля
+    # закрыла собой пояснение под словами «Профили запуска». Инвариант тут
+    # простой и проверяется в лоб: список начинается НЕ ВЫШЕ низа шапки.
+    $keepSection = $script:Settings.Section
+    $f = New-RamMainForm
+    try {
+        $f.StartPosition = 'Manual'
+        $f.Location = New-Object System.Drawing.Point(0, 0)
+        $f.ShowInTaskbar = $false
+        $f.Show()
+        foreach ($k in 1..6) { [System.Windows.Forms.Application]::DoEvents() }
+
+        $pairs = @(
+            @{ Panel = 'games';    Host = 'GamesHost' },
+            @{ Panel = 'profiles'; Host = 'ProfilesHost' },
+            @{ Panel = 'stats';    Host = 'StatsHost' }
+        )
+        $seen = 0
+        foreach ($pr in $pairs) {
+            $panel = $script:UI.Panels[$pr.Panel]
+            if ($null -eq $panel) { continue }
+            $host_ = $null
+            foreach ($c in $panel.Controls) {
+                if ($c -is [System.Windows.Forms.FlowLayoutPanel] -and $c.AutoScroll) { $host_ = $c; break }
+            }
+            if ($null -eq $host_) { continue }
+            $seen++
+
+            foreach ($c in $panel.Controls) {
+                if ($c -eq $host_) { continue }
+                if ($c.Height -le 6) { continue }
+                if ($c.Bottom -gt $host_.Top) {
+                    $what = if ($c -is [System.Windows.Forms.Label]) { "«$($c.Text)»" }
+                            elseif ($null -ne $c.Tag -and $c.Tag.PSObject.Properties.Name -contains 'Caption') { "кнопка «$($c.Tag.Caption)»" }
+                            else { $c.GetType().Name }
+                    throw ("раздел «{0}»: список начинается на {1}, а {2} кончается на {3} — список закрывает шапку" -f `
+                           $pr.Panel, $host_.Top, $what, $c.Bottom)
+                }
+            }
+        }
+        if ($seen -lt 3) { throw "нашлось только $seen списков из трёх — проверка не сработала" }
+        "проверено разделов: $seen"
+    } finally {
+        foreach ($tn in @('UpdateTimer','ScheduleTimer','LaunchTimer','SearchTimer','StartupTimer')) {
+            if ($script:UI.ContainsKey($tn) -and $null -ne $script:UI[$tn]) { $script:UI[$tn].Stop() }
+        }
+        try { $f.Close(); $f.Dispose() } catch { }
+        $script:Settings.Section = $keepSection
+    }
+}
+
+Check 'Расширение просит ровно те права, что использует' {
+    # Chrome не ругается заранее: вызов chrome.storage без права «storage»
+    # просто молча не работает в момент выполнения. Расширение при этом
+    # выглядит установленным и живым. Ровно так я и сломал его сам, добавив
+    # хранение порта и будильник и забыв дописать права.
+    $dir = Join-Path $root 'extension'
+    $js  = (Get-ChildItem -LiteralPath $dir -Filter *.js -File | ForEach-Object { Get-Content -LiteralPath $_.FullName -Raw }) -join "`n"
+    $man = Get-Content -LiteralPath (Join-Path $dir 'manifest.json') -Raw
+
+    $used = @([regex]::Matches($js, 'chrome\.([a-zA-Z]+)') | ForEach-Object { $_.Groups[1].Value } | Sort-Object -Unique)
+    if ($used.Count -eq 0) { throw 'вызовов chrome.* не нашлось — проверка не сработала' }
+
+    # Что чем обеспечивается. Некоторым частям права не нужны вовсе, другие
+    # включаются не правом, а своим разделом манифеста.
+    $needPermission = @('cookies', 'webNavigation', 'storage', 'alarms', 'notifications', 'scripting', 'downloads')
+    $byManifestKey  = @{ action = 'action'; commands = 'commands' }
+    $free           = @('runtime', 'tabs', 'i18n', 'extension')
+
+    $missing = @()
+    foreach ($u in $used) {
+        if ($free -contains $u) { continue }
+        if ($byManifestKey.ContainsKey($u)) {
+            if ($man -notmatch ('"' + $byManifestKey[$u] + '"')) { $missing += "$u (нет раздела «$($byManifestKey[$u])» в манифесте)" }
+            continue
+        }
+        if ($needPermission -contains $u) {
+            if ($man -notmatch ('"' + $u + '"')) { $missing += "$u (нет права «$u»)" }
+            continue
+        }
+        $missing += "$u (неизвестная часть — добавь её в этот список осознанно)"
+    }
+    if ($missing.Count) { throw ('расширение зовёт то, на что не имеет прав: ' + ($missing -join '; ')) }
+    "используется: $($used -join ', ')"
+}
+
+Check 'Расширение переживает сон' {
+    # Расширения третьего манифеста Chrome усыпляет через полминуты, и все
+    # переменные в памяти обнуляются. Номер порта, на который надо отдать
+    # куку, раньше жил именно в переменной — и терялся, пока человек вводил
+    # логин, пароль и код двухфакторки. Вход проходил, а отдавать было некуда:
+    # окно висело открытым, AltHub молчал. Работало только когда успевали
+    # уложиться до сна.
+    $js = Get-Content -LiteralPath (Join-Path $root 'extension\background.js') -Raw
+    if ($js -notmatch 'chrome\.storage\.session') {
+        throw 'номер порта не переживает сон расширения — он должен лежать в chrome.storage.session'
+    }
+    if ($js -notmatch 'chrome\.alarms\.create') {
+        throw 'нет будильника: если события не придут, расширение так и не проснётся проверить куку'
+    }
+    'порт хранится вне памяти, будильник заведён'
+}
+
+Check 'Рядом с программой нет исполняемых файлов' {
+    # Обещание в шапке README: внутри только текст, который можно прочитать
+    # блокнотом. Проверяем именно исполняемое — .exe, .dll и прочее, что
+    # запускается. Картинки не считаем: значок программы и значки расширения
+    # программа рисует сама на твоей машине, в репозитории их нет (см.
+    # .gitignore), а появление .png рядом — это её работа, а не чужой файл.
+    #
+    # Chrome for Testing, если ты его скачал по кнопке, лежит в data\ —
+    # эта папка сюда не входит намеренно: это твои данные, а не код проекта.
+    $skip = @('.git', 'data', 'link')
+    $bad = @()
+    foreach ($f in (Get-ChildItem -LiteralPath $root -Recurse -File -ErrorAction SilentlyContinue)) {
+        $rel = $f.FullName.Substring($root.Length).TrimStart([char]92)
+        $top = $rel.Split([char]92)[0]
+        if ($skip -contains $top) { continue }
+        if ($f.Extension -in @('.exe', '.dll', '.msi', '.scr', '.bat', '.com', '.pyd', '.so')) {
+            $bad += $rel
+        }
+    }
+    if ($bad.Count) { throw ('исполняемое рядом с программой: ' + (($bad | Select-Object -First 5) -join ', ')) }
+    'исполняемых файлов нет — только текст и нарисованные значки'
 }
 
 Check 'README не врёт числом проверок' {

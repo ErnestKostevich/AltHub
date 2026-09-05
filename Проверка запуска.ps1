@@ -152,6 +152,35 @@ Write-Host ''
 Write-Host 'AltHub — проверка запуска (то, что видит человек)' -ForegroundColor Cyan
 Write-Host '--------------------------------------------------'
 
+# СНАЧАЛА УБЕДИМСЯ, ЧТО ALTHUB НЕ ОТКРЫТ.
+#
+# Стенд запускает программу и потом дёргает её окно по-настоящему: шлёт
+# «свернуть», шлёт «закрыть», смотрит, что получилось. Если AltHub в этот
+# момент уже работает, срабатывает защита от второго запуска: новая копия не
+# открывается, а показывает окно СТАРОЙ — и дальше стенд начинает дёргать
+# рабочее окно человека. Свернёт его, закроет и запишет себе «сбой».
+#
+# Ровно это однажды и произошло: проверка закрыла человеку запущенную
+# программу и обвинила в этом её же.
+$busy = $false
+try {
+    $probe = New-Object System.Threading.Mutex($false, 'Global\AltHubSingleInstance')
+    if ($probe.WaitOne(0)) { $probe.ReleaseMutex() } else { $busy = $true }
+    $probe.Dispose()
+} catch { $busy = $true }
+
+if ($busy) {
+    Write-Host ''
+    Write-Host '  AltHub сейчас запущен — проверку делать нельзя.' -ForegroundColor Yellow
+    Write-Host '  Она дёргает окно по-настоящему: свернёт и закроет то, что открыто у тебя.' -ForegroundColor Yellow
+    Write-Host ''
+    Write-Host '  Закрой AltHub и запусти проверку заново.' -ForegroundColor Yellow
+    Write-Host ''
+    Write-Host 'Нажми Enter, чтобы закрыть.' -ForegroundColor DarkGray
+    [void](Read-Host)
+    return
+}
+
 $src = (Resolve-Path $Path).Path
 if (-not (Test-Path -LiteralPath (Join-Path $src 'AltHub.ps1'))) {
     Write-Host "  В папке нет AltHub.ps1: $src" -ForegroundColor Red

@@ -10,6 +10,34 @@
 
 # --------------------------------------------------------- карточки ---------
 
+function Get-RamHeaderBottom {
+    <#
+      Низ самого нижнего элемента шапки раздела плюс зазор.
+
+      ЗАЧЕМ. Шапки разделов раньше отмерялись числами: 66 у «Игр» и «Профилей»,
+      46 у «Статистики» и «Журнала». Числа подбирались под шрифт 100% и под тот
+      набор подписей, который был в тот день. Стоило шрифту вырасти или
+      добавиться строке — список наезжал на подпись. Ровно это и произошло с
+      «Профилями»: карточка профиля закрыла собой пояснение под заголовком.
+
+      Считать по факту нельзя ошибиться: список начинается там, где кончилась
+      шапка, что бы в неё ни положили.
+    #>
+    param(
+        [Parameter(Mandatory)]$Panel,
+        [int]$Gap = 0
+    )
+    # Visible здесь НЕ спрашиваем. Разделы кроме открытого спрятаны, а у
+    # скрытой панели все дети тоже отвечают Visible = false — с этой проверкой
+    # мерка возвращала ноль, и список наезжал на всю шапку целиком.
+    $bottom = 0
+    foreach ($c in $Panel.Controls) {
+        if ($c.Bottom -gt $bottom) { $bottom = $c.Bottom }
+    }
+    if ($Gap -le 0) { $Gap = $Global:RamTheme.M.GapSm }
+    return $bottom + $Gap
+}
+
 function Get-RamCardWidth {
     if (-not $script:UI.ContainsKey('Cards')) { return 1000 }
     return [Math]::Max(700, $script:UI.Cards.ClientSize.Width - 24)
@@ -2435,6 +2463,7 @@ function New-RamMainForm {
     $pGames.Controls.Add((New-RamLabel -Text $gamesHintText -X 0 -Y ($headBtnH + (Get-RamScaled 8)) -Width $gamesHintW -Height $gamesHintH `
                                        -Font $t.FontSmall -Color $t.Muted -Truncatable))
 
+    $headH = Get-RamHeaderBottom -Panel $pGames -Gap $metrics.Gap
     $gamesHost = New-RamScrollPanel -Width $contentW -Height ($contentH - $headH)
     $gamesHost.Location = New-Object System.Drawing.Point(0, $headH)
     $gamesHost.Anchor   = 'Top,Left,Right,Bottom'
@@ -2480,10 +2509,16 @@ function New-RamMainForm {
     # От правого края: на крупном масштабе жёсткие X давали наложение.
     $saveW    = (Measure-RamControl -Control $bSaveProf).Width
     $starterW = (Measure-RamControl -Control $bStarter).Width
+    # Якорь к правому краю ОБЯЗАТЕЛЕН. Без него кнопки остаются на координате,
+    # посчитанной при сборке окна: развернул на весь экран — список растянулся,
+    # а кнопки шапки остались висеть посреди пустоты. У «Игр», «Статистики» и
+    # «Журнала» якорь был, у «Профилей» его забыли поставить.
     $bSaveProf.Location = New-Object System.Drawing.Point(($contentW - $saveW), 0)
+    $bSaveProf.Anchor   = 'Top,Right'
     $bStarter.Location  = New-Object System.Drawing.Point(($contentW - $saveW - $metrics.Gap - $starterW), 0)
+    $bStarter.Anchor    = 'Top,Right'
 
-    $profHeadH = [Math]::Max($bSaveProf.Height, $bStarter.Height) + $metrics.GapLg
+    $profHeadH = Get-RamHeaderBottom -Panel $pProf -Gap $metrics.Gap
     $profHost = New-RamScrollPanel -Width $contentW -Height ($contentH - $profHeadH)
     $profHost.Location = New-Object System.Drawing.Point(0, $profHeadH)
     $profHost.Anchor   = 'Top,Left,Right,Bottom'
@@ -2512,11 +2547,11 @@ function New-RamMainForm {
     # К ПРАВОМУ КРАЮ, а не к вписанному числу 420. Раньше кнопка висела
     # посреди пустой шапки: слева заголовок, справа половина панели пустая.
     $resetW = (Measure-RamControl -Control $bResetStats).Width
-    $statHeadH = $bResetStats.Height + $metrics.GapSm * 2
     $bResetStats.Location = New-Object System.Drawing.Point(($contentW - $resetW), $metrics.GapSm)
     $bResetStats.Anchor   = 'Top,Right'
     $pStats.Controls.Add($bResetStats)
 
+    $statHeadH = Get-RamHeaderBottom -Panel $pStats -Gap $metrics.Gap
     $statsHost = New-RamScrollPanel -Width $contentW -Height ($contentH - $statHeadH)
     $statsHost.Location = New-Object System.Drawing.Point(0, $statHeadH)
     $statsHost.Anchor   = 'Top,Left,Right,Bottom'
@@ -2550,7 +2585,6 @@ function New-RamMainForm {
     # Обе кнопки к ПРАВОМУ краю: «Очистить» крайняя, «Скопировать» слева от
     # неё. Раньше обе стояли от вписанного числа 420 и висели посреди шапки,
     # а справа зияла пустота во всю ширину окна.
-    $logHeadH = [Math]::Max($bClearLog.Height, $bCopyLog.Height) + $metrics.GapSm * 2
     $bClearLog.Location = New-Object System.Drawing.Point(($contentW - $clearW), $metrics.GapSm)
     $bClearLog.Anchor   = 'Top,Right'
     $pLog.Controls.Add($bClearLog)
@@ -2560,6 +2594,7 @@ function New-RamMainForm {
     $pLog.Controls.Add($bCopyLog)
 
     $logHost = New-Object System.Windows.Forms.Panel
+    $logHeadH = Get-RamHeaderBottom -Panel $pLog -Gap $metrics.Gap
     $logHost.Location  = New-Object System.Drawing.Point(0, $logHeadH)
     $logHost.Size      = New-Object System.Drawing.Size($contentW, ($contentH - $logHeadH))
     $logHost.BackColor = $t.LogBack

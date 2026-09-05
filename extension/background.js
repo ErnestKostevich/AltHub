@@ -10,19 +10,32 @@
 // ЧТО ОНО ЧИТАЕТ: ровно одну куку — .ROBLOSECURITY с доменов roblox.com.
 // Ни истории, ни закладок, ни других сайтов: в manifest.json нет и прав на них.
 //
+// ============ ГЛАВНАЯ ТОНКОСТЬ, ИЗ-ЗА КОТОРОЙ ВСЁ ЛОМАЛОСЬ ============
+//
+// Расширения третьего манифеста НЕ ЖИВУТ ПОСТОЯННО. Chrome усыпляет их через
+// полминуты бездействия и будит на событие — а при пробуждении все переменные
+// в памяти начинаются с нуля.
+//
+// Раньше номер порта, на который надо отдать куку, хранился просто в
+// переменной. AltHub передавал его в адресе страницы входа, расширение
+// запоминало — и засыпало, пока человек печатал логин, пароль и проходил
+// капчу. Вход проходил успешно, кука появлялась, расширение просыпалось на
+// это событие — и не знало, куда её отдавать. Окно входа висело открытым,
+// AltHub молчал. Выглядело как «вошёл, и ничего не произошло».
+//
+// Поэтому всё, что нужно пережить сон, лежит в chrome.storage.session: он
+// живёт, пока открыт браузер, и очищается сам при закрытии.
+//
 // ===================== ТРИ СПОСОБА, КАК ЭТО ЗАПУСКАЕТСЯ =====================
 //
 // 1) КНОПКА НА ПАНЕЛИ (или Alt+Shift+A). Ты уже сидишь на roblox.com под
 //    нужным аккаунтом — жмёшь значок AltHub рядом с адресной строкой.
 //    Расширение ищет AltHub на нескольких портах подряд и отдаёт куку ему.
-//    Ничего не открывается и не мигает.
 //
-// 2) F10 ИЗ САМОГО ALTHUB. AltHub открывает в браузере по умолчанию свою
+// 2) КЛАВИША ИЗ САМОГО ALTHUB. AltHub открывает в браузере по умолчанию свою
 //    страницу http://127.0.0.1:ПОРТ/grab, расширение видит переход на неё,
-//    забирает куку, отдаёт и закрывает вкладку. Вкладка мелькает на долю
-//    секунды — это цена за то, что иначе усыплённое расширение не разбудить.
-//    Адрес локальный, поэтому на серверы Roblox не уходит ни номер порта,
-//    ни сам факт нажатия.
+//    забирает куку, отдаёт и закрывает вкладку. Адрес локальный, поэтому на
+//    серверы Roblox не уходит ни номер порта, ни факт нажатия.
 //
 // 3) ОКНО ВХОДА ALTHUB. AltHub сам запускает отдельное окно браузера с этим
 //    расширением и открывает roblox.com/login?althub_port=ПОРТ. Здесь, и
@@ -33,14 +46,37 @@
 
 // Порты, на которых AltHub ждёт куку от кнопки и горячей клавиши. Фиксированный
 // небольшой диапазон, а не один порт: вдруг соседняя программа занята первым.
+// Тот же список продублирован в modules\CookieBridge.ps1, и проверка следит,
+// чтобы они не разъехались.
 const BRIDGE_PORTS = [52713, 52714, 52715, 52716, 52717];
 
-// --- состояние окна входа (способ 3) ---
-let loginPort = null;
-let alreadySent = false;
-let readyToCapture = false;
-let preparing = false;
-const bannedValues = new Set();
+// --------------------------------------------------------------- состояние --
+
+const S = {
+  async get() {
+    try {
+      const v = await chrome.storage.session.get(['loginPort', 'ready', 'sent', 'banned']);
+      return {
+        loginPort: v.loginPort || null,
+        ready: !!v.ready,
+        sent: !!v.sent,
+        banned: Array.isArray(v.banned) ? v.banned : []
+      };
+    } catch (e) {
+      console.log('[AltHub] состояние не прочиталось:', e);
+      return { loginPort: null, ready: false, sent: false, banned: [] };
+    }
+  },
+  async set(patch) {
+    try {
+      await chrome.storage.session.set(patch);
+    } catch (e) {
+      console.log('[AltHub] состояние не записалось:', e);
+    }
+  }
+};
+
+let preparing = false;   // только внутри одного пробуждения, наружу не нужно
 
 function isRobloxHost(host) {
   try {
@@ -109,20 +145,36 @@ async function findBridgePort() {
   return null;
 }
 
-async function grabAndSend(closeTabId) {
+async function tellProblem(port, reason) {
+  // МОЛЧАНИЕ — ХУДШИЙ ОТВЕТ. Раньше при любой неудаче расширение просто
+  // закрывало вкладку, и со стороны это выглядело как «нажал, мигнуло,
+  // ничего не произошло» — не отличить от полностью сломанной программы.
+  // Теперь причина уезжает в AltHub, и он говорит её словами.
+  if (!port) return;
+  try {
+    await fetch('http://127.0.0.1:' + port + '/problem', {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain' },
+      body: reason
+    });
+  } catch {}
+}
+
+async function grabAndSend(closeTabId, knownPort) {
+  const port = knownPort || await findBridgePort();
+
   const value = await readRobloSecurity();
   if (!value) {
     console.log('[AltHub] на roblox.com нет входа — нечего передавать');
-    await notify('В браузере нет входа на roblox.com. Зайди в аккаунт и повтори.');
+    await tellProblem(port, 'В браузере нет входа на roblox.com. Открой сайт и войди в нужный аккаунт, потом нажми ещё раз.');
     if (closeTabId) { try { await chrome.tabs.remove(closeTabId); } catch {} }
     return false;
   }
 
-  const port = await findBridgePort();
   if (!port) {
     console.log('[AltHub] AltHub не отвечает ни на одном порту моста');
-    await notify('AltHub не отвечает. Открой его и включи приём в настройках.');
-    if (closeTabId) { try { await chrome.tabs.remove(closeTabId); } catch {} }
+    // Сказать некому — AltHub и есть тот, кто не отвечает. Вкладку оставляем
+    // открытой: на ней написано, что делать.
     return false;
   }
 
@@ -131,16 +183,11 @@ async function grabAndSend(closeTabId) {
     ok = await postCookie(port, value);
   } catch (e) {
     console.log('[AltHub] отправка не удалась:', e);
+    await tellProblem(port, 'Кука прочиталась, но отправить её в AltHub не вышло: ' + e);
   }
   console.log('[AltHub] передано в AltHub на порт', port, '=', ok);
   if (closeTabId) { try { await chrome.tabs.remove(closeTabId); } catch {} }
   return ok;
-}
-
-async function notify(text) {
-  // Тихо: без прав на уведомления просто пишем в консоль расширения.
-  // Человек всё равно увидит результат в самом AltHub.
-  console.log('[AltHub] ' + text);
 }
 
 chrome.action.onClicked.addListener(() => { grabAndSend(null); });
@@ -158,9 +205,11 @@ async function removeRobloSecurity() {
     console.log('[AltHub] cookies.getAll ошибка:', e);
     return;
   }
+  const st = await S.get();
+  const banned = st.banned.slice();
   for (const c of list) {
     if (!isRobloxHost(c.domain)) continue;
-    if (c.value) bannedValues.add(c.value);
+    if (c.value && banned.indexOf(c.value) < 0) banned.push(c.value);
     try {
       await chrome.cookies.remove({ url: cookieUrl(c), name: '.ROBLOSECURITY' });
       console.log('[AltHub] снята старая .ROBLOSECURITY с', c.domain, c.path);
@@ -168,36 +217,37 @@ async function removeRobloSecurity() {
       console.log('[AltHub] не удалось снять куку с', c.domain, e);
     }
   }
+  await S.set({ banned: banned });
 }
 
 async function prepareSession() {
-  if (preparing || readyToCapture || !loginPort) return;
+  if (preparing) return;
+  const st = await S.get();
+  if (st.ready || !st.loginPort) return;
   preparing = true;
   try {
     // Один проход достаточно: onCompleted и onChanged подстрахуют повторной
-    // проверкой bannedValues, если сессия восстановится позже. Раньше здесь
-    // был sleep(800) + повторная уборка — на холодном профиле это держало
-    // хранилище кук занятым ровно тогда, когда страница пыталась их читать
-    // для своей навигации, и переход подвисал на сером экране.
+    // проверкой запрещённых значений. Раньше здесь был sleep + повторная
+    // уборка — на холодном профиле это держало хранилище кук занятым ровно
+    // тогда, когда страница пыталась их читать для своей навигации, и переход
+    // подвисал на сером экране.
     await removeRobloSecurity();
-    readyToCapture = true;
   } catch (e) {
     console.log('[AltHub] prepareSession ошибка:', e);
-    readyToCapture = true;
   } finally {
+    await S.set({ ready: true });
     preparing = false;
   }
 }
 
 async function noteLoginPort(p) {
-  if (!p || p === loginPort) {
-    if (p && !readyToCapture && !preparing) await prepareSession();
+  if (!p) return;
+  const st = await S.get();
+  if (st.loginPort === p) {
+    if (!st.ready) await prepareSession();
     return;
   }
-  loginPort = p;
-  alreadySent = false;
-  readyToCapture = false;
-  bannedValues.clear();
+  await S.set({ loginPort: p, ready: false, sent: false, banned: [] });
   console.log('[AltHub] окно входа: порт', p);
   await prepareSession();
 
@@ -209,25 +259,26 @@ async function noteLoginPort(p) {
 }
 
 async function trySendLoginCookie() {
-  if (alreadySent || !loginPort || !readyToCapture) return;
+  const st = await S.get();
+  if (st.sent || !st.loginPort || !st.ready) return;
 
   const value = await readRobloSecurity();
   if (!value) return;
 
-  if (bannedValues.has(value)) {
+  if (st.banned.indexOf(value) >= 0) {
     // Chrome восстановил прошлую сессию уже после уборки. Это НЕ новый вход.
     console.log('[AltHub] это ещё старая кука, снимаю снова и жду настоящую');
     await removeRobloSecurity();
     return;
   }
 
-  alreadySent = true;
+  await S.set({ sent: true });
   try {
-    await postCookie(loginPort, value);
+    await postCookie(st.loginPort, value);
     console.log('[AltHub] окно входа: кука передана');
   } catch (e) {
     console.log('[AltHub] окно входа: отправка не удалась:', e);
-    alreadySent = false;
+    await S.set({ sent: false });
   }
 }
 
@@ -242,8 +293,9 @@ chrome.webNavigation.onCommitted.addListener((d) => {
   if (isLoopback(host)) {
     const p = extractPortFromUrl(d.url, 'althub_grab');
     if (p) {
+      // Порт уже известен из адреса — не ищем его заново по всему диапазону.
       // Намеренно без await: обработчик не должен держать переход.
-      grabAndSend(d.tabId).catch((e) => console.log('[AltHub] grab ошибка:', e));
+      grabAndSend(d.tabId, p).catch((e) => console.log('[AltHub] grab ошибка:', e));
     }
     return;
   }
@@ -276,3 +328,28 @@ chrome.cookies.onChanged.addListener((info) => {
   if (!isRobloxHost(info.cookie.domain)) return;
   trySendLoginCookie();
 });
+
+// ПОСЛЕДНЯЯ СТРАХОВКА. События выше могут не прийти: Roblox после входа
+// меняет страницу своими средствами, без полной навигации, а Set-Cookie мог
+// случиться в тот момент, когда расширение спало. Поэтому пока идёт вход,
+// раз в 20 секунд просто проверяем, не появилась ли новая кука.
+// chrome.alarms будит расширение, даже если оно уснуло, — на этом всё и держится.
+chrome.alarms.onAlarm.addListener(async (a) => {
+  if (a.name !== 'althub-login-watch') return;
+  const st = await S.get();
+  if (!st.loginPort || st.sent) {
+    try { await chrome.alarms.clear('althub-login-watch'); } catch {}
+    return;
+  }
+  await trySendLoginCookie();
+});
+
+chrome.runtime.onInstalled.addListener(() => {
+  try { chrome.alarms.create('althub-login-watch', { periodInMinutes: 0.34 }); } catch {}
+});
+chrome.runtime.onStartup.addListener(() => {
+  try { chrome.alarms.create('althub-login-watch', { periodInMinutes: 0.34 }); } catch {}
+});
+// И на всякий случай при каждом пробуждении: будильник мог не создаться,
+// если расширение поставили руками и события установки не было.
+try { chrome.alarms.create('althub-login-watch', { periodInMinutes: 0.34 }); } catch {}
