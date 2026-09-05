@@ -39,7 +39,9 @@ $script:Bridge = @{
     Task     = $null
     Timer    = $null
     ExtSeen  = $false      # расширение хоть раз поздоровалось
+    Hotkey   = ''          # клавиша, которую Windows РЕАЛЬНО отдала, а не желаемая
     LastHello = $null
+    Pumping  = $false      # см. защиту от повторного входа в Invoke-RamBridgePump
 }
 
 function Get-RamBridgePort {
@@ -50,6 +52,19 @@ function Get-RamBridgePort {
 
 function Test-RamBridgeRunning {
     return ($null -ne $script:Bridge.Listener -and $script:Bridge.Listener.IsListening)
+}
+
+function Get-RamBridgeHotkey {
+    <#
+      Клавиша, которую Windows РЕАЛЬНО отдала. Пустая строка — не отдала ни
+      одной.
+
+      Настройка BridgeHotkey говорит, чего человек хочет; она не говорит,
+      получилось ли. Раньше обе строки состояния печатали именно её — и
+      обещали клавишу, которая не работает.
+    #>
+    if ($null -eq $script:Bridge) { return '' }
+    return [string]$script:Bridge.Hotkey
 }
 
 function Test-RamBridgeExtensionSeen {
@@ -167,6 +182,8 @@ function Start-RamCookieBridge {
         }
         $script:Bridge.Listener = $l
         $script:Bridge.Port     = $port
+        # Сбрасываем: «расширение на связи» от прошлой сессии — враньё.
+        $script:Bridge.ExtSeen  = $false
         $script:Bridge.Task     = $l.GetContextAsync()
 
         # Разбираем запросы в таймере окна, а не в отдельном потоке: у нас
@@ -206,7 +223,16 @@ function Stop-RamCookieBridge {
 }
 
 function Invoke-RamBridgePump {
-    <# Один заход: если запрос пришёл — обработать и снова встать в ожидание. #>
+    <#
+      Один заход: если запрос пришёл — обработать и снова встать в ожидание.
+
+      ЗАЩИТА ОТ ПОВТОРНОГО ВХОДА. Разбор идёт в тике таймера окна, а внутри мы
+      показываем человеку окно с результатом. Модальное окно в WinForms само
+      крутит цикл сообщений — то есть таймер тикнет ЕЩЁ РАЗ, пока мы стоим в
+      предыдущем тике. Без флага второй заход попытался бы забрать результат у
+      задачи, которую уже забрал первый.
+    #>
+    if ($script:Bridge.Pumping) { return }
     if (-not (Test-RamBridgeRunning)) { return }
     $task = $script:Bridge.Task
     if ($null -eq $task -or -not $task.IsCompleted) { return }
@@ -216,6 +242,7 @@ function Invoke-RamBridgePump {
     $script:Bridge.Task = $script:Bridge.Listener.GetContextAsync()
     if ($null -eq $ctx) { return }
 
+    $script:Bridge.Pumping = $true
     try {
         $req  = $ctx.Request
         $resp = $ctx.Response
@@ -261,9 +288,12 @@ function Invoke-RamBridgePump {
                 if (-not [string]::IsNullOrWhiteSpace($body)) {
                     $why = $body.Trim()
                     Write-RamLog "Приём из браузера: $why" 'warn'
+                    # Окно поднимаем ДО сообщения: иначе модальное окно
+                    # открывается за браузером, а поднятие происходит уже
+                    # после того, как человек его закроет.
+                    Show-RamMainWindow
                     Show-RamMessage -Kind 'warn' -Message ('Не вышло забрать вход из браузера.' +
                         [Environment]::NewLine + [Environment]::NewLine + $why)
-                    Show-RamMainWindow
                 }
             }
             default {
@@ -274,6 +304,8 @@ function Invoke-RamBridgePump {
     } catch {
         Write-RamLog "Приём из браузера: сбой при разборе запроса: $($_.Exception.Message)" 'warn'
         try { $ctx.Response.Close() } catch { }
+    } finally {
+        $script:Bridge.Pumping = $false
     }
 }
 
@@ -300,6 +332,18 @@ function Receive-RamBridgeCookie {
       Write-RamLog её вырезает.
     #>
     param([Parameter(Mandatory)][string]$Cookie)
+
+    # ПОКА ИДЁТ ПРОВЕРКА, ОКНО НЕ ДОЛЖНО ВЫГЛЯДЕТЬ МЁРТВЫМ.
+    # Кука проверяется на серверах Roblox синхронно, прямо в тике таймера
+    # интерфейса. Обычно это доли секунды, но на плохой сети, под VPN или при
+    # ответе 429 запрос ждёт до 25 секунд — и Windows успевает дописать к
+    # заголовку окна «Не отвечает». Честно говорим, что происходит, и даём
+    # окну перерисоваться перед тем, как уйти в ожидание.
+    Set-RamStatus 'Проверяю вход, полученный из браузера…'
+    if ($script:UI.ContainsKey('Form') -and $null -ne $script:UI.Form) {
+        try { $script:UI.Form.Refresh() } catch { }
+    }
+    [System.Windows.Forms.Application]::DoEvents()
 
     $r = $null
     try {
@@ -355,6 +399,7 @@ function Set-RamBridgeHotkeyWithFallback {
     )
 
     if (Register-RamBridgeHotkey -Key $Preferred) {
+        $script:Bridge.Hotkey = $Preferred
         Write-RamLog "Приём из браузера: клавиша $Preferred." 'ok'
         return $Preferred
     }
@@ -362,6 +407,7 @@ function Set-RamBridgeHotkeyWithFallback {
     foreach ($k in (Get-RamBridgeHotkeyChoices)) {
         if ($k -eq $Preferred) { continue }
         if (Register-RamBridgeHotkey -Key $k) {
+            $script:Bridge.Hotkey = $k
             $script:Settings.BridgeHotkey = $k
             Save-RamSettings -Settings $script:Settings
             Write-RamLog "Клавишу $Preferred держит другая программа — приём переехал на $k." 'warn'
@@ -377,6 +423,7 @@ function Set-RamBridgeHotkeyWithFallback {
         }
     }
 
+    $script:Bridge.Hotkey = ''
     Write-RamLog 'Все клавиши приёма заняты другими программами.' 'err'
     if ($Announce) {
         Show-RamMessage -Kind 'warn' -Message (

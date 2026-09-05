@@ -674,6 +674,12 @@ function Show-RamExternalBrowserLoginWindow {
             try { $browserProc.CloseMainWindow() | Out-Null } catch { }
             Start-Sleep -Milliseconds 600
             if (-not $browserProc.HasExited) { try { $browserProc.Kill() } catch { } }
+            # ЖДЁМ, ПОКА ОН ДЕЙСТВИТЕЛЬНО УМРЁТ. Chrome держит SingletonLock
+            # на папке профиля; пока он его не отпустил, новый chrome.exe не
+            # запускается, а передаёт задание старому и мгновенно завершается
+            # сам. Дальше цикл видит HasExited и решает, что человек закрыл
+            # окно, хотя окно на экране открыто.
+            try { [void]$browserProc.WaitForExit(5000) } catch { }
             Start-Sleep -Milliseconds 1200
             $browserProc = Start-RamLoginBrowser -BrowserExe $browserExe -ProcArgs $procArgs
             Start-Sleep -Milliseconds 600
@@ -692,6 +698,14 @@ function Show-RamExternalBrowserLoginWindow {
 
         $getContextTask = $listener.GetContextAsync()
         $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+        # Расширение здоровается сразу, как только увидит адрес со своим
+        # портом. Если за 25 секунд не поздоровалось — его в этом браузере
+        # нет (обычный Chrome 137+ молча игнорирует --load-extension), и
+        # ждать пять минут бессмысленно.
+        $goneSince   = $null
+        $sawHello    = $false
+        $helloDue    = (Get-Date).AddSeconds(25)
+        $noExtension = $false
 
         while ($true) {
             [System.Windows.Forms.Application]::DoEvents()
@@ -713,7 +727,9 @@ function Show-RamExternalBrowserLoginWindow {
                 $body      = $reader.ReadToEnd()
                 $reader.Dispose()
 
-                if ($context.Request.Url.AbsolutePath -eq '/cookie' -and -not [string]::IsNullOrWhiteSpace($body)) {
+                $reqPath = $context.Request.Url.AbsolutePath.ToLowerInvariant()
+                if ($reqPath -eq '/hello') { $sawHello = $true }
+                if ($reqPath -eq '/cookie' -and -not [string]::IsNullOrWhiteSpace($body)) {
                     $resultCookie = $body.Trim()
                 }
 
@@ -728,7 +744,22 @@ function Show-RamExternalBrowserLoginWindow {
             }
 
             if ($null -ne $browserProc -and $browserProc.HasExited) {
-                Write-RamLog 'Внешний браузер: процесс закрыт пользователем до получения куки.' 'info'
+                # Не спешим: в первые секунды «процесс исчез» чаще означает,
+                # что chrome.exe передал задание уже работающей копии и вышел
+                # сам, а не что человек закрыл окно.
+                if ($null -eq $goneSince) { $goneSince = Get-Date }
+                if (((Get-Date) - $goneSince).TotalSeconds -ge 3) {
+                    Write-RamLog 'Внешний браузер: процесс закрыт пользователем до получения куки.' 'info'
+                    break
+                }
+            } else {
+                $goneSince = $null
+            }
+
+            if (-not $sawHello -and (Get-Date) -gt $helloDue) {
+                # Обещание из шапки этого файла, наконец выполненное.
+                Write-RamLog 'Внешний браузер: расширение не загрузилось — этот браузер игнорирует --load-extension.' 'err'
+                $noExtension = $true
                 break
             }
 
@@ -754,6 +785,14 @@ function Show-RamExternalBrowserLoginWindow {
         }
     }
 
+    if ($noExtension) {
+        Show-RamMessage -Kind 'warn' -Message (
+            'В этом браузере расширение-мост не загрузилось, поэтому забрать вход из него нечем.' +
+            [Environment]::NewLine + [Environment]::NewLine +
+            'Так ведёт себя обычный Chrome 137 и новее: он намеренно игнорирует загрузку расширений из командной строки.' +
+            [Environment]::NewLine + [Environment]::NewLine +
+            'Что делать: скачать Chrome for Testing кнопкой в настройках, разделе «Из браузера» — там этот способ работает всегда. Либо пользоваться другими способами добавить аккаунт.')
+    }
     return $resultCookie
 }
 function Request-RamChromeForTesting {

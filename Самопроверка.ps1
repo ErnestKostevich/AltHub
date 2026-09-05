@@ -2410,6 +2410,123 @@ Check 'Рядом с программой нет исполняемых файл
     'исполняемых файлов нет — только текст и нарисованные значки'
 }
 
+Check 'У каждого действия есть видимый ответ' {
+    # САМАЯ ЧАСТАЯ ЖАЛОБА ЗА ЭТИ СУТКИ — «функции не работают». Почти всегда
+    # это значило другое: функция РАБОТАЛА, но молча. Приём из браузера восемь
+    # раз подряд добавил аккаунт и написал об этом одной строкой в журнал —
+    # окно при этом было за браузером. «Проверить входы» при живых входах не
+    # отвечала ничем. «Окна» и «Закрыть» при пустом списке молчали.
+    #
+    # Молчание неотличимо от поломки. Поэтому: действие, которое вызывается с
+    # кнопки, обязано сделать хоть что-то видимое — сказать словами, обновить
+    # строку внизу или перерисовать список.
+    $src = Remove-RamComments -Text (Get-RamAllSource)
+
+    # Действия, вызываемые из интерфейса: ищем их прямо в обработчиках кнопок
+    # и пунктов меню, а не гадаем по имени.
+    $called = @{}
+    foreach ($m in [regex]::Matches($src, '(?:OnClick|Add_Click)[^\n]*\{[^}]*?(Invoke-Ram[A-Za-z]+)')) {
+        $called[$m.Groups[1].Value] = $true
+    }
+    if ($called.Count -lt 5) { throw "обработчиков нашлось всего $($called.Count) — проверка не сработала" }
+
+    # Внутренние, у которых видимого ответа быть и не должно: они либо сами
+    # переключают окно, либо крутятся по таймеру в фоне.
+    $silentOk = @(
+        'Invoke-RamFocusAccountByIndex',   # переводит фокус на окно Roblox — это и есть ответ
+        'Invoke-RamPendingTile',           # отложенная раскладка, тик таймера
+        'Invoke-RamScheduleCheck',         # расписание, тик таймера
+        'Invoke-RamWatchCheck',            # присмотр за набором, тик таймера
+        'Invoke-RamNextLaunch',            # очередь запуска, тик таймера
+        'Invoke-RamSafe',                  # обёртка
+        'Invoke-RamStartupCookieCheck'     # проверка при старте, говорит через строку внизу
+    )
+
+    $mute = @()
+    foreach ($name in $called.Keys) {
+        if ($silentOk -contains $name) { continue }
+        $i = $src.IndexOf("function $name")
+        if ($i -lt 0) { continue }
+        $j = $src.IndexOf("`nfunction ", $i + 5)
+        $body = if ($j -gt 0) { $src.Substring($i, $j - $i) } else { $src.Substring($i) }
+
+        $visible = ($body -match 'Show-Ram(Message|Info|Error|MainWindow)') -or
+                   ($body -match 'Confirm-Ram') -or
+                   ($body -match 'Set-RamStatus') -or
+                   ($body -match 'Build-RamCards') -or
+                   ($body -match 'Update-Ram(GamesPanel|ProfilesPanel|StatsPanel|HeaderCounts)')
+        if (-not $visible) { $mute += $name }
+    }
+    if ($mute.Count) {
+        throw ('действие ничего не показывает человеку: ' + (($mute | Sort-Object) -join ', '))
+    }
+    "проверено действий: $($called.Count)"
+}
+
+Check 'Клавиша приёма берётся с запасным вариантом' {
+    # САМЫЙ ДОРОГОЙ ДЕФЕКТ 1.3. Механизм перебора свободных клавиш существовал,
+    # но на старте его не звали: там стоял Register-RamBridgeHotkey напрямую.
+    # Если выбранная клавиша занята другой программой — а F10 занята часто —
+    # приём молча не работал КАЖДЫЙ запуск, и единственным следом была строка
+    # в журнале. Это и есть «жму F10, ничего не происходит».
+    $src = Remove-RamComments -Text (Get-RamAllSource)
+    foreach ($m in [regex]::Matches($src, '(?m)^.*Register-RamBridgeHotkey.*$')) {
+        $line = $m.Value.Trim()
+        if ($line -match '^function\s') { continue }
+        # Звать напрямую можно только изнутри самой обёртки.
+        if ($line -match 'Set-RamBridgeHotkeyWithFallback') { continue }
+        if ($line -notmatch 'if \(Register-RamBridgeHotkey -Key \$(Preferred|k)\)') {
+            throw "клавишу вешают в обход запасного варианта: $line"
+        }
+    }
+    'везде через Set-RamBridgeHotkeyWithFallback'
+}
+
+Check 'Интерфейс показывает взятую клавишу, а не желаемую' {
+    # Настройка BridgeHotkey говорит, чего человек ХОЧЕТ. Она не говорит,
+    # отдала ли Windows эту клавишу. Строки состояния печатали именно её — и
+    # обещали F10, которой у программы нет. Человек верил программе, жал F10 и
+    # делал вывод, что сломано всё.
+    #
+    # Ловим показ: настройка внутри строки в кавычках, то есть та, что уедет
+    # человеку на экран. Сравнивать и присваивать её — законно, там она и есть
+    # настройка. Разбираем построчно: склеивать файлы и снимать комментарии
+    # здесь нельзя, иначе куски разных строк слипаются и проверка врёт.
+    $bad = @()
+    foreach ($f in @('modules\UiMain.ps1', 'modules\UiDialogs.ps1')) {
+        $n = 0
+        foreach ($line in (Get-Content -LiteralPath (Join-Path $root $f))) {
+            $n++
+            $t = $line.Trim()
+            if ($t.StartsWith('#')) { continue }
+            # Именно ОБРАЩЕНИЕ К НАСТРОЙКЕ через точку, а не слово целиком:
+            # «BridgeHotkey» входит и в имя функции Get-RamBridgeHotkey.
+            if ($t -notmatch '\.BridgeHotkey') { continue }
+            if ($t -notmatch '"') { continue }
+            $bad += ('{0}:{1}' -f $f, $n)
+        }
+    }
+    if ($bad.Count) { throw ('показывают желаемую клавишу вместо взятой: ' + ($bad -join ', ')) }
+    'состояние берётся из Get-RamBridgeHotkey'
+}
+
+Check 'Все пути починки входа снимают метку «вход мёртв»' {
+    # Их три: Invoke-RamRepairCookie, Invoke-RamRepairAll и добавление куки
+    # через Add-RamAccountFromCookie. В первом метку забыли — и «Починено
+    # входов: 1» показывалось при красной карточке.
+    $src = Get-Content -LiteralPath (Join-Path $root 'modules\Accounts.ps1') -Raw
+    foreach ($fn in @('Invoke-RamRepairCookie', 'Add-RamAccountFromCookie')) {
+        $i = $src.IndexOf('function ' + $fn)
+        if ($i -lt 0) { throw "$fn не найдена" }
+        $j = $src.IndexOf("`nfunction ", $i + 5)
+        $body = if ($j -gt 0) { $src.Substring($i, $j - $i) } else { $src.Substring($i) }
+        if ($body -notmatch "CookieOk\s*=\s*'yes'") {
+            throw "$fn обновляет куку, но не снимает метку «вход мёртв»"
+        }
+    }
+    'метка снимается во всех путях'
+}
+
 Check 'README не врёт числом проверок' {
     # Число в README трижды разошлось с кодом и висело устаревшим, пока его
     # не заметил человек. Считаем проверки прямо из этого файла и требуем,

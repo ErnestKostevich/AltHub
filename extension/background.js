@@ -145,6 +145,25 @@ async function findBridgePort() {
   return null;
 }
 
+async function badge(text, title, color) {
+  // ЕДИНСТВЕННЫЙ СПОСОБ ОТВЕТИТЬ ЧЕЛОВЕКУ В БРАУЗЕРЕ.
+  // Клик по значку AltHub раньше не давал вообще ничего: ни при успехе, ни
+  // при неудаче. Сообщение показывал AltHub — но его окно всплывает ЗА
+  // браузером, и человек, глядя в браузер, видел «ничего не произошло».
+  // Бейдж на самом значке видно там, куда человек и смотрит.
+  try {
+    await chrome.action.setBadgeText({ text: text });
+    if (color) await chrome.action.setBadgeBackgroundColor({ color: color });
+    if (title) await chrome.action.setTitle({ title: title });
+    if (text) {
+      setTimeout(function () {
+        chrome.action.setBadgeText({ text: '' });
+        chrome.action.setTitle({ title: 'Передать этот аккаунт Roblox в AltHub' });
+      }, 6000);
+    }
+  } catch {}
+}
+
 async function tellProblem(port, reason) {
   // МОЛЧАНИЕ — ХУДШИЙ ОТВЕТ. Раньше при любой неудаче расширение просто
   // закрывало вкладку, и со стороны это выглядело как «нажал, мигнуло,
@@ -166,15 +185,18 @@ async function grabAndSend(closeTabId, knownPort) {
   const value = await readRobloSecurity();
   if (!value) {
     console.log('[AltHub] на roblox.com нет входа — нечего передавать');
+    await badge('нет', 'AltHub: в браузере нет входа на roblox.com', '#d9534f');
     await tellProblem(port, 'В браузере нет входа на roblox.com. Открой сайт и войди в нужный аккаунт, потом нажми ещё раз.');
     if (closeTabId) { try { await chrome.tabs.remove(closeTabId); } catch {} }
     return false;
   }
 
   if (!port) {
+    // Сказать через AltHub некому — он и есть тот, кто не отвечает. Значит
+    // отвечаем сами, прямо на значке.
     console.log('[AltHub] AltHub не отвечает ни на одном порту моста');
-    // Сказать некому — AltHub и есть тот, кто не отвечает. Вкладку оставляем
-    // открытой: на ней написано, что делать.
+    await badge('!', 'AltHub не запущен или приём из браузера выключен', '#d9534f');
+    if (closeTabId) { try { await chrome.tabs.remove(closeTabId); } catch {} }
     return false;
   }
 
@@ -183,8 +205,10 @@ async function grabAndSend(closeTabId, knownPort) {
     ok = await postCookie(port, value);
   } catch (e) {
     console.log('[AltHub] отправка не удалась:', e);
+    await badge('!', 'AltHub: отправить вход не вышло', '#d9534f');
     await tellProblem(port, 'Кука прочиталась, но отправить её в AltHub не вышло: ' + e);
   }
+  if (ok) { await badge('OK', 'AltHub: вход передан', '#5cb85c'); }
   console.log('[AltHub] передано в AltHub на порт', port, '=', ok);
   if (closeTabId) { try { await chrome.tabs.remove(closeTabId); } catch {} }
   return ok;
@@ -251,6 +275,13 @@ async function noteLoginPort(p) {
   console.log('[AltHub] окно входа: порт', p);
   await prepareSession();
 
+  // Будильник заводим здесь, в начале входа, — и только если его ещё нет,
+  // иначе каждое пробуждение сбрасывало бы его отсчёт заново.
+  try {
+    const a = await chrome.alarms.get('althub-login-watch');
+    if (!a) { await chrome.alarms.create('althub-login-watch', { periodInMinutes: 0.5 }); }
+  } catch {}
+
   // Здороваемся сразу: так AltHub понимает, что расширение вообще
   // загрузилось. На обычном Chrome 137+ флаг --load-extension молча
   // игнорируется, расширения нет, и без этого приветствия AltHub впустую
@@ -284,6 +315,23 @@ async function trySendLoginCookie() {
 
 // ============================ переходы по страницам ============================
 
+async function noteLoginPortAndReload(p, tabId) {
+  // Снять старую куку и ПЕРЕЗАГРУЗИТЬ страницу.
+  //
+  // Запрос на roblox.com/login уходит ещё со старой .ROBLOSECURITY: снять её
+  // мы успеваем только после того, как переход уже зафиксирован. Roblox
+  // видит живую сессию и уводит с формы входа на главную — под прошлым
+  // аккаунтом. Кука к этому моменту уже снята локально и попала в
+  // запрещённые, поэтому отправлять нечего, а обновить страницу человеку
+  // нечем: режим --app не даёт ни адресной строки, ни кнопки обновления.
+  const before = await S.get();
+  const first = before.loginPort !== p;
+  await noteLoginPort(p);
+  if (first && tabId) {
+    try { await chrome.tabs.reload(tabId); } catch {}
+  }
+}
+
 chrome.webNavigation.onCommitted.addListener((d) => {
   if (d.frameId !== 0) return;
   let host;
@@ -307,7 +355,7 @@ chrome.webNavigation.onCommitted.addListener((d) => {
     // Тоже без await: уборка кук трогает хранилище, и на холодном профиле
     // это может занять заметное время — ожидание здесь подвешивало саму
     // навигацию страницы.
-    noteLoginPort(p).catch((e) => console.log('[AltHub] noteLoginPort ошибка:', e));
+    noteLoginPortAndReload(p, d.tabId).catch((e) => console.log('[AltHub] noteLoginPort ошибка:', e));
   }
 });
 
@@ -338,18 +386,12 @@ chrome.alarms.onAlarm.addListener(async (a) => {
   if (a.name !== 'althub-login-watch') return;
   const st = await S.get();
   if (!st.loginPort || st.sent) {
+    // Вход закончен — будильник больше не нужен. Заводится он заново в
+    // noteLoginPort, при начале следующего входа: раньше его создавал только
+    // код верхнего уровня, то есть лишь при холодном пробуждении, и «последняя
+    // страховка» отсутствовала ровно тогда, когда была нужна.
     try { await chrome.alarms.clear('althub-login-watch'); } catch {}
     return;
   }
   await trySendLoginCookie();
 });
-
-chrome.runtime.onInstalled.addListener(() => {
-  try { chrome.alarms.create('althub-login-watch', { periodInMinutes: 0.34 }); } catch {}
-});
-chrome.runtime.onStartup.addListener(() => {
-  try { chrome.alarms.create('althub-login-watch', { periodInMinutes: 0.34 }); } catch {}
-});
-// И на всякий случай при каждом пробуждении: будильник мог не создаться,
-// если расширение поставили руками и события установки не было.
-try { chrome.alarms.create('althub-login-watch', { periodInMinutes: 0.34 }); } catch {}

@@ -1048,6 +1048,12 @@ function Build-RamCardMenuItems {
         }
     })
 
+    # «Обновить страницу» для одного аккаунта: человек только что вошёл под
+    # ним где-то ещё и хочет увидеть это здесь, не гоняя проверку по всем.
+    [void](Add-RamMenuItem -Menu $m -Text 'Проверить этот вход' -Tag $id -OnClick {
+        Invoke-RamRecheckOne -Id ([string]$this.Tag)
+    })
+
     [void](Add-RamMenuItem -Menu $m -Separator)
 
     [void](Add-RamMenuItem -Menu $m -Text 'Скопировать приглашение (для переноса себе)' -Tag $id -OnClick {
@@ -1421,34 +1427,6 @@ function Update-RamAccountsBar {
         $bar.PerformLayout()
     }
 
-    # Влезают ли все кнопки в одну строку? Если нет — прячем четыре действия
-    # над отмеченными и показываем вместо них одну кнопку с меню.
-    $collapsed = $script:UI.AccBarCollapsed
-    if ($null -ne $collapsed -and -not $collapsed.IsDisposed) {
-        $full = 0
-        foreach ($c in $bar.Controls) {
-            if ($c -eq $collapsed) { continue }
-            $full += $c.Width + $c.Margin.Left + $c.Margin.Right
-        }
-        $short = 0
-        $keep = @('＋  Добавить', 'Все')
-        foreach ($c in $bar.Controls) {
-            if ($c -eq $collapsed -or ($null -ne $c.Tag -and $keep -contains [string]$c.Tag.Text)) {
-                $short += $c.Width + $c.Margin.Left + $c.Margin.Right
-            }
-        }
-        $needCollapse = ($full -gt $bar.Width) -and ($short -le $bar.Width)
-
-        $changed = $false
-        foreach ($c in $bar.Controls) {
-            $want = if ($c -eq $collapsed) { $needCollapse }
-                    elseif ($null -ne $c.Tag -and $keep -contains [string]$c.Tag.Text) { $true }
-                    else { -not $needCollapse }
-            if ($c.Visible -ne $want) { $c.Visible = $want; $changed = $true }
-        }
-        if ($changed) { $bar.PerformLayout() }
-    }
-
     # Высота — по ФАКТИЧЕСКОМУ низу кнопок, а не по PreferredSize.
     # У FlowLayoutPanel с переносом PreferredSize отдаёт размер БЕЗ переноса:
     # на 150% он говорил «974x57», хотя панель шириной 708 и кнопки уже
@@ -1492,6 +1470,30 @@ function Update-RamAccountsBar {
             }
         }
     }
+}
+
+function Get-RamBridgeStatusText {
+    <#
+      Короткая строка про приём входа из браузера — для нижней строки окна.
+
+      ПОЧЕМУ НЕ ОТДЕЛЬНОЙ НАДПИСЬЮ В РАЗДЕЛЕ «АККАУНТЫ». Пробовал — она дважды
+      подралась за место с полосой кнопок и набором: вертикаль там считает
+      Update-RamAccountsBar, и второй расчёт неминуемо расходится с первым.
+      Нижняя строка уже существует, живёт на всех разделах и ни с чем не
+      спорит — состоянию место там.
+
+      Возвращает пустую строку, если сказать нечего.
+    #>
+    if ($null -eq $script:Settings) { return '' }
+    if (-not [bool]$script:Settings.BridgeEnabled) { return '' }
+    if ((Get-RamBridgePort) -le 0) { return 'вход из браузера: порт занять не вышло' }
+    # Показываем клавишу, которую Windows РЕАЛЬНО отдала. Настройка говорит,
+    # чего человек хочет; она не говорит, получилось ли. Раньше здесь стояла
+    # именно настройка — и строка обещала F10, которой у программы нет.
+    $key = Get-RamBridgeHotkey
+    if (-not $key) { return 'вход из браузера: клавиша занята — жми значок AltHub в браузере' }
+    if (Test-RamBridgeExtensionSeen) { return "вход из браузера: $key" }
+    return "вход из браузера: жду на $key, расширение не отзывалось"
 }
 
 function Update-RamGroupBar {
@@ -2163,8 +2165,12 @@ function New-RamMainForm {
     $form.Controls.Add($sub)
     $script:UI.Subtitle = $sub
 
-    $search = New-RamTextBox -Width 300 -Height 32
-    $search.Location = New-Object System.Drawing.Point(($formW - 300 - $metrics.GapLg), 16)
+    # Ширина от масштаба: при 150% в прежние 300 пикселей подсказка «поиск:
+    # имя, ник, игра, заметка» перестаёт помещаться, а поле выглядит куцым
+    # рядом с выросшим всем остальным.
+    $searchW = Get-RamScaled 300
+    $search = New-RamTextBox -Width $searchW -Height (Get-RamScaled 32)
+    $search.Location = New-Object System.Drawing.Point(($formW - $searchW - $metrics.GapLg), (Get-RamScaled 16))
     $search.Anchor   = 'Top,Right'
     $form.Controls.Add($search)
     $script:UI.Search = $search
@@ -2291,29 +2297,27 @@ function New-RamMainForm {
         foreach ($id in $script:Cards.Keys) { if (-not $script:Cards[$id].Check.Tag.Checked) { $any = $true } }
         Set-RamAllChecked $any
     }))
-    $bar.Controls.Add((New-RamButton -Text 'Игра' -Width (& $bw 86) -Height $metrics.RowHLg -Tooltip 'Назначить игру отмеченным аккаунтам' -OnClick { Invoke-RamAssignGame }))
-    $bar.Controls.Add((New-RamButton -Text 'Набор' -Width (& $bw 92) -Height $metrics.RowHLg -Tooltip 'Собрать отмеченные аккаунты в набор' -OnClick { Invoke-RamAssignGroup }))
-    $bar.Controls.Add((New-RamButton -Text 'Метка' -Width (& $bw 92) -Height $metrics.RowHLg -Tooltip 'Цветная метка для отмеченных' -OnClick { Invoke-RamAssignColor }))
-    $bar.Controls.Add((New-RamButton -Text 'Удалить' -Width (& $bw 96) -Height $metrics.RowHLg -Tooltip 'Убрать отмеченные из менеджера' -OnClick { Invoke-RamDeleteSelected }))
-
-    # СВЁРНУТЫЙ ВИД НА УЗКОМ ОКНЕ.
-    # Шесть кнопок в одну строку помещаются не всегда. Раньше лишние просто
-    # переносились на вторую и третью строку, и полоса разъезжалась лесенкой —
-    # выглядит это плохо, а на глаз ещё и непонятно, где кончается одно и
-    # начинается другое. Теперь четыре действия над отмеченными сворачиваются
-    # в одну кнопку с меню: строка всегда одна, а список действий тот же.
-    $bSel = New-RamButton -Text 'С отмеченными  ▾' -Width (& $bw 170) -Height $metrics.RowHLg `
+    # ЧЕТЫРЕ ДЕЙСТВИЯ НАД ОТМЕЧЕННЫМИ — В ОДНОЙ КНОПКЕ С МЕНЮ.
+    #
+    # Раньше «Игра», «Набор», «Метка» и «Удалить» стояли отдельными кнопками.
+    # Шесть кнопок в строку помещаются не всегда, и полоса разъезжалась
+    # лесенкой на две-три строки. Попытка сворачивать их «когда не влезает»
+    # сломалась трижды подряд: то не сворачивалось, то показывались оба
+    # варианта разом. Переменная раскладка — источник этих поломок, поэтому
+    # её больше нет: строка всегда одна, на любой ширине и любом масштабе.
+    #
+    # Смысл группировки тот же, что у кнопки: все четыре действия работают
+    # над ОТМЕЧЕННЫМИ аккаунтами, и в меню это наконец написано словами.
+    $bSel = New-RamButton -Text 'С отмеченными  ▾' -Width (& $bw 190) -Height $metrics.RowHLg `
                           -Tooltip 'Игра, набор, метка, удаление — для отмеченных аккаунтов'
     $selMenu = New-RamContextMenu
-    [void](Add-RamMenuItem -Menu $selMenu -Text 'Назначить игру'   -OnClick { Invoke-RamAssignGame })
-    [void](Add-RamMenuItem -Menu $selMenu -Text 'Собрать в набор'  -OnClick { Invoke-RamAssignGroup })
-    [void](Add-RamMenuItem -Menu $selMenu -Text 'Поставить метку'  -OnClick { Invoke-RamAssignColor })
+    [void](Add-RamMenuItem -Menu $selMenu -Text 'Назначить игру'      -OnClick { Invoke-RamAssignGame })
+    [void](Add-RamMenuItem -Menu $selMenu -Text 'Собрать в набор'     -OnClick { Invoke-RamAssignGroup })
+    [void](Add-RamMenuItem -Menu $selMenu -Text 'Поставить метку'     -OnClick { Invoke-RamAssignColor })
     [void](Add-RamMenuItem -Menu $selMenu -Separator)
     [void](Add-RamMenuItem -Menu $selMenu -Text 'Убрать из менеджера' -OnClick { Invoke-RamDeleteSelected })
     $bSel.Add_Click({ $selMenu.Show($this, (New-Object System.Drawing.Point(0, $this.Height))) }.GetNewClosure())
-    $bSel.Visible = $false
     $bar.Controls.Add($bSel)
-    $script:UI.AccBarCollapsed = $bSel
 
     # Здесь жёлоб убирали, но отрисовщика темы не ставили: рамка и подсветка
     # наведения оставались системными. Обёртка делает и то, и другое.
@@ -2384,6 +2388,7 @@ function New-RamMainForm {
     $pAcc.Controls.Add($cards)
     $script:UI.Cards = $cards
     $script:UI.AccGroupBar = $groupBar
+
 
     # ПОЧЕМУ ЭТО ЗДЕСЬ, А НЕ ОДИН РАЗ ПРИ СБОРКЕ.
     # $contentW считается от предполагаемой ширины окна ($formW), а фактическая

@@ -240,9 +240,27 @@ function Show-RamFirstRun {
             Write-RamLog "Окно входа: $($_.Exception.Message)" 'err'
             Show-RamError -Text ('Не удалось открыть окно входа:' + [Environment]::NewLine + [Environment]::NewLine + $_.Exception.Message)
         }
+        # ЗДЕСЬ БЫЛО ХУЖЕ ВСЕГО: ни ветки на закрытое окно, ни ветки на
+        # отвергнутую Roblox куку. И провал, и отказ проходили совсем без
+        # слов, даже без журнала. А это первое, что видит человек в программе.
         if ($cookie) {
             $r = Import-RamAccountLine -Line $cookie
-            if ($r -and $r.Ok) { Save-RamState; Write-RamLog "Через окно браузера добавлен аккаунт: $($r.Alias)" 'ok' }
+            if ($r -and $r.Ok) {
+                Save-RamState
+                Write-RamLog "Через окно браузера добавлен аккаунт: $($r.Alias)" 'ok'
+                Show-RamMessage -Kind 'ok' -Message ('Добавлен аккаунт:' + [Environment]::NewLine + [Environment]::NewLine + $r.Alias)
+            } else {
+                $why = if ($r -and $r.Error) { $r.Error } else { 'Roblox не подтвердил вход' }
+                Write-RamLog "Окно браузера: вход не принят — $why" 'err'
+                Show-RamError -Text ('Вход прошёл, но аккаунт не добавился:' + [Environment]::NewLine +
+                                     [Environment]::NewLine + $why)
+            }
+        } else {
+            Write-RamLog 'Окно браузера: закрыто без получения входа.' 'warn'
+            Show-RamMessage -Kind 'warn' -Message (
+                'Аккаунт не добавлен: окно браузера закрылось раньше, чем вход прошёл.' +
+                [Environment]::NewLine + [Environment]::NewLine +
+                'Либо ты закрыл его сам, либо истекло время ожидания. Можно попробовать ещё раз.')
         }
         Update-RamWizardAccountCount -Form $f
     }

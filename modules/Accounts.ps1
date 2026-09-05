@@ -1320,7 +1320,14 @@ function Invoke-RamTileWindows {
     }
 
     if ($live.Count -eq 0) {
+        # Молчаливый выход выглядит как сломанная кнопка. Если раскладывать
+        # нечего — так и говорим, и подсказываем, что сделать.
         Write-RamLog 'Нечего раскладывать: окна ещё не появились.' 'warn'
+        if (-not $Mode) {
+            Show-RamMessage -Message ('Раскладывать нечего: окон Roblox, запущенных через AltHub, сейчас нет.' +
+                                      [Environment]::NewLine + [Environment]::NewLine +
+                                      'Отметь аккаунты, нажми «Запустить», дождись окон — потом «Окна».')
+        }
         return
     }
 
@@ -1643,6 +1650,12 @@ function Invoke-RamRepairCookie {
 
     $Account.Cookie   = $cookie
     $Account.Username = $who.Name
+    # И СНИМАЕМ МЕТКУ «ВХОД МЁРТВ». Здесь её забыли: соседние пути
+    # (Invoke-RamRepairAll и меню карточки) зовут Set-RamCookieAlive, а этот
+    # нет. Из-за этого «Починено входов: 1» показывалось, а карточка
+    # оставалась красной. Кука только что подтверждена сервером выше.
+    $Account.CookieOk        = 'yes'
+    $Account.CookieCheckedAt = (Get-Date).ToString('s')
     Save-RamState
     Write-RamLog "'$($Account.Alias)': вход восстановлен из приложения Roblox." 'ok'
     return $true
@@ -1697,6 +1710,82 @@ function Invoke-RamStartupCookieCheck {
     }
 }
 
+function Update-RamAccountCookieState {
+    <#
+      Спрашивает у Roblox про ОДИН аккаунт: жив ли вход, и заодно освежает
+      Robux, Premium и дату регистрации.
+
+      ЗАЧЕМ ОТДЕЛЬНО. Общая кнопка «Проверить входы» обходит все аккаунты и
+      занимает время. А человеку часто нужно другое: он только что вошёл под
+      одним аккаунтом и хочет увидеть это на его карточке — «типа обновить
+      страницу». Гонять ради этого проверку по всему списку незачем.
+
+      Возвращает $true, если вход живой.
+    #>
+    param([Parameter(Mandatory)]$Account)
+
+    if ([string]::IsNullOrWhiteSpace($Account.Cookie)) {
+        $Account.CookieOk        = 'no'
+        $Account.CookieCheckedAt = (Get-Date).ToString('s')
+        Write-RamLog "'$($Account.Alias)': куки нет." 'warn'
+        return $false
+    }
+
+    try {
+        $u = Get-RamAuthenticatedUser -Cookie $Account.Cookie
+        $Account.Username = $u.Name
+        $Account.UserId   = $u.Id
+
+        $inf = Get-RamAccountInfo -Cookie $Account.Cookie -UserId $u.Id
+        if ($inf.Robux -ge 0) { $Account.Robux = $inf.Robux }
+        if ($inf.Premium)     { $Account.Premium = $inf.Premium }
+        if ($inf.Created)     { $Account.Created = $inf.Created }
+
+        $Account.CookieOk        = 'yes'
+        $Account.CookieCheckedAt = (Get-Date).ToString('s')
+
+        $extra = ''
+        if ($Account.Robux -ge 0) { $extra = ", $($Account.Robux) Robux" }
+        Write-RamLog "'$($Account.Alias)': вход живой — $($u.Name)$extra" 'ok'
+        return $true
+    } catch {
+        $Account.CookieOk        = 'no'
+        $Account.CookieCheckedAt = (Get-Date).ToString('s')
+        Write-RamLog "'$($Account.Alias)': $($_.Exception.Message)" 'err'
+        return $false
+    }
+}
+
+function Invoke-RamRecheckOne {
+    <# «Проверить этот вход» из меню карточки: спросить и сразу показать. #>
+    param([Parameter(Mandatory)][string]$Id)
+
+    $acc = Get-RamAccountById -Id $Id
+    if ($null -eq $acc) { return }
+
+    if ($script:UI.ContainsKey('Form') -and $null -ne $script:UI.Form) {
+        $script:UI.Form.Cursor = [System.Windows.Forms.Cursors]::WaitCursor
+    }
+    try {
+        $alive = Update-RamAccountCookieState -Account $acc
+        Save-RamState
+        Build-RamCards
+    } finally {
+        if ($script:UI.ContainsKey('Form') -and $null -ne $script:UI.Form) {
+            $script:UI.Form.Cursor = [System.Windows.Forms.Cursors]::Default
+        }
+    }
+
+    if ($alive) {
+        $extra = if ([int]$acc.Robux -ge 0) { [Environment]::NewLine + "Robux: $($acc.Robux)" } else { '' }
+        Show-RamMessage -Kind 'ok' -Message ("Вход в «$($acc.Alias)» живой." + $extra)
+    } else {
+        Show-RamMessage -Kind 'warn' -Message ("Вход в «$($acc.Alias)» мёртв — его надо взять заново." +
+            [Environment]::NewLine + [Environment]::NewLine +
+            'Красная кнопка на карточке откроет окно браузера, где можно войти руками.')
+    }
+}
+
 function Invoke-RamCheckCookies {
     <# Проверить, живы ли входы. #>
     $targets = @(Get-RamTargetAccounts)
@@ -1708,33 +1797,10 @@ function Invoke-RamCheckCookies {
     $dead = @()
     try {
         foreach ($a in $targets) {
-            if ([string]::IsNullOrWhiteSpace($a.Cookie)) {
-                Write-RamLog "'$($a.Alias)': куки нет." 'warn'; $bad++; continue
-            }
-            try {
-                $u = Get-RamAuthenticatedUser -Cookie $a.Cookie
-                $a.Username = $u.Name; $a.UserId = $u.Id
-
-                # Заодно обновляем справку: Robux, Premium, дата регистрации.
-                $inf = Get-RamAccountInfo -Cookie $a.Cookie -UserId $u.Id
-                if ($inf.Robux -ge 0) { $a.Robux = $inf.Robux }
-                if ($inf.Premium)     { $a.Premium = $inf.Premium }
-                if ($inf.Created)     { $a.Created = $inf.Created }
-
-                $a.CookieOk        = 'yes'
-                $a.CookieCheckedAt = (Get-Date).ToString('s')
-
-                $extra = ''
-                if ($a.Robux -ge 0) { $extra = ", $($a.Robux) Robux" }
-                Write-RamLog "'$($a.Alias)': вход живой — $($u.Name)$extra" 'ok'
-                $ok++
-            } catch {
-                $a.CookieOk        = 'no'
-                $a.CookieCheckedAt = (Get-Date).ToString('s')
-                Write-RamLog "'$($a.Alias)': $($_.Exception.Message)" 'err'
-                $bad++
-                $dead += $a
-            }
+            # Тем же кодом, что и «Проверить этот вход» из меню карточки:
+            # два места, делающих одно и то же по-разному, рано или поздно
+            # начинают отвечать по-разному.
+            if (Update-RamAccountCookieState -Account $a) { $ok++ } else { $bad++; $dead += $a }
         }
         Save-RamState
         Build-RamCards
@@ -1742,6 +1808,18 @@ function Invoke-RamCheckCookies {
         $script:UI.Form.Cursor = [System.Windows.Forms.Cursors]::Default
     }
     Write-RamLog "Проверено: живых $ok, мёртвых $bad." $(if ($bad -eq 0) { 'ok' } else { 'warn' })
+
+    # КОГДА ВСЁ ХОРОШО — ТОЖЕ НАДО СКАЗАТЬ.
+    # Раньше при живых входах кнопка не отвечала ничем: строка уходила в
+    # журнал, окно не менялось, и человек справедливо решал, что кнопка не
+    # работает. Отсутствие плохих новостей — не ответ; ответ это «проверил
+    # столько-то, все живы».
+    if ($dead.Count -eq 0) {
+        $word = if ($ok -eq 1) { 'вход' } elseif ($ok -lt 5) { 'входа' } else { 'входов' }
+        Show-RamMessage -Kind 'ok' -Message ("Проверено $ok $word — все живые." + [Environment]::NewLine +
+                                             [Environment]::NewLine + 'Ничего чинить не нужно.')
+        return
+    }
 
     # Мёртвый вход часто чинится сам: если сейчас в приложении Roblox сидит
     # именно этот аккаунт, свежая кука лежит прямо там.
@@ -1779,6 +1857,14 @@ function Invoke-RamStopSelected {
     }
     Write-RamLog "Закрыто клиентов: $n." 'ok'
     Update-RamCardStates
+
+    # Отсутствие работы — тоже ответ. Раньше при нечего-закрывать кнопка
+    # молчала, и это было неотличимо от поломки.
+    if ($n -gt 0) {
+        Set-RamStatus ("Закрыто окон: {0}" -f $n)
+    } else {
+        Show-RamMessage -Message 'Закрывать нечего: сейчас ни одно окно Roblox не запущено через AltHub.'
+    }
 }
 
 function Save-RamWindowPositions {
@@ -1906,6 +1992,10 @@ function Invoke-RamSaveProfile {
     Save-RamSettings -Settings $script:Settings
     Update-RamProfilesPanel
     Write-RamLog "Профиль «$($entry.Name)» сохранён." 'ok'
+    # Раздел «Профили» человек в этот момент обычно не видит — он на
+    # «Аккаунтах». Без ответа кнопка выглядела не сработавшей.
+    Show-RamMessage -Kind 'ok' -Message ("Профиль «$($entry.Name)» сохранён." + [Environment]::NewLine +
+                                         [Environment]::NewLine + "Аккаунтов в нём: $($targets.Count). Запускать — в разделе «Профили».")
 }
 
 function Invoke-RamWatchCheck {
@@ -1972,7 +2062,14 @@ function Invoke-RamRelogin {
         return
     }
     if (-not $cookie) {
+        # Раньше здесь была только строка в журнал. Человек закрывал окно
+        # или ждал таймаута — и не получал ничего, то есть не мог отличить
+        # «я сам отменил» от «программа сломалась».
         Write-RamLog 'Повторный вход: окно закрыто без входа.' 'warn'
+        Show-RamMessage -Kind 'warn' -Message (
+            "Вход в «$($acc.Alias)» не обновлён." + [Environment]::NewLine + [Environment]::NewLine +
+            'Окно браузера закрылось раньше, чем вход прошёл: либо ты закрыл его сам, либо истекло время ожидания.' +
+            [Environment]::NewLine + [Environment]::NewLine + 'Можно попробовать ещё раз.')
         return
     }
 

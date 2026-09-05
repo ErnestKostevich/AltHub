@@ -178,6 +178,13 @@ function Show-RamMessage {
 
     if ($BuildOnly) { return $dlg }
 
+    # ПОВЕРХ ВСЕГО.
+    # Windows не даёт процессу поднять окно поверх активного окна другого
+    # процесса. Сообщение о том, что вход из браузера приехал, открывалось
+    # ЗА браузером — человек смотрел в браузер и видел, что «ничего не
+    # произошло». Восемь раз подряд. TopMost — единственное, что здесь
+    # работает надёжно; окно модальное и короткое, мешать не будет.
+    $dlg.TopMost = $true
     [void]$dlg.ShowDialog()
     if     ($Buttons.Count -gt 0) { $result = $dlg.Tag }
     elseif ($YesNo)               { $result = [bool]$dlg.Tag }
@@ -2216,10 +2223,12 @@ function Show-RamSettingsDialog {
         'Сейчас: приём выключен, порт не занят.'
     } elseif ((Get-RamBridgePort) -le 0) {
         'Сейчас: приём включён, но порт занять не вышло — все порты диапазона заняты.'
+    } elseif (-not (Get-RamBridgeHotkey)) {
+        'Сейчас: приём включён, но НИ ОДНУ клавишу Windows не отдала — их держат другие программы. Жми значок AltHub на панели браузера, он делает то же самое.'
     } elseif (Test-RamBridgeExtensionSeen) {
-        "Сейчас: жду на клавише $($s.BridgeHotkey), расширение на связи. Можно пользоваться."
+        "Сейчас: жду на клавише $(Get-RamBridgeHotkey), расширение на связи. Можно пользоваться."
     } else {
-        "Сейчас: жду на клавише $($s.BridgeHotkey), но расширение ещё ни разу не отзывалось — похоже, оно не установлено в браузере."
+        "Сейчас: жду на клавише $(Get-RamBridgeHotkey), но расширение ещё ни разу не отзывалось — похоже, оно не установлено в браузере."
     }
     [void](& $addNote $pb $stateTxt)
     [void](Add-RamGap -Layout $pb -Height $m.GapSm)
@@ -2900,7 +2909,13 @@ function Show-RamBridgeHowTo {
         return
     }
 
-    $key = [string]$script:Settings.BridgeHotkey
-    Show-RamMessage -Message ('Всё готово.' + [Environment]::NewLine + [Environment]::NewLine +
-                              "Открой roblox.com под нужным аккаунтом и нажми $key — или значок AltHub на панели браузера.")
+    $key = Get-RamBridgeHotkey
+    if ($key) {
+        Show-RamMessage -Message ('Всё готово.' + [Environment]::NewLine + [Environment]::NewLine +
+                                  "Открой roblox.com под нужным аккаунтом и нажми $key — или значок AltHub на панели браузера.")
+    } else {
+        Show-RamMessage -Kind 'warn' -Message ('Приём включён, но клавишу Windows не отдала — её держит другая программа.' +
+                                  [Environment]::NewLine + [Environment]::NewLine +
+                                  'Способ всё равно работает: открой roblox.com под нужным аккаунтом и нажми значок AltHub на панели браузера.')
+    }
 }

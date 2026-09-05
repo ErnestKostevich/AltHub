@@ -412,6 +412,11 @@ function Update-RamStatusLine {
     if ($script:UndoStack.Count -gt 0) {
         $parts += "Ctrl+Z вернёт: $($script:UndoStack[$script:UndoStack.Count - 1].Label)"
     }
+    # Приём входа из браузера — самый неочевидный способ добавить аккаунт, и
+    # раньше про него можно было узнать, только догадавшись зайти в настройки.
+    # Здесь он на глазах: включён ли, какая клавиша, отзывалось ли расширение.
+    $bridge = Get-RamBridgeStatusText
+    if ($bridge) { $parts += $bridge }
 
     $script:UI.Status.Text = ($parts -join '   •   ')
 }
@@ -581,12 +586,22 @@ function Start-AltHub {
         Invoke-RamSafe -What 'запуск приёма из браузера' -Body {
             $bport = Start-RamCookieBridge
             if ($bport -gt 0) {
+                # ОБЯЗАТЕЛЬНО через ...WithFallback, а не Register напрямую.
+                # Прямой вызов не умеет отступать на свободную клавишу: если
+                # выбранная занята другой программой, приём просто не работал,
+                # и единственным следом была строка в журнале.
                 $key = [string]$script:Settings.BridgeHotkey
-                if (Register-RamBridgeHotkey -Key $key) {
-                    Write-RamLog "Приём из браузера: жми $key на странице roblox.com — аккаунт добавится сам." 'ok'
-                } else {
-                    Write-RamLog "Клавишу $key занял кто-то другой. Возьми другую в настройках или жми кнопку AltHub на панели браузера." 'warn'
+                $got = Set-RamBridgeHotkeyWithFallback -Preferred $key -Announce
+                if ($got) {
+                    Write-RamLog "Приём из браузера: жми $got на странице roblox.com — аккаунт добавится сам." 'ok'
                 }
+            } else {
+                # Все порты диапазона заняты. Молчать нельзя: галочка стоит,
+                # а приёма нет, и понять это можно только зайдя в настройки.
+                Show-RamMessage -Kind 'warn' -Message (
+                    'Приём входа из браузера включить не вышло: все порты из диапазона 52713-52717 заняты другими программами.' +
+                    [Environment]::NewLine + [Environment]::NewLine +
+                    'Закрой лишнее и перезапусти AltHub, либо пользуйся другими способами добавить аккаунт.')
             }
         }
     }
