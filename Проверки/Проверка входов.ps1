@@ -4,7 +4,7 @@
  Проверка входов.ps1 — почему входы «ложатся» и можно ли их продлевать
 ================================================================================
  Запуск:
-   powershell -NoProfile -ExecutionPolicy Bypass -File "Проверка входов.ps1"
+   powershell -NoProfile -ExecutionPolicy Bypass -File "Проверки\Проверка входов.ps1"
 
  ЧТО ЭТО. Аккаунты со временем «ложатся»: рядом появляется красная метка, а
  при запуске Roblox говорит, что надо войти заново. Есть расхожее мнение, что
@@ -25,7 +25,8 @@
 #>
 
 $ErrorActionPreference = 'Stop'
-$root = $PSScriptRoot
+# Скрипт лежит в папке «Проверки», программа — на уровень выше.
+$root = Split-Path -Parent $PSScriptRoot
 
 . (Join-Path $root 'AltHub.ps1') -NoAutoStart
 $script:Settings = Load-RamSettings

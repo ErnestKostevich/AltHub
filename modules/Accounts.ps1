@@ -74,6 +74,10 @@ function Save-RamState {
         # Проверочный запуск — молча ничего не пишем.
         return
     }
+    if ($script:AccountsWriteBlocked) {
+        Write-RamLog 'Сохранение аккаунтов заблокировано: исходное хранилище не было успешно прочитано.' 'err'
+        return
+    }
     try {
         # Обёртка @() обязательна. PowerShell разворачивает пустой массив при
         # возврате из функции, поэтому при НУЛЕ аккаунтов $script:Accounts
@@ -331,6 +335,28 @@ function Update-RamAppAccountWatch {
     #>
     if ($script:ReadOnly) { return }
 
+    # ПРОВЕРКА ВХОДА — БЕЗ ЗАМОРОЗКИ ОКНА. Раньше здесь стоял синхронный
+    # запрос к Roblox прямо в такте таймера: пока Roblox отвечал (до 25 секунд
+    # на плохой сети), окно не рисовалось и не отвечало. Теперь такт только
+    # ЗАПУСКАЕТ проверку и сразу отпускает окно, а ответ забирает следующий такт.
+    if ($null -ne $script:AppWatchJob) {
+        if (-not $script:AppWatchJob.Job.Task.IsCompleted) { return }
+        $pending = $script:AppWatchJob
+        $script:AppWatchJob = $null
+        $check = Complete-RamAuthCheckAsync -Job $pending.Job
+        if ($check.State -ne 'valid' -or $null -eq $check.User -or -not $check.User.Name) { return }
+        # Пока ждали ответа, этот вход могли уже добавить.
+        foreach ($a in @($script:Accounts)) {
+            if ($null -ne $a -and $a.Cookie -eq $pending.Cookie) { $script:AppOffer = $null; return }
+        }
+        # [int64], а НЕ [int]: номера аккаунтов Roblox давно перевалили за два
+        # миллиарда, и 4062608487 в Int32 не влезает.
+        $script:AppOffer = [pscustomobject]@{ Cookie = $pending.Cookie; Name = [string]$check.User.Name; UserId = [int64]$check.User.Id }
+        Set-RamStatus "В приложении Roblox сейчас «$($check.User.Name)» — нажми сюда, чтобы добавить его в менеджер"
+        Write-RamLog "В приложении Roblox замечен «$($check.User.Name)» — его можно добавить одним кликом по строке внизу." 'info'
+        return
+    }
+
     try {
         $f = Get-RamRobloxCookieFile
         if (-not (Test-Path -LiteralPath $f)) { return }
@@ -350,16 +376,11 @@ function Update-RamAppAccountWatch {
     # Тот же самый, про который уже спрашивали — не назойливничаем.
     if ($null -ne $script:AppOffer -and $script:AppOffer.Cookie -eq $cookie) { return }
 
-    $user = $null
-    try { $user = Get-RamAuthenticatedUser -Cookie $cookie } catch { return }
-    if ($null -eq $user -or -not $user.Name) { return }
-
-    # [int64], а НЕ [int]: номера аккаунтов Roblox давно перевалили за два
-    # миллиарда, и 4062608487 в Int32 не влезает. С [int] это падало на
-    # каждом такте у любого, чей аккаунт заведён недавно.
-    $script:AppOffer = [pscustomobject]@{ Cookie = $cookie; Name = [string]$user.Name; UserId = [int64]$user.Id }
-    Set-RamStatus "В приложении Roblox сейчас «$($user.Name)» — нажми сюда, чтобы добавить его в менеджер"
-    Write-RamLog "В приложении Roblox замечен «$($user.Name)» — его можно добавить одним кликом по строке внизу." 'info'
+    try {
+        $script:AppWatchJob = [pscustomobject]@{ Job = (Start-RamAuthCheckAsync -Cookie $cookie); Cookie = $cookie }
+    } catch {
+        $script:AppWatchJob = $null
+    }
 }
 
 function Invoke-RamAppOffer {
@@ -687,8 +708,7 @@ function Get-RamTargetAccounts {
     #>
     $res = @()
     foreach ($a in (Get-RamOrderedAccounts)) {
-        $entry = $script:Cards[$a.Id]
-        if ($null -ne $entry -and $entry.Check.Tag.Checked) { $res += $a }
+        if ($script:CheckedIds.ContainsKey([string]$a.Id)) { $res += $a }
     }
     return @($res)
 }
@@ -802,6 +822,7 @@ function Invoke-RamDeleteSelected {
     Push-RamUndo -Label "удаление аккаунтов ($($targets.Count))"
     $ids = $targets | ForEach-Object { $_.Id }
     $script:Accounts = @($script:Accounts | Where-Object { $ids -notcontains $_.Id })
+    foreach ($id in $ids) { [void]$script:CheckedIds.Remove([string]$id) }
     Save-RamState
     Build-RamCards
     Write-RamLog "Удалено аккаунтов: $($targets.Count)." 'ok'
@@ -810,6 +831,8 @@ function Invoke-RamDeleteSelected {
 function Set-RamAllChecked {
     param([bool]$Checked)
     foreach ($id in $script:Cards.Keys) {
+        if ($Checked) { $script:CheckedIds[[string]$id] = $true }
+        else { [void]$script:CheckedIds.Remove([string]$id) }
         $script:Cards[$id].Check.Tag.Checked = $Checked
         $script:Cards[$id].Check.Invalidate()
     }
@@ -819,9 +842,20 @@ function Set-RamAllChecked {
 # ----------------------------------------------------------- запуск ---------
 
 function Add-RamToLaunchQueue {
-    param([Parameter(Mandatory)][AllowEmptyCollection()][object[]]$Accounts)
+    <#
+      -Unattended — зов из таймера: расписание, присмотр за набором,
+      автоперезапуск вылетевших. Модальных окон в этом режиме нет: окно,
+      открытое ночью, ждёт человека до утра, а таймер, крутящий модальный
+      цикл, успевает войти в очередь запуска второй раз. Всё, что обычно
+      спрашивается, решается безопасно и пишется в журнал и нижнюю строку.
+    #>
+    param(
+        [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$Accounts,
+        [switch]$Unattended
+    )
 
     if ($Accounts.Count -eq 0) {
+        if ($Unattended) { Write-RamLog 'Запускать некого: список пуст.' 'warn'; return }
         Show-RamInfo 'Никто не отмечен. Поставь галочки слева у нужных аккаунтов.'
         return
     }
@@ -834,6 +868,12 @@ function Add-RamToLaunchQueue {
     # Не запрещаем: сколько тянет его компьютер, человек знает лучше нас.
     $willRun = $Accounts.Count + @($script:Instances.Keys).Count
     $canRun  = Get-RamRecommendedAccountCount
+    if ($willRun -gt $canRun -and -not $script:WarnedAboutLoad -and $Unattended) {
+        # Без человека не спрашиваем: сколько окон поднимать ночью, он решил сам,
+        # когда настраивал расписание.
+        $script:WarnedAboutLoad = $true
+        Write-RamLog "Запускаю $willRun окон при рекомендованных $canRun — так настроено расписание или присмотр." 'warn'
+    }
     if ($willRun -gt $canRun -and -not $script:WarnedAboutLoad) {
         $script:WarnedAboutLoad = $true
         $hw = Get-RamHardware
@@ -852,9 +892,32 @@ function Add-RamToLaunchQueue {
         }
     }
 
+    # ПЕРВЫЙ МУЛЬТИЗАПУСК — ОДИН РАЗ СКАЗАТЬ ЧЕСТНО, ЧЕМ ЭТО ГРОЗИТ.
+    # Не пугать и не врать: несколько аккаунтов Roblox разрешает сам, а запуск
+    # нескольких клиентов разом официально не поддерживает. Самый частый
+    # сюрприз — телепорт между играми срабатывает только в последнем окне.
+    if (-not $Unattended -and $willRun -ge 2 -and -not [bool]$script:Settings.MultiInstanceNoticeShown) {
+        $ans = Show-RamMessage -Title 'Несколько окон Roblox сразу' -Kind 'info' -Message (
+            "Иметь несколько аккаунтов Roblox разрешает сам — переключатель до пяти аккаунтов есть прямо в клиенте. AltHub не меняет Roblox и не лезет в его память: он запускает официальный клиент и раскладывает окна.`n`n" +
+            "А вот несколько клиентов на одном компьютере Roblox официально называет неподдерживаемым. Это может перестать работать после любого обновления Roblox.`n`n" +
+            "Что уже известно: переход между играми (телепорт) часто срабатывает только в последнем запущенном окне.`n`n" +
+            "Банят за поступки, а не за программу: за ботов, накрутку, обход наказаний. Письменного разрешения на менеджеры аккаунтов у Roblox тоже нет — решать тебе."
+        ) -Buttons @(
+            @{ Text = 'Понятно, запускать'; Value = 'go'; Kind = 'primary' },
+            @{ Text = 'Отмена';             Value = 'no' }
+        )
+        if ([string]$ans -ne 'go') {
+            Write-RamLog 'Запуск отменён после предупреждения о мультизапуске.' 'info'
+            return
+        }
+        $script:Settings.MultiInstanceNoticeShown = $true
+        Save-RamSettingsNow
+    }
+
     # Идёт обновление — запускать нельзя: установщик закроет всё, что успеет
     # открыться, и это будет выглядеть как поломка мультизапуска.
     if (Test-RamRobloxUpdating) {
+        if ($Unattended) { Write-RamLog 'Запуск отложен: идёт обновление Roblox.' 'warn'; Set-RamStatus 'Запуск по расписанию пропущен: Roblox обновлялся.'; return }
         Show-RamInfo "Roblox сейчас обновляется.`n`nПодожди, пока обновление закончится, и запусти снова. Если запустить прямо сейчас, установщик закроет открытые окна."
         Write-RamLog 'Запуск отменён: идёт обновление Roblox.' 'warn'
         return
@@ -870,6 +933,7 @@ function Add-RamToLaunchQueue {
             Write-RamLog "Клиент Roblox: версия $ver" 'info'
         }
     } catch {
+        if ($Unattended) { Write-RamLog "Запуск не выполнен: $($_.Exception.Message)" 'err'; return }
         Show-RamError $_.Exception.Message
         return
     }
@@ -881,6 +945,12 @@ function Add-RamToLaunchQueue {
         $lock = Enable-RamMultiInstance
         if (-not $lock.EventBlocked) {
             $running = @(Get-RamRobloxProcesses)
+            if ($running.Count -gt 0 -and $Unattended) {
+                # Закрывать окна Roblox без человека нельзя: там может идти игра.
+                Write-RamLog 'Запуск не выполнен: Roblox был открыт до менеджера, мультизапуск не включился, а закрывать окна без человека AltHub не будет.' 'warn'
+                Set-RamStatus 'Запуск по расписанию пропущен: сначала закрой открытые окна Roblox.'
+                return
+            }
             if ($running.Count -gt 0) {
                 $ok = Confirm-Ram (
                     "Мультизапуск не включится: Roblox уже был открыт до менеджера.`n`n" +
@@ -921,7 +991,12 @@ function Add-RamToLaunchQueue {
         $added++
     }
 
-    if ($added -eq 0) { Update-RamCardStates; return }
+    if ($added -eq 0) {
+        Update-RamCardStates
+        # Ответ и на «делать нечего»: ▶ на уже запущенном аккаунте молчала.
+        if (-not $Unattended) { Set-RamStatus 'Все выбранные аккаунты уже запущены или стоят в очереди.' }
+        return
+    }
 
     Write-RamLog "В очередь добавлено: $added. Пауза между запусками — $($script:Settings.LaunchDelaySec) с." 'info'
     $script:NextLaunchTime = Get-Date
@@ -980,13 +1055,19 @@ function Test-RamSettingsFileFree {
     if ([string]::IsNullOrEmpty($script:AwaitWindowFor)) { return $true }
 
     $inst = $script:Instances[$script:AwaitWindowFor]
-    if ($null -eq $inst) { $script:AwaitWindowFor = ''; return $true }
+    if ($null -eq $inst) {
+        $script:AwaitWindowFor = ''
+        $script:AwaitSettingsReadyAt = [datetime]::MinValue
+        return $true
+    }
 
     if ($inst.Handle -eq [IntPtr]::Zero) {
         $inst.Handle = Get-RamRobloxWindow -ProcessId $inst.ProcessId -TimeoutSec 0
     }
     if ($inst.Handle -ne [IntPtr]::Zero) {
+        if ((Get-Date) -lt $script:AwaitSettingsReadyAt) { return $false }
         $script:AwaitWindowFor = ''
+        $script:AwaitSettingsReadyAt = [datetime]::MinValue
         return $true
     }
 
@@ -995,6 +1076,7 @@ function Test-RamSettingsFileFree {
         $who  = if ($null -ne $prev) { $prev.Alias } else { 'предыдущий' }
         Write-RamLog "'$who': окно не появилось вовремя. Запускаю следующего — настройки графики могли не успеть примениться." 'warn'
         $script:AwaitWindowFor = ''
+        $script:AwaitSettingsReadyAt = [datetime]::MinValue
         return $true
     }
 
@@ -1009,6 +1091,7 @@ function Set-RamSettingsWait {
     param([Parameter(Mandatory)]$Launched)
 
     $script:AwaitWindowFor = ''
+    $script:AwaitSettingsReadyAt = [datetime]::MinValue
     if ($script:LaunchQueue.Count -eq 0) { return }
 
     $next = Get-RamAccountById -Id $script:LaunchQueue[0]
@@ -1018,6 +1101,10 @@ function Set-RamSettingsWait {
 
     $script:AwaitWindowFor   = $Launched.Id
     $script:AwaitWindowUntil = (Get-Date).AddSeconds(60)
+    # Появление окна ещё не гарантирует, что медленная машина уже дочитала
+    # GlobalBasicSettings. Даём клиенту минимум 15 секунд от старта перед
+    # тем, как перезаписывать файл настройками следующего аккаунта.
+    $script:AwaitSettingsReadyAt = $script:LastLaunchAt.AddSeconds(15)
 }
 
 function Show-RamLaunchReport {
@@ -1037,6 +1124,14 @@ function Show-RamLaunchReport {
     $script:LaunchFailed = @{}
 
     Write-RamLog "Не запустились: $($lines.Count)." 'warn'
+    # Программа свёрнута в часы (обычно — запуск по расписанию): модальное окно
+    # ждало бы человека до утра. Причины — в журнал и нижнюю строку.
+    $formVisible = ($script:UI.ContainsKey('Form') -and $null -ne $script:UI.Form -and $script:UI.Form.Visible)
+    if (-not $formVisible) {
+        foreach ($l in $lines) { Write-RamLog ("Не запустился " + $l.TrimStart('•', ' ')) 'warn' }
+        Set-RamStatus "Запустились не все: $($lines.Count) — причины в журнале."
+        return
+    }
     Show-RamInfo ("Запустились не все. Не вышло у этих:`n`n" + ($lines -join "`n") +
                   "`n`nЧаще всего помогает пауза побольше между запусками — она в Настройках.")
 }
@@ -1195,16 +1290,26 @@ function Invoke-RamNextLaunch {
                 Write-RamLog "'$($a.Alias)': настройки клиента — $($applied -join ', ')" 'info'
             }
         } catch {
-            Write-RamLog "'$($a.Alias)': настройки клиента не применились — $($_.Exception.Message)" 'warn'
+            $settingsError = $_.Exception.Message
+            Write-RamLog "'$($a.Alias)': настройки клиента не применились — $settingsError" 'err'
+            # Если человек явно задал графику/звук/режим окна, молча запускать
+            # с чужими общими настройками нельзя. Раньше запуск продолжался,
+            # в журнале было предупреждение, а со стороны всё выглядело как
+            # полностью неработающая функция.
+            throw "Настройки клиента для '$($a.Alias)' не применились: $settingsError Запуск отменён, чтобы не открыть аккаунт с неверной графикой или звуком."
         }
 
-        $proc = Start-RamRobloxInstance -Account $a -PlayerPath $script:PlayerPath -Locale $script:Settings.Locale
+        $proc = Start-RamRobloxInstance -Account $a -PlayerPath $script:PlayerPath -Locale $script:Settings.Locale `
+                                        -Minimized:([bool]$script:Settings.LaunchMinimized)
         $script:LastLaunchAt = Get-Date
 
         $script:Instances[$a.Id] = [pscustomobject]@{
             ProcessId = $proc.Id
             Handle    = [IntPtr]::Zero
             Started   = Get-Date
+            MinimizeOnShow = [bool]$script:Settings.LaunchMinimized
+            DesiredFullscreen = [string]$a.Fullscreen
+            WindowStateRecheckAt = [datetime]::MinValue
         }
         $a.LastUsed    = (Get-Date).ToString('s')
         $a.LaunchCount = [int]$a.LaunchCount + 1
@@ -1221,6 +1326,7 @@ function Invoke-RamNextLaunch {
         # Оставлять их нельзя: откроешь Roblox вручную — и получишь графику
         # твина вместо своей.
         $script:AwaitWindowFor = ''
+        $script:AwaitSettingsReadyAt = [datetime]::MinValue
         Restore-RamOwnClientSettings -Reason 'запуск не состоялся'
 
         # «Слишком часто» — это не отказ, а просьба подождать. Возвращаем
@@ -1300,11 +1406,13 @@ function Invoke-RamPendingTile {
     if ($ready -lt $total) {
         Write-RamLog "Раскладываю $ready из ${total} — остальные окна не появились вовремя." 'warn'
     }
-    Invoke-RamTileWindows
+    Invoke-RamTileWindows -Quiet
 }
 
 function Invoke-RamTileWindows {
-    param([string]$Mode = '')
+    # -Quiet — зов автоматики после запуска окон (из таймера): там модальное
+    # сообщение некому закрыть. Все пути человека отвечают словами.
+    param([string]$Mode = '', [switch]$Quiet)
 
     $live = @()
     foreach ($a in $script:Accounts) {
@@ -1323,7 +1431,9 @@ function Invoke-RamTileWindows {
         # Молчаливый выход выглядит как сломанная кнопка. Если раскладывать
         # нечего — так и говорим, и подсказываем, что сделать.
         Write-RamLog 'Нечего раскладывать: окна ещё не появились.' 'warn'
-        if (-not $Mode) {
+        # И при левом клике, и при выборе раскладки правым: раньше второй путь
+        # молчал — ровно жалоба «нажал окна — мне ничего не написало».
+        if (-not $Quiet) {
             Show-RamMessage -Message ('Раскладывать нечего: окон Roblox, запущенных через AltHub, сейчас нет.' +
                                       [Environment]::NewLine + [Environment]::NewLine +
                                       'Отметь аккаунты, нажми «Запустить», дождись окон — потом «Окна».')
@@ -1373,6 +1483,9 @@ function Invoke-RamTileWindows {
 
 function Update-RamInstances {
     <# Ищем появившиеся окна, подписываем заголовки, убираем закрывшиеся. #>
+    if ($script:UpdatingInstances) { return }
+    $script:UpdatingInstances = $true
+    try {
     # ОДИН снимок процессов на весь такт. Раньше по каждому экземпляру звался
     # Get-Process -Id, а на уже закрывшемся клиенте он БРОСАЕТ исключение —
     # PowerShell строит ErrorRecord со стеком, и это повторялось каждые две
@@ -1397,6 +1510,17 @@ function Update-RamInstances {
             if ($skip -le 0) {
                 $inst.Handle = Get-RamRobloxWindow -ProcessId $inst.ProcessId -TimeoutSec 0
                 $inst | Add-Member -NotePropertyName FindSkip -NotePropertyValue $(if ($inst.Handle -eq [IntPtr]::Zero) { 2 } else { 0 }) -Force
+                if ($inst.Handle -ne [IntPtr]::Zero -and
+                    $inst.PSObject.Properties.Name -contains 'MinimizeOnShow' -and [bool]$inst.MinimizeOnShow) {
+                    # SW_MINIMIZE. Повторять не надо: дальше окно остаётся
+                    # свёрнутым, пока человек явно не нажмёт «Показать».
+                    if ([string]$inst.DesiredFullscreen -eq 'no') {
+                        [void][Ram.Native]::ShowWindow($inst.Handle, 9) # SW_RESTORE: снять maximized
+                    }
+                    [void][Ram.Native]::ShowWindow($inst.Handle, 7) # SW_SHOWMINNOACTIVE
+                    $inst.MinimizeOnShow = $false
+                    $inst.WindowStateRecheckAt = (Get-Date).AddSeconds(2)
+                }
             } else {
                 $inst | Add-Member -NotePropertyName FindSkip -NotePropertyValue ($skip - 1) -Force
             }
@@ -1438,6 +1562,39 @@ function Update-RamInstances {
 
         Write-RamLog "'$($a.Alias)' закрылся$(if($null -ne $lived){' (был в игре ' + (Format-RamDuration ([int]$lived.TotalSeconds)) + ')'})." 'info'
 
+        # МУЛЬТИЗАПУСК ПЕРЕСТАЛ РАБОТАТЬ? Защиту Roblox от второго окна AltHub
+        # обходит через имя объекта ROBLOX_singletonEvent — а это имя уже менялось
+        # (раньше было ROBLOX_singletonMutex). Когда Roblox сменит его снова,
+        # «замок взят» будет по-прежнему рапортоваться, но каждое новое окно
+        # станет закрывать предыдущее, и автоперезапуск начнёт гонять окна по
+        # кругу. Признак: окно, запущенное РАНЬШЕ последнего запуска, само
+        # закрылось в первые 20 секунд после него, а новое осталось жить.
+        $sinceLaunch = ((Get-Date) - $script:LastLaunchAt).TotalSeconds
+        $killedByNew = (-not $byUser -and $null -ne $lived -and $sinceLaunch -lt 20 -and
+                        $lived.TotalSeconds -gt ($sinceLaunch + 2) -and $script:Instances.Count -ge 1)
+        if ($killedByNew) {
+            $script:SingletonKills = [int]$script:SingletonKills + 1
+            Write-RamLog "'$($a.Alias)' закрылся сразу после запуска другого окна — похоже, новое окно выбило старое." 'warn'
+            if ($script:SingletonKills -ge 2 -and -not $script:SingletonKillWarned) {
+                $script:SingletonKillWarned = $true
+                $msg = ('Похоже, мультизапуск перестал работать: каждое новое окно Roblox закрывает предыдущее.' +
+                        [Environment]::NewLine + [Environment]::NewLine +
+                        'Скорее всего, Roblox сменил защиту от второго окна после обновления. AltHub это не чинит сам — ' +
+                        'нужна новая версия программы. Пока запускай аккаунты по одному.')
+                Write-RamLog $msg 'err'
+                Set-RamStatus 'Мультизапуск, похоже, сломан обновлением Roblox — подробности в журнале.'
+                # Окно — только если человек сейчас смотрит на программу: модальное
+                # окно из таймера ночью ждало бы его до утра.
+                if ($script:UI.ContainsKey('Form') -and $null -ne $script:UI.Form -and $script:UI.Form.Visible) {
+                    Show-RamMessage -Kind 'warn' -Title 'Мультизапуск' -Message $msg
+                }
+            }
+            # По кругу не гоняем: новое окно снова выбьет это.
+            continue
+        } elseif ($null -ne $lived -and $lived.TotalSeconds -gt 60) {
+            $script:SingletonKills = 0
+        }
+
         if (-not $script:Settings.AutoRestart) { continue }
 
         # Окно, прожившее меньше 20 секунд, скорее всего не «вылетело», а не
@@ -1456,7 +1613,7 @@ function Update-RamInstances {
 
         $script:RestartCount[$id] = $tries + 1
         Write-RamLog "'$($a.Alias)': вылетел, поднимаю заново (попытка $($tries + 1))." 'warn'
-        Add-RamToLaunchQueue -Accounts @($a)
+        Add-RamToLaunchQueue -Accounts @($a) -Unattended
     }
 
     # Свои настройки графики возвращаем, когда все окна Roblox закрыты: файл
@@ -1480,6 +1637,64 @@ function Update-RamInstances {
     Update-RamOneGameName
     Update-RamAppAccountWatch
     if ($script:Section -eq 'stats' -and $dead.Count -gt 0) { Update-RamStatsPanel }
+    } finally {
+        $script:UpdatingInstances = $false
+    }
+}
+
+function Update-RamFreshRobloxWindow {
+    <#
+      Частый лёгкий сторожок: ловит первое настоящее окно только что
+      запущенного клиента и сворачивает его раньше, чем общий двухсекундный
+      опрос успеет показать его поверх остальных программ.
+    #>
+    if ($null -eq $script:Settings -or -not [bool]$script:Settings.LaunchMinimized) { return }
+    foreach ($id in @($script:Instances.Keys)) {
+        $inst = $script:Instances[$id]
+        if ($null -eq $inst -or $inst.Handle -eq [IntPtr]::Zero) { continue }
+        if ($inst.PSObject.Properties.Name -notcontains 'WindowStateRecheckAt' -or
+            $inst.WindowStateRecheckAt -eq [datetime]::MinValue -or (Get-Date) -lt $inst.WindowStateRecheckAt) { continue }
+        if ($inst.PSObject.Properties.Name -contains 'DesiredFullscreen' -and [string]$inst.DesiredFullscreen -eq 'no') {
+            [void][Ram.Native]::ShowWindow($inst.Handle, 9)
+        }
+        [void][Ram.Native]::ShowWindow($inst.Handle, 7)
+        $inst.WindowStateRecheckAt = [datetime]::MinValue
+        return
+    }
+    foreach ($id in @($script:Instances.Keys)) {
+        $inst = $script:Instances[$id]
+        if ($null -eq $inst -or $inst.Handle -ne [IntPtr]::Zero) { continue }
+        if ($inst.PSObject.Properties.Name -notcontains 'MinimizeOnShow' -or -not [bool]$inst.MinimizeOnShow) { continue }
+
+        $handle = Get-RamRobloxWindow -ProcessId $inst.ProcessId -TimeoutSec 0
+        if ($handle -ne [IntPtr]::Zero) {
+            $inst.Handle = $handle
+            if ($inst.PSObject.Properties.Name -contains 'DesiredFullscreen' -and [string]$inst.DesiredFullscreen -eq 'no') {
+                [void][Ram.Native]::ShowWindow($handle, 9) # снять maximized/fullscreen restore state
+            }
+            [void][Ram.Native]::ShowWindow($handle, 7) # SW_SHOWMINNOACTIVE
+            $inst.MinimizeOnShow = $false
+            $inst.WindowStateRecheckAt = (Get-Date).AddSeconds(2)
+            $a = Get-RamAccountById -Id $id
+            if ($null -ne $a -and $script:Settings.RenameWindows) {
+                [void](Set-RamWindowTitle -Handle $handle -Title ("Roblox — " + $a.Alias))
+            }
+            Update-RamCardStates
+        }
+        # Не обходим рабочий стол по одному разу на каждый аккаунт за тик.
+        return
+    }
+}
+
+function New-RamFreshWindowTimer {
+    $timer = New-Object System.Windows.Forms.Timer
+    $timer.Interval = 150
+    $timer.Add_Tick({ Invoke-RamSafe -What 'сворачивание свежего окна Roblox' -Body {
+        Update-RamForegroundHistory
+        Update-RamFreshRobloxWindow
+    } })
+    $timer.Start()
+    return $timer
 }
 
 # ------------------------------------------------------- действия ----------
@@ -1606,8 +1821,15 @@ function Invoke-RamAssignColor {
     if ($null -eq $val) { return }
 
     $key = $val.Trim().ToLower()
+    if ([string]::IsNullOrWhiteSpace($key)) {
+        Write-RamLog 'Метка не менялась — поле осталось пустым.' 'info'
+        return
+    }
     $known = (Get-RamLabelColors | ForEach-Object { $_.Key })
-    if ($known -notcontains $key) { $key = '' }
+    if ($known -notcontains $key) {
+        Show-RamInfo 'Выбери цвет из списка. Неизвестное значение не было применено.'
+        return
+    }
 
     Push-RamUndo -Label 'смена метки'
     foreach ($a in $targets) { $a.Color = $key }
@@ -1672,42 +1894,10 @@ function Invoke-RamStartupCookieCheck {
     if (-not $script:Settings.CheckOnStart) { return }
     if (@($script:Accounts).Count -eq 0) { return }
 
-    $ok = 0; $bad = 0; $fixed = 0
-    foreach ($a in $script:Accounts) {
-        if ([string]::IsNullOrWhiteSpace($a.Cookie)) { $bad++; continue }
-
-        $alive = $false
-        try {
-            $u = Get-RamAuthenticatedUser -Cookie $a.Cookie
-            $a.Username = $u.Name; $a.UserId = $u.Id
-            $alive = $true
-        } catch { }
-
-        if (-not $alive) {
-            # Молчком пробуем поднять свежий вход из приложения Roblox.
-            if (Invoke-RamRepairCookie -Account $a -Quiet) {
-                try {
-                    $u = Get-RamAuthenticatedUser -Cookie $a.Cookie
-                    $a.Username = $u.Name; $a.UserId = $u.Id
-                    $alive = $true; $fixed++
-                } catch { }
-            }
-        }
-
-        $a.CookieOk        = $(if ($alive) { 'yes' } else { 'no' })
-        $a.CookieCheckedAt = (Get-Date).ToString('s')
-        if ($alive) { $ok++ } else { $bad++ }
-    }
-
-    Save-RamState
-    Build-RamCards
-
-    if ($bad -eq 0) {
-        Write-RamLog "Входы проверены: живы все $ok." 'ok'
-    } else {
-        $note = if ($fixed -gt 0) { " Починено из приложения: $fixed." } else { '' }
-        Write-RamLog "Входы проверены: живых $ok, мёртвых $bad.$note Мёртвые не запустятся — открой мастер и добавь их заново." 'warn'
-    }
+    # Проверка идёт фоновой очередью: окно не замирает, а 429 и обрыв сети
+    # не красят живые аккаунты. Мёртвые очередь по окончании молча пробует
+    # починить из приложения Roblox — см. Complete-RamCookieCheckBatch.
+    Start-RamCookieCheckBatch -Accounts @($script:Accounts) -Quiet
 }
 
 function Update-RamAccountCookieState {
@@ -1731,8 +1921,21 @@ function Update-RamAccountCookieState {
         return $false
     }
 
+    $script:LastCookieCheckState = 'transient'
     try {
-        $u = Get-RamAuthenticatedUser -Cookie $Account.Cookie
+        $check = Test-RamAuthenticatedUser -Cookie $Account.Cookie
+        $script:LastCookieCheckState = $check.State
+        if ($check.State -ne 'valid') {
+            if ($check.State -eq 'unauthorized') {
+                $Account.CookieOk        = 'no'
+                $Account.CookieCheckedAt = (Get-Date).ToString('s')
+                Write-RamLog "'$($Account.Alias)': $($check.Message)" 'warn'
+            } else {
+                Write-RamLog "'$($Account.Alias)': состояние входа не изменено — $($check.Message)" 'warn'
+            }
+            return $false
+        }
+        $u = $check.User
         $Account.Username = $u.Name
         $Account.UserId   = $u.Id
 
@@ -1749,9 +1952,8 @@ function Update-RamAccountCookieState {
         Write-RamLog "'$($Account.Alias)': вход живой — $($u.Name)$extra" 'ok'
         return $true
     } catch {
-        $Account.CookieOk        = 'no'
-        $Account.CookieCheckedAt = (Get-Date).ToString('s')
-        Write-RamLog "'$($Account.Alias)': $($_.Exception.Message)" 'err'
+        $script:LastCookieCheckState = 'transient'
+        Write-RamLog "'$($Account.Alias)': состояние входа не изменено — $($_.Exception.Message)" 'err'
         return $false
     }
 }
@@ -1779,10 +1981,14 @@ function Invoke-RamRecheckOne {
     if ($alive) {
         $extra = if ([int]$acc.Robux -ge 0) { [Environment]::NewLine + "Robux: $($acc.Robux)" } else { '' }
         Show-RamMessage -Kind 'ok' -Message ("Вход в «$($acc.Alias)» живой." + $extra)
-    } else {
+    } elseif ($script:LastCookieCheckState -eq 'unauthorized') {
         Show-RamMessage -Kind 'warn' -Message ("Вход в «$($acc.Alias)» мёртв — его надо взять заново." +
             [Environment]::NewLine + [Environment]::NewLine +
             'Красная кнопка на карточке откроет окно браузера, где можно войти руками.')
+    } else {
+        Show-RamMessage -Kind 'warn' -Message ("Сейчас не удалось проверить вход в «$($acc.Alias)»." +
+            [Environment]::NewLine + [Environment]::NewLine +
+            'Его прежнее состояние не изменено. Проверь интернет и повтори позже.')
     }
 }
 
@@ -1792,76 +1998,184 @@ function Invoke-RamCheckCookies {
     if ($targets.Count -eq 0) { $targets = @(Get-RamVisibleAccounts) }
     if ($targets.Count -eq 0) { Show-RamInfo 'Аккаунтов пока нет.'; return }
 
-    $script:UI.Form.Cursor = [System.Windows.Forms.Cursors]::WaitCursor
-    $ok = 0; $bad = 0
-    $dead = @()
-    try {
-        foreach ($a in $targets) {
-            # Тем же кодом, что и «Проверить этот вход» из меню карточки:
-            # два места, делающих одно и то же по-разному, рано или поздно
-            # начинают отвечать по-разному.
-            if (Update-RamAccountCookieState -Account $a) { $ok++ } else { $bad++; $dead += $a }
-        }
-        Save-RamState
-        Build-RamCards
-    } finally {
-        $script:UI.Form.Cursor = [System.Windows.Forms.Cursors]::Default
-    }
-    Write-RamLog "Проверено: живых $ok, мёртвых $bad." $(if ($bad -eq 0) { 'ok' } else { 'warn' })
+    Start-RamCookieCheckBatch -Accounts $targets
+}
 
-    # КОГДА ВСЁ ХОРОШО — ТОЖЕ НАДО СКАЗАТЬ.
-    # Раньше при живых входах кнопка не отвечала ничем: строка уходила в
-    # журнал, окно не менялось, и человек справедливо решал, что кнопка не
-    # работает. Отсутствие плохих новостей — не ответ; ответ это «проверил
-    # столько-то, все живы».
-    if ($dead.Count -eq 0) {
-        $word = if ($ok -eq 1) { 'вход' } elseif ($ok -lt 5) { 'входа' } else { 'входов' }
-        Show-RamMessage -Kind 'ok' -Message ("Проверено $ok $word — все живые." + [Environment]::NewLine +
-                                             [Environment]::NewLine + 'Ничего чинить не нужно.')
+function Start-RamCookieCheckBatch {
+    param([Parameter(Mandatory)][object[]]$Accounts, [switch]$Quiet)
+    if ($null -ne $script:CookieCheckState) {
+        Show-RamInfo 'Проверка входов уже идёт — дождись результата.'
+        return
+    }
+    $queue = New-Object System.Collections.ArrayList
+    foreach ($a in $Accounts) { [void]$queue.Add([pscustomobject]@{ Account=$a; Attempts=0 }) }
+    $script:CookieCheckState = [pscustomobject]@{
+        Queue=$queue; Job=$null; Current=$null; Ok=0; Bad=0; Unknown=0
+        Dead=(New-Object System.Collections.ArrayList)
+        Total=$queue.Count; Quiet=[bool]$Quiet; NextAt=[datetime]::MinValue
+    }
+    $timer = New-Object System.Windows.Forms.Timer
+    $timer.Interval = 150
+    $timer.Add_Tick({ Invoke-RamSafe -What 'асинхронная проверка входов' -Body { Invoke-RamCookieCheckPump } })
+    $script:UI.CookieCheckTimer = $timer
+    $script:UI.Form.Cursor = [System.Windows.Forms.Cursors]::WaitCursor
+    Set-RamStatus "Проверяю входы: 0 из $($queue.Count)…"
+    $timer.Start()
+}
+
+function Invoke-RamCookieCheckPump {
+    $st = $script:CookieCheckState
+    if ($null -eq $st) { return }
+    if ((Get-Date) -lt $st.NextAt) { return }
+
+    if ($null -eq $st.Job -and $st.Queue.Count -gt 0) {
+        $st.Current = $st.Queue[0]
+        $st.Queue.RemoveAt(0)
+        $st.Current.Attempts++
+        if ([string]::IsNullOrWhiteSpace([string]$st.Current.Account.Cookie)) {
+            $st.Bad++; $st.Current.Account.CookieOk='no'; $st.Current.Account.CookieCheckedAt=(Get-Date).ToString('s')
+            [void]$st.Dead.Add($st.Current.Account)
+            $st.Current=$null; $st.NextAt=(Get-Date).AddMilliseconds(350)
+            return
+        }
+        $st.Job = Start-RamAuthCheckAsync -Cookie $st.Current.Account.Cookie
         return
     }
 
-    # Мёртвый вход часто чинится сам: если сейчас в приложении Roblox сидит
-    # именно этот аккаунт, свежая кука лежит прямо там.
-    if ($dead.Count -gt 0) {
-        $names = ($dead | ForEach-Object { $_.Alias }) -join ', '
-        if (Confirm-Ram ("Мёртвые входы: $names.`n`nПопробовать починить их из приложения Roblox? " +
-                         'Починится тот аккаунт, под которым ты сейчас вошёл в приложении.')) {
-            $fixed = 0
-            foreach ($a in $dead) {
-                if (Invoke-RamRepairCookie -Account $a -Quiet) { $fixed++ }
-            }
-            if ($fixed -gt 0) {
-                Build-RamCards
-                Show-RamInfo "Починено входов: $fixed.`n`nОстальные — войди под ними в приложении Roblox по очереди и нажимай «Куки»."
-            } else {
-                Show-RamInfo ("Починить не вышло: в приложении Roblox сейчас другой аккаунт.`n`n" +
-                              'Войди под нужным и нажми «Куки» ещё раз. Для смены пользуйся кнопкой ' +
-                              '«Сменить аккаунт (безопасно)» в мастере, а не «Выйти» в самом Roblox.')
-            }
+    if ($null -ne $st.Job) {
+        if (-not $st.Job.Task.IsCompleted) { return }
+        $result = Complete-RamAuthCheckAsync -Job $st.Job
+        $st.Job = $null
+        $a = $st.Current.Account
+        if ($result.State -eq 'valid') {
+            $a.Username=$result.User.Name; $a.UserId=$result.User.Id
+            $a.CookieOk='yes'; $a.CookieCheckedAt=(Get-Date).ToString('s'); $st.Ok++
+        } elseif ($result.State -eq 'unauthorized') {
+            $a.CookieOk='no'; $a.CookieCheckedAt=(Get-Date).ToString('s'); $st.Bad++
+            [void]$st.Dead.Add($a)
+        } elseif ($result.State -eq 'rate_limited' -and $st.Current.Attempts -lt 2) {
+            [void]$st.Queue.Insert(0,$st.Current)
+            $st.NextAt=(Get-Date).AddSeconds([int]$result.RetryAfterSeconds)
+            Set-RamStatus "Roblox просит паузу — продолжу через $($result.RetryAfterSeconds) с."
+            $st.Current=$null
+            return
+        } else {
+            $st.Unknown++
+            Write-RamLog "'$($a.Alias)': состояние входа не изменено — $($result.Message)" 'warn'
         }
+        $st.Current=$null
+        $done=$st.Total-$st.Queue.Count
+        Set-RamStatus "Проверяю входы: $done из $($st.Total)…"
+        $st.NextAt=(Get-Date).AddMilliseconds(350)
+    }
+
+    if ($null -eq $st.Job -and $st.Queue.Count -eq 0 -and $null -eq $st.Current) {
+        try { $script:UI.CookieCheckTimer.Stop(); $script:UI.CookieCheckTimer.Dispose() } catch { }
+        $script:UI.CookieCheckTimer=$null
+        $script:UI.Form.Cursor=[System.Windows.Forms.Cursors]::Default
+        $script:CookieCheckState=$null
+        Save-RamState
+        Build-RamCards
+        $level=if($st.Bad -eq 0 -and $st.Unknown -eq 0){'ok'}else{'warn'}
+        Write-RamLog "Проверено: живых $($st.Ok), мёртвых $($st.Bad), не удалось проверить $($st.Unknown)." $level
+        Set-RamStatus 'Проверка входов завершена.'
+        Complete-RamCookieCheckBatch -Ok $st.Ok -Bad $st.Bad -Unknown $st.Unknown -Dead @($st.Dead) -Quiet:$st.Quiet
+    }
+}
+
+function Get-RamWordForm {
+    <# «1 вход, 2 входа, 5 входов, 11 входов, 21 вход». #>
+    param([int]$N, [string]$One, [string]$Few, [string]$Many)
+    $n100 = [Math]::Abs($N) % 100; $n10 = $n100 % 10
+    if ($n100 -ge 11 -and $n100 -le 14) { return $Many }
+    if ($n10 -eq 1) { return $One }
+    if ($n10 -ge 2 -and $n10 -le 4) { return $Few }
+    return $Many
+}
+
+function Complete-RamCookieCheckBatch {
+    <#
+      Итог проверки входов — словами, в каждом исходе.
+
+      ЗАЧЕМ ОТДЕЛЬНО. Когда проверку перевели в фоновую очередь, итог свели к
+      трём цифрам, а предложение починить мёртвые входы из приложения Roblox
+      осталось в недостижимом коде после return. Человек видел «мёртвых: 2»
+      и не знал, что с этим делать.
+
+      -Quiet — проверка при запуске программы: окон не показываем, но мёртвые
+      молча пробуем поднять из приложения Roblox, как делалось всегда.
+    #>
+    param([int]$Ok, [int]$Bad, [int]$Unknown, [object[]]$Dead = @(), [switch]$Quiet)
+
+    if ($Quiet) {
+        $fixed = 0
+        foreach ($a in $Dead) {
+            if (Invoke-RamRepairCookie -Account $a -Quiet) { $fixed++ }
+        }
+        if ($fixed -gt 0) {
+            Build-RamCards
+            Write-RamLog "Мёртвых входов починено из приложения Roblox: $fixed." 'ok'
+        }
+        return
+    }
+
+    if ($Bad -eq 0 -and $Unknown -eq 0) {
+        $word = Get-RamWordForm -N $Ok -One 'вход' -Few 'входа' -Many 'входов'
+        Show-RamMessage -Kind 'ok' -Message ("Проверено $Ok $word — все живые.`n`nНичего чинить не нужно.")
+        return
+    }
+    if ($Bad -eq 0) {
+        Show-RamMessage -Kind 'warn' -Message ("Живых входов: $Ok. Не удалось проверить: $Unknown.`n`n" +
+            'Эти карточки НЕ помечены мёртвыми — Roblox просто не ответил. Проверь интернет и повтори позже.')
+        return
+    }
+
+    $names = (@($Dead) | ForEach-Object { $_.Alias }) -join ', '
+    $extra = if ($Unknown -gt 0) { "`n`nЕщё $Unknown проверить не удалось — их состояние не менялось." } else { '' }
+    if (Confirm-Ram ("Живых: $Ok. Мёртвые входы: $names.$extra`n`n" +
+                     'Попробовать починить мёртвые из приложения Roblox? ' +
+                     'Починится тот аккаунт, под которым ты сейчас вошёл в приложении.')) {
+        $fixed = 0
+        foreach ($a in $Dead) {
+            if (Invoke-RamRepairCookie -Account $a -Quiet) { $fixed++ }
+        }
+        if ($fixed -gt 0) {
+            Build-RamCards
+            Show-RamInfo "Починено входов: $fixed.`n`nОстальные — войди под ними в приложении Roblox по очереди и нажимай «Куки», либо жми красную кнопку ↻ на карточке."
+        } else {
+            Show-RamInfo ("Починить не вышло: в приложении Roblox сейчас другой аккаунт.`n`n" +
+                          'Войди под нужным и нажми «Куки» ещё раз, либо жми красную кнопку ↻ на карточке — ' +
+                          'она откроет окно браузера, где можно войти руками.')
+        }
+    } else {
+        Set-RamStatus "Мёртвых входов: $Bad — красная кнопка ↻ на карточке откроет окно входа."
     }
 }
 
 function Invoke-RamStopSelected {
     <# Закрыть окна отмеченных аккаунтов. #>
     $targets = @(Get-RamTargetAccounts)
-    if ($targets.Count -eq 0) { $targets = @($script:Accounts) }
-    $n = 0
+    if ($targets.Count -eq 0) {
+        Show-RamMessage -Kind 'warn' -Message 'Отметь галочками окна, которые нужно закрыть. AltHub не закрывает все аккаунты молча.'
+        return
+    }
+    $n = 0; $failed = 0; $notRunning = 0
     foreach ($a in $targets) {
         $inst = $script:Instances[$a.Id]
-        if ($null -eq $inst) { continue }
+        if ($null -eq $inst) { $notRunning++; continue }
         # Закрытие руками — не вылет, счётчик вылетов не трогаем.
         $inst | Add-Member -NotePropertyName ClosedByUser -NotePropertyValue $true -Force
-        if (Stop-RamRobloxInstance -ProcessId $inst.ProcessId) { $n++ }
+        if (Stop-RamRobloxInstance -ProcessId $inst.ProcessId) { $n++ } else { $failed++ }
     }
-    Write-RamLog "Закрыто клиентов: $n." 'ok'
+    Write-RamLog "Закрыто клиентов: $n; не удалось: $failed; не были запущены: $notRunning." $(if($failed){'warn'}else{'ok'})
     Update-RamCardStates
 
     # Отсутствие работы — тоже ответ. Раньше при нечего-закрывать кнопка
     # молчала, и это было неотличимо от поломки.
     if ($n -gt 0) {
         Set-RamStatus ("Закрыто окон: {0}" -f $n)
+    } elseif ($failed -gt 0) {
+        Show-RamMessage -Kind 'warn' -Message "Не удалось закрыть окон: $failed. Они остаются под контролем AltHub; попробуй ещё раз или закрой их вручную."
     } else {
         Show-RamMessage -Message 'Закрывать нечего: сейчас ни одно окно Roblox не запущено через AltHub.'
     }
@@ -2021,7 +2335,7 @@ function Invoke-RamWatchCheck {
     if ($missing.Count -eq 0) { return }
 
     Write-RamLog "Присмотр за набором «$group»: не в игре $($missing.Count), поднимаю." 'warn'
-    Add-RamToLaunchQueue -Accounts $missing
+    Add-RamToLaunchQueue -Accounts $missing -Unattended
 }
 function Invoke-RamRelogin {
     <#

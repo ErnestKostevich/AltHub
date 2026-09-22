@@ -68,6 +68,9 @@ namespace Ram {
         [DllImport("user32.dll")]
         public static extern bool SetForegroundWindow(IntPtr hWnd);
 
+        [DllImport("user32.dll")]
+        public static extern IntPtr GetForegroundWindow();
+
         // Собрать видимые окна с заголовком, принадлежащие процессу.
         public static List<IntPtr> WindowsOfProcess(uint targetPid) {
             List<IntPtr> found = new List<IntPtr>();
@@ -165,17 +168,9 @@ function Set-RamWindowBounds {
     )
     if ($Handle -eq [IntPtr]::Zero) { return $false }
     try {
-        # ShowWindow(SW_SHOWNORMAL) не просто «восстанавливает из свёрнутого» —
-        # это Win32-команда АКТИВИРОВАТЬ окно, то есть поднять его поверх
-        # остальных и забрать фокус. Раньше она вызывалась безусловно для
-        # КАЖДОГО окна в цикле раскладки (Invoke-RamTileWindows), поэтому при
-        # автораскладке после массового запуска все окна Roblox по очереди
-        # выпрыгивали поверх всего, включая то, на котором в этот момент
-        # играл человек. Зовём её, только если окно и правда свёрнуто —
-        # иначе просто двигаем и меняем размер, без активации.
-        if ([Ram.Native]::IsIconic($Handle)) {
-            [Ram.Native]::ShowWindow($Handle, 1) | Out-Null   # SW_SHOWNORMAL
-        }
+        # SetWindowPos меняет и восстановленные границы свёрнутого окна.
+        # ShowWindow здесь запрещён: автораскладка не должна разворачивать
+        # свежезапущенные клиенты и бросать их человеку поверх рабочего окна.
         $flags = $script:SWP_NOZORDER -bor $script:SWP_NOACTIVATE -bor $script:SWP_SHOWWINDOW
         return [Ram.Native]::SetWindowPos($Handle, [IntPtr]::Zero, $X, $Y, $Width, $Height, $flags)
     } catch { return $false }
@@ -186,6 +181,53 @@ function Set-RamWindowForeground {
     if ($Handle -eq [IntPtr]::Zero) { return $false }
     try {
         [Ram.Native]::ShowWindow($Handle, 1) | Out-Null
+        return [Ram.Native]::SetForegroundWindow($Handle)
+    } catch { return $false }
+}
+
+function Update-RamForegroundHistory {
+    <# Запоминает последнее активное окно НЕ AltHub, чтобы вернуть туда фокус. #>
+    try {
+        $h = [Ram.Native]::GetForegroundWindow()
+        if ($h -eq [IntPtr]::Zero -or -not [Ram.Native]::IsWindow($h)) { return }
+        $windowPid = [uint32]0
+        [void][Ram.Native]::GetWindowThreadProcessId($h, [ref]$windowPid)
+        if ([int]$windowPid -eq $PID) { return }
+        foreach ($inst in @($script:Instances.Values)) {
+            if ([int]$inst.ProcessId -eq [int]$windowPid -and
+                $inst.PSObject.Properties.Name -contains 'MinimizeOnShow' -and [bool]$inst.MinimizeOnShow) { return }
+        }
+        $script:LastExternalForeground = $h
+    } catch { }
+}
+
+function Get-RamFocusReturnHandle {
+    param([int]$ExcludeProcessId = 0)
+    try {
+        $current = [Ram.Native]::GetForegroundWindow()
+        if ($current -ne [IntPtr]::Zero) {
+            $windowPid = [uint32]0
+            [void][Ram.Native]::GetWindowThreadProcessId($current, [ref]$windowPid)
+            if ([int]$windowPid -ne $PID -and [int]$windowPid -ne $ExcludeProcessId -and [Ram.Native]::IsWindow($current)) {
+                return $current
+            }
+        }
+        $saved = $script:LastExternalForeground
+        if ($saved -ne [IntPtr]::Zero -and [Ram.Native]::IsWindow($saved)) {
+            $windowPid = [uint32]0
+            [void][Ram.Native]::GetWindowThreadProcessId($saved, [ref]$windowPid)
+            if ([int]$windowPid -ne $ExcludeProcessId) { return $saved }
+        }
+    } catch { }
+    return [IntPtr]::Zero
+}
+
+function Restore-RamFocus {
+    param([IntPtr]$Handle)
+    if ($Handle -eq [IntPtr]::Zero) { return $false }
+    try {
+        if (-not [Ram.Native]::IsWindow($Handle)) { return $false }
+        if ([Ram.Native]::IsIconic($Handle)) { [void][Ram.Native]::ShowWindow($Handle, 9) } # SW_RESTORE
         return [Ram.Native]::SetForegroundWindow($Handle)
     } catch { return $false }
 }

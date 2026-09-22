@@ -15,7 +15,8 @@
 #>
 
 $ErrorActionPreference = 'Stop'
-$root = $PSScriptRoot
+# Скрипт лежит в папке «Проверки», программа — на уровень выше.
+$root = Split-Path -Parent $PSScriptRoot
 
 . (Join-Path $root 'AltHub.ps1') -NoAutoStart
 

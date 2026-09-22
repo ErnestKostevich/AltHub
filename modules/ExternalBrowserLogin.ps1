@@ -94,7 +94,8 @@ function Save-RamHttpFile {
     $client = New-Object System.Net.Http.HttpClient($handler)
     $client.Timeout = [TimeSpan]::FromMinutes(30)
     try {
-        $client.DefaultRequestHeaders.UserAgent.ParseAdd('AltHub/1.2 (Chrome-for-Testing setup)')
+        $ver = if ($script:AppVersion) { $script:AppVersion } else { '1.4' }
+        $client.DefaultRequestHeaders.UserAgent.ParseAdd("AltHub/$ver (Chrome-for-Testing setup)")
     } catch { }
 
     try {
@@ -146,7 +147,7 @@ function Invoke-RamVisibleDownload {
         [Parameter(Mandatory)][string]$OutFile
     )
 
-    $form = New-Object System.Windows.Forms.Form
+    $form = New-RamForm
     $form.Text = $Title
     $form.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::FixedDialog
     $form.StartPosition   = [System.Windows.Forms.FormStartPosition]::CenterScreen
@@ -380,13 +381,63 @@ function Get-RamExternalBrowserProfileDir {
 
     $name = switch ($Kind) {
         'cft'   { 'cft-profile' }
-        default { 'externalbrowserprofile' }
+        'edge'  { 'edge-login-profile' }
+        default { 'chrome-login-profile' }
     }
     $dir = Join-Path (Get-RamDataDir) $name
+
+    # ПРОГРЕТЫЙ ПРОФИЛЬ НЕ ВЫБРАСЫВАЕМ. До 1.4 обычный Chrome и Edge жили в
+    # общей папке externalbrowserprofile. Капча Roblox (Arkose) узнаёт
+    # устройство по накопленному профилю и со временем показывает задания
+    # проще. Новая пустая папка вернула бы каждому человеку после обновления
+    # капчу «как в первый раз» — поэтому старую переносим, а не заводим чистую.
+    if ($Kind -ne 'cft' -and -not (Test-Path -LiteralPath $dir)) {
+        $legacy = Join-Path (Get-RamDataDir) 'externalbrowserprofile'
+        if (Test-Path -LiteralPath $legacy) {
+            try {
+                Move-Item -LiteralPath $legacy -Destination $dir -ErrorAction Stop
+                Write-RamLog "Профиль окна входа перенесён из externalbrowserprofile в $name — прогрев сохранён." 'info'
+            } catch {
+                # Папку держит работающий браузер. Пользуемся ею под старым
+                # именем: пустой профиль хуже некрасивого имени папки.
+                Write-RamLog "Старый профиль окна входа занят, пользуюсь им без переноса: $($_.Exception.Message)" 'warn'
+                return $legacy
+            }
+        }
+    }
+
     if (-not (Test-Path -LiteralPath $dir)) {
         [void](New-Item -ItemType Directory -Path $dir -Force)
     }
     return $dir
+}
+
+function Stop-RamProfileBrowsers {
+    <# Завершает только процессы браузера, запущенные с профилем AltHub. #>
+    param([Parameter(Mandatory)][string]$ProfileDir)
+    $full = [System.IO.Path]::GetFullPath($ProfileDir).TrimEnd('\')
+    $escaped = [regex]::Escape($full)
+    $procs = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -match '^(chrome|msedge)\.exe$' -and [string]$_.CommandLine -match $escaped })
+    foreach ($p in ($procs | Sort-Object ProcessId -Descending)) {
+        try { Stop-Process -Id ([int]$p.ProcessId) -Force -ErrorAction Stop } catch { }
+    }
+    $until = (Get-Date).AddSeconds(4)
+    do {
+        $left = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -match '^(chrome|msedge)\.exe$' -and [string]$_.CommandLine -match $escaped })
+        if ($left.Count -eq 0) { break }
+        Start-Sleep -Milliseconds 100
+    } while ((Get-Date) -lt $until)
+    if ($left.Count -eq 0) {
+        foreach ($name in @('SingletonLock','SingletonSocket','SingletonCookie')) {
+            $lockPath = Join-Path $full $name
+            if (([System.IO.Path]::GetFullPath($lockPath)).StartsWith($full, [System.StringComparison]::OrdinalIgnoreCase)) {
+                Remove-Item -LiteralPath $lockPath -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+    return ($left.Count -eq 0)
 }
 
 function Clear-RamExternalBrowserProfileState {
@@ -524,7 +575,9 @@ function Test-RamLoginWindowStuck {
     if ($Proc.HasExited) { return $false }
     if ($Proc.MainWindowHandle -eq [IntPtr]::Zero) { return $false }
     $title = [string]$Proc.MainWindowTitle
-    if ([string]::IsNullOrWhiteSpace($title)) { return $true }
+    # Пустой заголовок во время холодной загрузки нормален и особенно часто
+    # бывает, пока человек уже печатает в форме. Сам по себе это не зависание.
+    if ([string]::IsNullOrWhiteSpace($title)) { return $false }
     # URL-образный заголовок: «www.roblox.com/login», «roblox.com» и т.п.
     if ($title -match '^[a-z0-9.-]+\.[a-z]{2,}(/|$)') { return $true }
     return $false
@@ -581,10 +634,13 @@ function Show-RamExternalBrowserLoginWindow {
         throw "Не удалось поднять локальный listener на порту $port`: $($_.Exception.Message)"
     }
 
-    # CORS для fetch() из service worker расширения (origin chrome-extension://...).
-    # '*' безопасен: сервер слушает только 127.0.0.1 и живёт минуты одного входа.
-    function Write-RamCorsHeaders([System.Net.HttpListenerResponse]$resp) {
-        $resp.Headers.Add('Access-Control-Allow-Origin', '*')
+    $loginToken = New-RamBridgeToken
+
+    function Write-RamCorsHeaders([System.Net.HttpListenerResponse]$resp, [string]$origin) {
+        if (Test-RamBridgeExtensionOrigin -Origin $origin) {
+            $resp.Headers.Add('Access-Control-Allow-Origin', $origin)
+            $resp.Headers.Add('Vary', 'Origin')
+        }
         $resp.Headers.Add('Access-Control-Allow-Methods', 'POST, OPTIONS')
         $resp.Headers.Add('Access-Control-Allow-Headers', 'Content-Type')
     }
@@ -593,13 +649,17 @@ function Show-RamExternalBrowserLoginWindow {
     $browserProc  = $null
 
     try {
-        $loginUrl = "https://www.roblox.com/login?althub_port=$port"
+        # Сначала открываем локальную bootstrap-страницу. Расширение забирает
+        # из неё порт и одноразовый nonce, затем само переходит на чистый URL
+        # Roblox — секрет не попадает серверу в query string.
+        $loginUrl = "http://127.0.0.1:$port/login?althub_login=$port&althub_token=$loginToken"
 
         # Чистим следы прошлого входа (пароли/автозаполнение/история/сессии),
         # но сохраняем Cookies и Local Storage — там метки устройства.
         try { Clear-RamExternalBrowserProfileState -ProfileDir $profileDir } catch {
             Write-RamLog "Профиль: уборка не удалась: $($_.Exception.Message)" 'warn'
         }
+        [void](Stop-RamProfileBrowsers -ProfileDir $profileDir)
 
         $procArgs = @(
             (ConvertTo-RamChromeArg -Name '--user-data-dir' -Value $profileDir)
@@ -618,7 +678,7 @@ function Show-RamExternalBrowserLoginWindow {
             # На случай, если Chrome решит восстановить сессию несмотря на
             # почищенные файлы — гасим и баббл, и восстановление.
             '--disable-session-crashed-bubble'
-            '--disable-features=ChromeWhatsNewUI,Translate,PrivacySandboxSettings4,OptimizationHints,InterestFeedContentSuggestions'
+            '--disable-features=ChromeWhatsNewUI,Translate,TranslateUI,PrivacySandboxSettings4,OptimizationHints,InterestFeedContentSuggestions'
             # Фиксированный размер окна — как у Puppeteer в RAM.
             '--window-size=520,760'
             '--window-position=200,120'
@@ -654,7 +714,7 @@ function Show-RamExternalBrowserLoginWindow {
             for ($i = 0; $i -lt 15; $i++) {
                 if ($browserProc.MainWindowHandle -ne [IntPtr]::Zero) {
                     try {
-                        [Microsoft.VisualBasic.Interaction]::AppActivate($browserProc.Id)
+                        [void](Set-RamWindowForeground -Handle $browserProc.MainWindowHandle)
                     } catch { }
                     break
                 }
@@ -662,50 +722,25 @@ function Show-RamExternalBrowserLoginWindow {
             }
         }
 
-        # Сторожок против серого экрана: даём странице время прогрузиться
-        # (холодный профиль может быть медленным) и проверяем заголовок
-        # окна. Если вместо заголовка документа там URL — страница не
-        # загрузилась; перезапускаем окно один раз (ровно то, что вручную
-        # делает «закрыть и нажать Окно входа»). Порт и listener те же,
-        # поэтому расширение отработает как обычно.
-        Start-Sleep -Seconds 6
-        if ($null -ne $browserProc -and (Test-RamLoginWindowStuck -Proc $browserProc)) {
-            Write-RamLog 'Окно входа зависло на сером экране — перезапускаю его автоматически.' 'warn'
-            try { $browserProc.CloseMainWindow() | Out-Null } catch { }
-            Start-Sleep -Milliseconds 600
-            if (-not $browserProc.HasExited) { try { $browserProc.Kill() } catch { } }
-            # ЖДЁМ, ПОКА ОН ДЕЙСТВИТЕЛЬНО УМРЁТ. Chrome держит SingletonLock
-            # на папке профиля; пока он его не отпустил, новый chrome.exe не
-            # запускается, а передаёт задание старому и мгновенно завершается
-            # сам. Дальше цикл видит HasExited и решает, что человек закрыл
-            # окно, хотя окно на экране открыто.
-            try { [void]$browserProc.WaitForExit(5000) } catch { }
-            Start-Sleep -Milliseconds 1200
-            $browserProc = Start-RamLoginBrowser -BrowserExe $browserExe -ProcArgs $procArgs
-            Start-Sleep -Milliseconds 600
-            if ($null -ne $browserProc -and -not $browserProc.HasExited) {
-                for ($i = 0; $i -lt 15; $i++) {
-                    if ($browserProc.MainWindowHandle -ne [IntPtr]::Zero) {
-                        try {
-                            [Microsoft.VisualBasic.Interaction]::AppActivate($browserProc.Id)
-                        } catch { }
-                        break
-                    }
-                    Start-Sleep -Milliseconds 100
-                }
-            }
-        }
+        # Сторожок против серого экрана теперь живёт ВНУТРИ цикла ожидания,
+        # ниже. Раньше здесь стоял слепой Start-Sleep на 6, потом 12 секунд и
+        # один взгляд на заголовок окна — на медленной машине окно
+        # перезапускалось прямо посреди ввода пароля.
 
         $getContextTask = $listener.GetContextAsync()
         $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
         # Расширение здоровается сразу, как только увидит адрес со своим
-        # портом. Если за 25 секунд не поздоровалось — его в этом браузере
+        # портом. Если за 45 секунд не поздоровалось — его в этом браузере
         # нет (обычный Chrome 137+ молча игнорирует --load-extension), и
-        # ждать пять минут бессмысленно.
-        $goneSince   = $null
-        $sawHello    = $false
-        $helloDue    = (Get-Date).AddSeconds(25)
-        $noExtension = $false
+        # ждать пять минут бессмысленно. 25 секунд не хватало холодному
+        # профилю на слабой машине: человек получал ложное «расширение не
+        # загрузилось».
+        $goneSince     = $null
+        $sawHello      = $false
+        $helloDue      = (Get-Date).AddSeconds(45)
+        $noExtension   = $false
+        $restartedOnce = $false
+        $stuckDue      = (Get-Date).AddSeconds(20)
 
         while ($true) {
             [System.Windows.Forms.Application]::DoEvents()
@@ -713,7 +748,17 @@ function Show-RamExternalBrowserLoginWindow {
             if ($getContextTask.IsCompleted) {
                 $context = $getContextTask.GetAwaiter().GetResult()
 
-                Write-RamCorsHeaders $context.Response
+                $origin = [string]$context.Request.Headers['Origin']
+                $reqPath = $context.Request.Url.AbsolutePath.ToLowerInvariant()
+                $isBootstrap = ($reqPath -eq '/login' -and $context.Request.HttpMethod -eq 'GET')
+
+                if (-not $isBootstrap -and -not (Test-RamBridgeExtensionOrigin -Origin $origin)) {
+                    $context.Response.StatusCode = 403
+                    $context.Response.Close()
+                    $getContextTask = $listener.GetContextAsync()
+                    continue
+                }
+                Write-RamCorsHeaders $context.Response $origin
 
                 if ($context.Request.HttpMethod -eq 'OPTIONS') {
                     $context.Response.StatusCode = 204
@@ -722,18 +767,43 @@ function Show-RamExternalBrowserLoginWindow {
                     continue
                 }
 
+                if ($reqPath -eq '/cookie') {
+                    $token = [string]$context.Request.QueryString['token']
+                    if ($context.Request.HttpMethod -ne 'POST' -or $token -ne $loginToken -or
+                        $context.Request.ContentLength64 -lt 1 -or $context.Request.ContentLength64 -gt 16384 -or
+                        [string]$context.Request.ContentType -notlike 'text/plain*') {
+                        $context.Response.StatusCode = 403
+                        $context.Response.Close()
+                        $getContextTask = $listener.GetContextAsync()
+                        continue
+                    }
+                }
+
                 $reqStream = $context.Request.InputStream
                 $reader    = New-Object System.IO.StreamReader($reqStream, [System.Text.Encoding]::UTF8)
                 $body      = $reader.ReadToEnd()
                 $reader.Dispose()
 
-                $reqPath = $context.Request.Url.AbsolutePath.ToLowerInvariant()
+                if ($reqPath -eq '/login') {
+                    $body = ''
+                }
                 if ($reqPath -eq '/hello') { $sawHello = $true }
                 if ($reqPath -eq '/cookie' -and -not [string]::IsNullOrWhiteSpace($body)) {
-                    $resultCookie = $body.Trim()
+                    $candidate = $body.Trim()
+                    $check = Test-RamAuthenticatedUser -Cookie $candidate
+                    if ($check.State -eq 'valid') {
+                        $resultCookie = $candidate
+                    } elseif ($check.State -eq 'unauthorized') {
+                        $context.Response.StatusCode = 422
+                    } elseif ($check.State -eq 'rate_limited') {
+                        $context.Response.StatusCode = 429
+                    } else {
+                        $context.Response.StatusCode = 503
+                    }
                 }
 
-                $respBytes = [System.Text.Encoding]::UTF8.GetBytes('ok')
+                $reply = if ($resultCookie) { 'ok' } elseif ($reqPath -eq '/cookie') { 'rejected' } else { 'ok' }
+                $respBytes = [System.Text.Encoding]::UTF8.GetBytes($reply)
                 $context.Response.ContentType = 'text/plain'
                 $context.Response.OutputStream.Write($respBytes, 0, $respBytes.Length)
                 $context.Response.Close()
@@ -756,6 +826,36 @@ function Show-RamExternalBrowserLoginWindow {
                 $goneSince = $null
             }
 
+            # СТОРОЖОК ПО СИГНАЛУ, А НЕ ПО ЧАСАМ. Перезапускаем окно, только
+            # если за 20 секунд расширение так и не поздоровалось И в заголовке
+            # до сих пор адрес вместо названия страницы — то есть страница
+            # действительно не загрузилась. Живую страницу, где человек уже
+            # печатает, сторожок не тронет никогда: расширение на ней давно
+            # сказало /hello. И не больше одного раза за вход.
+            if (-not $sawHello -and -not $restartedOnce -and (Get-Date) -gt $stuckDue -and
+                $null -ne $browserProc -and -not $browserProc.HasExited -and
+                (Test-RamLoginWindowStuck -Proc $browserProc)) {
+                Write-RamLog 'Окно входа не загрузилось за 20 секунд — перезапускаю его один раз.' 'warn'
+                $restartedOnce = $true
+                try { $browserProc.CloseMainWindow() | Out-Null } catch { }
+                Start-Sleep -Milliseconds 600
+                if (-not $browserProc.HasExited) { try { $browserProc.Kill() } catch { } }
+                # Ждём, пока он действительно умрёт и отпустит SingletonLock:
+                # иначе новый chrome.exe передаст задание старому и выйдет сам.
+                try { [void]$browserProc.WaitForExit(5000) } catch { }
+                [void](Stop-RamProfileBrowsers -ProfileDir $profileDir)
+                $browserProc = Start-RamLoginBrowser -BrowserExe $browserExe -ProcArgs $procArgs
+                for ($i = 0; $i -lt 15 -and $null -ne $browserProc -and -not $browserProc.HasExited; $i++) {
+                    if ($browserProc.MainWindowHandle -ne [IntPtr]::Zero) {
+                        [void](Set-RamWindowForeground -Handle $browserProc.MainWindowHandle)
+                        break
+                    }
+                    Start-Sleep -Milliseconds 100
+                }
+                $goneSince = $null
+                $helloDue  = (Get-Date).AddSeconds(45)
+            }
+
             if (-not $sawHello -and (Get-Date) -gt $helloDue) {
                 # Обещание из шапки этого файла, наконец выполненное.
                 Write-RamLog 'Внешний браузер: расширение не загрузилось — этот браузер игнорирует --load-extension.' 'err'
@@ -768,7 +868,9 @@ function Show-RamExternalBrowserLoginWindow {
                 break
             }
 
-            Start-Sleep -Milliseconds 250
+            # 50 мс, а не 250: пришедший вход замечается сразу. Четыре опроса
+            # в секунду давали ощутимую паузу между «вошёл» и «AltHub понял».
+            Start-Sleep -Milliseconds 50
         }
     } catch {
         Write-RamLog "Внешний браузер: ошибка во время входа: $($_.Exception.Message)" 'err'
@@ -783,6 +885,7 @@ function Show-RamExternalBrowserLoginWindow {
                 try { $browserProc.Kill() } catch { }
             }
         }
+        [void](Stop-RamProfileBrowsers -ProfileDir $profileDir)
     }
 
     if ($noExtension) {

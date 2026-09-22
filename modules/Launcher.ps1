@@ -285,7 +285,8 @@ function Start-RamRobloxInstance {
         [string]$PlaceId,
         [string]$JobId,
         [string]$LinkCode,
-        [string]$Locale = 'ru_ru'
+        [string]$Locale = 'ru_ru',
+        [switch]$Minimized
     )
 
     if ([string]::IsNullOrWhiteSpace($PlaceId)) { $PlaceId  = $Account.PlaceId  }
@@ -323,6 +324,10 @@ function Start-RamRobloxInstance {
     $psi.Arguments        = '"' + $uri + '"'
     $psi.WorkingDirectory = Split-Path -Parent $PlayerPath
     $psi.UseShellExecute  = $true      # запуск от имени текущего пользователя
+    # WindowStyle=Minimized не используем: некоторые сборки Roblox после
+    # такого старта восстанавливают окно как maximized, даже когда в XML
+    # записано Fullscreen=false. Настоящее окно ловит частый таймер и
+    # сворачивает через SW_SHOWMINNOACTIVE, не меняя RestoreBounds.
 
     $proc = [System.Diagnostics.Process]::Start($psi)
 
@@ -340,12 +345,16 @@ function Get-RamRobloxProcesses {
 
 function Stop-RamRobloxInstance {
     param([Parameter(Mandatory)][int]$ProcessId)
+    $returnFocus = [IntPtr]::Zero
+    try { $returnFocus = Get-RamFocusReturnHandle -ExcludeProcessId $ProcessId } catch { }
     try {
         $p = Get-Process -Id $ProcessId -ErrorAction Stop
         $p.CloseMainWindow() | Out-Null
         if (-not $p.WaitForExit(3000)) { $p.Kill() }
+        if ($returnFocus -ne [IntPtr]::Zero) { [void](Restore-RamFocus -Handle $returnFocus) }
         return $true
     } catch {
+        if ($returnFocus -ne [IntPtr]::Zero) { [void](Restore-RamFocus -Handle $returnFocus) }
         return $false
     }
 }

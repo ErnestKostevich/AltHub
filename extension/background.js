@@ -55,16 +55,17 @@ const BRIDGE_PORTS = [52713, 52714, 52715, 52716, 52717];
 const S = {
   async get() {
     try {
-      const v = await chrome.storage.session.get(['loginPort', 'ready', 'sent', 'banned']);
+      const v = await chrome.storage.session.get(['loginPort', 'loginToken', 'ready', 'sent', 'banned']);
       return {
         loginPort: v.loginPort || null,
+        loginToken: v.loginToken || '',
         ready: !!v.ready,
         sent: !!v.sent,
         banned: Array.isArray(v.banned) ? v.banned : []
       };
     } catch (e) {
       console.log('[AltHub] состояние не прочиталось:', e);
-      return { loginPort: null, ready: false, sent: false, banned: [] };
+      return { loginPort: null, loginToken: '', ready: false, sent: false, banned: [] };
     }
   },
   async set(patch) {
@@ -118,13 +119,14 @@ async function readRobloSecurity() {
   }
 }
 
-async function postCookie(port, value) {
-  const resp = await fetch('http://127.0.0.1:' + port + '/cookie', {
+async function postCookie(port, token, value) {
+  const resp = await fetch('http://127.0.0.1:' + port + '/cookie?token=' + encodeURIComponent(token || ''), {
     method: 'POST',
     headers: { 'Content-Type': 'text/plain' },
     body: value
   });
-  return resp.ok;
+  const text = (await resp.text()).trim();
+  return { ok: resp.ok && text === 'ok', status: resp.status, text };
 }
 
 // ============================ способы 1 и 2 ============================
@@ -137,7 +139,7 @@ async function findBridgePort() {
       const r = await fetch('http://127.0.0.1:' + port + '/hello', { method: 'GET' });
       if (!r.ok) continue;
       const t = (await r.text()).trim();
-      if (t === 'althub') return port;
+      if (t.startsWith('althub:')) return { port, token: t.substring(7) };
     } catch {
       // порт закрыт или занят кем-то другим — идём дальше
     }
@@ -164,14 +166,14 @@ async function badge(text, title, color) {
   } catch {}
 }
 
-async function tellProblem(port, reason) {
+async function tellProblem(port, token, reason) {
   // МОЛЧАНИЕ — ХУДШИЙ ОТВЕТ. Раньше при любой неудаче расширение просто
   // закрывало вкладку, и со стороны это выглядело как «нажал, мигнуло,
   // ничего не произошло» — не отличить от полностью сломанной программы.
   // Теперь причина уезжает в AltHub, и он говорит её словами.
   if (!port) return;
   try {
-    await fetch('http://127.0.0.1:' + port + '/problem', {
+    await fetch('http://127.0.0.1:' + port + '/problem?token=' + encodeURIComponent(token || ''), {
       method: 'POST',
       headers: { 'Content-Type': 'text/plain' },
       body: reason
@@ -179,14 +181,16 @@ async function tellProblem(port, reason) {
   } catch {}
 }
 
-async function grabAndSend(closeTabId, knownPort) {
-  const port = knownPort || await findBridgePort();
+async function grabAndSend(closeTabId, knownPort, knownToken) {
+  const bridge = knownPort ? { port: knownPort, token: knownToken } : await findBridgePort();
+  const port = bridge && bridge.port;
+  const token = bridge && bridge.token;
 
   const value = await readRobloSecurity();
   if (!value) {
     console.log('[AltHub] на roblox.com нет входа — нечего передавать');
     await badge('нет', 'AltHub: в браузере нет входа на roblox.com', '#d9534f');
-    await tellProblem(port, 'В браузере нет входа на roblox.com. Открой сайт и войди в нужный аккаунт, потом нажми ещё раз.');
+    await tellProblem(port, token, 'В браузере нет входа на roblox.com. Открой сайт и войди в нужный аккаунт, потом нажми ещё раз.');
     if (closeTabId) { try { await chrome.tabs.remove(closeTabId); } catch {} }
     return false;
   }
@@ -202,11 +206,15 @@ async function grabAndSend(closeTabId, knownPort) {
 
   let ok = false;
   try {
-    ok = await postCookie(port, value);
+    const result = await postCookie(port, token, value);
+    ok = result.ok;
+    if (!ok) {
+      await badge('!', result.status === 422 ? 'AltHub: Roblox не подтвердил этот вход' : 'AltHub: вход не принят', '#d9534f');
+    }
   } catch (e) {
     console.log('[AltHub] отправка не удалась:', e);
     await badge('!', 'AltHub: отправить вход не вышло', '#d9534f');
-    await tellProblem(port, 'Кука прочиталась, но отправить её в AltHub не вышло: ' + e);
+    await tellProblem(port, token, 'Кука прочиталась, но отправить её в AltHub не вышло: ' + e);
   }
   if (ok) { await badge('OK', 'AltHub: вход передан', '#5cb85c'); }
   console.log('[AltHub] передано в AltHub на порт', port, '=', ok);
@@ -223,11 +231,12 @@ chrome.commands.onCommand.addListener((cmd) => {
 
 async function removeRobloSecurity() {
   let list = [];
+  let ok = true;
   try {
     list = await chrome.cookies.getAll({ name: '.ROBLOSECURITY' });
   } catch (e) {
     console.log('[AltHub] cookies.getAll ошибка:', e);
-    return;
+    return false;
   }
   const st = await S.get();
   const banned = st.banned.slice();
@@ -238,10 +247,12 @@ async function removeRobloSecurity() {
       await chrome.cookies.remove({ url: cookieUrl(c), name: '.ROBLOSECURITY' });
       console.log('[AltHub] снята старая .ROBLOSECURITY с', c.domain, c.path);
     } catch (e) {
+      ok = false;
       console.log('[AltHub] не удалось снять куку с', c.domain, e);
     }
   }
   await S.set({ banned: banned });
+  return ok;
 }
 
 async function prepareSession() {
@@ -249,29 +260,32 @@ async function prepareSession() {
   const st = await S.get();
   if (st.ready || !st.loginPort) return;
   preparing = true;
+  let cleaned = false;
   try {
     // Один проход достаточно: onCompleted и onChanged подстрахуют повторной
     // проверкой запрещённых значений. Раньше здесь был sleep + повторная
     // уборка — на холодном профиле это держало хранилище кук занятым ровно
     // тогда, когда страница пыталась их читать для своей навигации, и переход
     // подвисал на сером экране.
-    await removeRobloSecurity();
+    cleaned = await removeRobloSecurity();
+    if (!cleaned) throw new Error('не удалось очистить старую сессию Roblox');
   } catch (e) {
     console.log('[AltHub] prepareSession ошибка:', e);
   } finally {
-    await S.set({ ready: true });
+    const now = await S.get();
+    if (now.loginPort) await S.set({ ready: cleaned });
     preparing = false;
   }
 }
 
-async function noteLoginPort(p) {
+async function noteLoginPort(p, token) {
   if (!p) return;
   const st = await S.get();
-  if (st.loginPort === p) {
+  if (st.loginPort === p && st.loginToken === (token || '')) {
     if (!st.ready) await prepareSession();
     return;
   }
-  await S.set({ loginPort: p, ready: false, sent: false, banned: [] });
+  await S.set({ loginPort: p, loginToken: token || '', ready: false, sent: false, banned: [] });
   console.log('[AltHub] окно входа: порт', p);
   await prepareSession();
 
@@ -300,13 +314,15 @@ async function trySendLoginCookie() {
     // Chrome восстановил прошлую сессию уже после уборки. Это НЕ новый вход.
     console.log('[AltHub] это ещё старая кука, снимаю снова и жду настоящую');
     await removeRobloSecurity();
+    setTimeout(() => { trySendLoginCookie().catch(() => {}); }, 500);
     return;
   }
 
-  await S.set({ sent: true });
   try {
-    await postCookie(st.loginPort, value);
-    console.log('[AltHub] окно входа: кука передана');
+    const result = await postCookie(st.loginPort, st.loginToken, value);
+    if (!result.ok) throw new Error('HTTP ' + result.status + ': ' + result.text);
+    await S.set({ sent: true });
+    console.log('[AltHub] окно входа: кука подтверждена и передана');
   } catch (e) {
     console.log('[AltHub] окно входа: отправка не удалась:', e);
     await S.set({ sent: false });
@@ -315,7 +331,7 @@ async function trySendLoginCookie() {
 
 // ============================ переходы по страницам ============================
 
-async function noteLoginPortAndReload(p, tabId) {
+async function noteLoginPortAndReload(p, tabId, token) {
   // Снять старую куку и ПЕРЕЗАГРУЗИТЬ страницу.
   //
   // Запрос на roblox.com/login уходит ещё со старой .ROBLOSECURITY: снять её
@@ -326,7 +342,7 @@ async function noteLoginPortAndReload(p, tabId) {
   // нечем: режим --app не даёт ни адресной строки, ни кнопки обновления.
   const before = await S.get();
   const first = before.loginPort !== p;
-  await noteLoginPort(p);
+  await noteLoginPort(p, token);
   if (first && tabId) {
     try { await chrome.tabs.reload(tabId); } catch {}
   }
@@ -339,11 +355,20 @@ chrome.webNavigation.onCommitted.addListener((d) => {
 
   // способ 2: наша собственная страница на 127.0.0.1
   if (isLoopback(host)) {
+    const loginPort = extractPortFromUrl(d.url, 'althub_login');
+    if (loginPort) {
+      const token = new URL(d.url).searchParams.get('althub_token') || '';
+      noteLoginPort(loginPort, token)
+        .then(() => chrome.tabs.update(d.tabId, { url: 'https://www.roblox.com/login' }))
+        .catch((e) => console.log('[AltHub] login bootstrap ошибка:', e));
+      return;
+    }
     const p = extractPortFromUrl(d.url, 'althub_grab');
     if (p) {
       // Порт уже известен из адреса — не ищем его заново по всему диапазону.
       // Намеренно без await: обработчик не должен держать переход.
-      grabAndSend(d.tabId, p).catch((e) => console.log('[AltHub] grab ошибка:', e));
+      const token = new URL(d.url).searchParams.get('althub_token') || '';
+      grabAndSend(d.tabId, p, token).catch((e) => console.log('[AltHub] grab ошибка:', e));
     }
     return;
   }
@@ -355,7 +380,8 @@ chrome.webNavigation.onCommitted.addListener((d) => {
     // Тоже без await: уборка кук трогает хранилище, и на холодном профиле
     // это может занять заметное время — ожидание здесь подвешивало саму
     // навигацию страницы.
-    noteLoginPortAndReload(p, d.tabId).catch((e) => console.log('[AltHub] noteLoginPort ошибка:', e));
+    const token = new URL(d.url).searchParams.get('althub_token') || '';
+    noteLoginPortAndReload(p, d.tabId, token).catch((e) => console.log('[AltHub] noteLoginPort ошибка:', e));
   }
 });
 
@@ -385,6 +411,9 @@ chrome.cookies.onChanged.addListener((info) => {
 chrome.alarms.onAlarm.addListener(async (a) => {
   if (a.name !== 'althub-login-watch') return;
   const st = await S.get();
+  if (!st.ready) {
+    await prepareSession();
+  }
   if (!st.loginPort || st.sent) {
     // Вход закончен — будильник больше не нужен. Заводится он заново в
     // noteLoginPort, при начале следующего входа: раньше его создавал только

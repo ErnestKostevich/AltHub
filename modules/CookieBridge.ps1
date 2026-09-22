@@ -37,11 +37,25 @@ $script:Bridge = @{
     Listener = $null
     Port     = 0
     Task     = $null
+    Token    = ''
     Timer    = $null
     ExtSeen  = $false      # расширение хоть раз поздоровалось
     Hotkey   = ''          # клавиша, которую Windows РЕАЛЬНО отдала, а не желаемая
     LastHello = $null
     Pumping  = $false      # см. защиту от повторного входа в Invoke-RamBridgePump
+    StartError = ''
+}
+
+function New-RamBridgeToken {
+    $bytes = New-Object byte[] 24
+    $rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+    try { $rng.GetBytes($bytes) } finally { $rng.Dispose() }
+    return ([Convert]::ToBase64String($bytes).TrimEnd('=').Replace('+','-').Replace('/','_'))
+}
+
+function Test-RamBridgeExtensionOrigin {
+    param([string]$Origin)
+    return (-not [string]::IsNullOrWhiteSpace($Origin) -and $Origin -match '^chrome-extension://[a-z0-9-]{8,64}$')
 }
 
 function Get-RamBridgePort {
@@ -171,17 +185,26 @@ function Start-RamCookieBridge {
     #>
     if (Test-RamBridgeRunning) { return $script:Bridge.Port }
 
+    $script:Bridge.StartError = ''
     foreach ($port in $script:BridgePorts) {
         $l = New-Object System.Net.HttpListener
         $l.Prefixes.Add("http://127.0.0.1:$port/")
         try {
             $l.Start()
         } catch {
+            $code = 0
+            try { $code = [int]$_.Exception.ErrorCode } catch { }
+            try { if (-not $code) { $code = [int]$_.Exception.InnerException.ErrorCode } } catch { }
             try { $l.Close() } catch { }
+            if ($code -eq 5 -or $_.Exception.Message -match 'Access is denied|Отказано в доступе') {
+                $script:Bridge.StartError = 'Windows запретила открыть локальный порт (отказ в доступе), это не занятый порт.'
+                break
+            }
             continue
         }
         $script:Bridge.Listener = $l
         $script:Bridge.Port     = $port
+        $script:Bridge.Token    = New-RamBridgeToken
         # Сбрасываем: «расширение на связи» от прошлой сессии — враньё.
         $script:Bridge.ExtSeen  = $false
         $script:Bridge.Task     = $l.GetContextAsync()
@@ -202,9 +225,12 @@ function Start-RamCookieBridge {
         return $port
     }
 
-    Write-RamLog 'Приём из браузера: все порты диапазона заняты, включить не вышло.' 'warn'
+    if ($script:Bridge.StartError) { Write-RamLog ("Приём из браузера: " + $script:Bridge.StartError) 'warn' }
+    else { Write-RamLog 'Приём из браузера: все порты диапазона заняты, включить не вышло.' 'warn' }
     return 0
 }
+
+function Get-RamBridgeStartError { return [string]$script:Bridge.StartError }
 
 function Stop-RamCookieBridge {
     <# Освобождает порт. После этого снаружи достучаться некуда. #>
@@ -220,6 +246,7 @@ function Stop-RamCookieBridge {
     $script:Bridge.Listener = $null
     $script:Bridge.Task     = $null
     $script:Bridge.Port     = 0
+    $script:Bridge.Token    = ''
 }
 
 function Invoke-RamBridgePump {
@@ -246,9 +273,22 @@ function Invoke-RamBridgePump {
     try {
         $req  = $ctx.Request
         $resp = $ctx.Response
-        # Расширение обращается к нам со своего origin chrome-extension://...
-        # '*' здесь безопасен: слушаем только петлю на своей же машине.
-        $resp.Headers.Add('Access-Control-Allow-Origin', '*')
+        $origin = [string]$req.Headers['Origin']
+        $path = $req.Url.AbsolutePath.ToLowerInvariant()
+        $isGrabPage = ($path -eq '/grab' -and $req.HttpMethod -eq 'GET')
+
+        # Loopback сам по себе не является аутентификацией: веб-страница тоже
+        # умеет послать запрос на 127.0.0.1. Принимаем API только от origin
+        # расширения, а изменение состояния дополнительно требует nonce.
+        if (-not $isGrabPage -and -not (Test-RamBridgeExtensionOrigin -Origin $origin)) {
+            $resp.StatusCode = 403
+            Write-RamBridgeText -Response $resp -Text 'forbidden' -Type 'text/plain'
+            return
+        }
+        if (Test-RamBridgeExtensionOrigin -Origin $origin) {
+            $resp.Headers.Add('Access-Control-Allow-Origin', $origin)
+            $resp.Headers.Add('Vary', 'Origin')
+        }
         $resp.Headers.Add('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
         $resp.Headers.Add('Access-Control-Allow-Headers', 'Content-Type')
 
@@ -258,7 +298,25 @@ function Invoke-RamBridgePump {
             return
         }
 
-        $path = $req.Url.AbsolutePath.ToLowerInvariant()
+        if ($path -in @('/cookie','/problem')) {
+            $token = [string]$req.QueryString['token']
+            if ($req.HttpMethod -ne 'POST' -or $token -ne [string]$script:Bridge.Token) {
+                $resp.StatusCode = 403
+                Write-RamBridgeText -Response $resp -Text 'forbidden' -Type 'text/plain'
+                return
+            }
+            $limit = if ($path -eq '/cookie') { 16384 } else { 4096 }
+            if ($req.ContentLength64 -lt 1 -or $req.ContentLength64 -gt $limit) {
+                $resp.StatusCode = 413
+                Write-RamBridgeText -Response $resp -Text 'body-too-large' -Type 'text/plain'
+                return
+            }
+            if ([string]$req.ContentType -notlike 'text/plain*') {
+                $resp.StatusCode = 415
+                Write-RamBridgeText -Response $resp -Text 'text-plain-required' -Type 'text/plain'
+                return
+            }
+        }
         $body = ''
         if ($req.HasEntityBody) {
             $rd = New-Object System.IO.StreamReader($req.InputStream, [System.Text.Encoding]::UTF8)
@@ -270,16 +328,24 @@ function Invoke-RamBridgePump {
             '/hello' {
                 $script:Bridge.ExtSeen   = $true
                 $script:Bridge.LastHello = Get-Date
-                Write-RamBridgeText -Response $resp -Text 'althub' -Type 'text/plain'
+                Write-RamBridgeText -Response $resp -Text ("althub:" + $script:Bridge.Token) -Type 'text/plain'
             }
             '/grab' {
                 Write-RamBridgeText -Response $resp -Text (Get-RamBridgeGrabPage) -Type 'text/html; charset=utf-8'
             }
             '/cookie' {
                 $script:Bridge.ExtSeen = $true
-                Write-RamBridgeText -Response $resp -Text 'ok' -Type 'text/plain'
                 if (-not [string]::IsNullOrWhiteSpace($body)) {
-                    Receive-RamBridgeCookie -Cookie $body.Trim()
+                    $accepted = Receive-RamBridgeCookie -Cookie $body.Trim()
+                    if ($accepted) {
+                        Write-RamBridgeText -Response $resp -Text 'ok' -Type 'text/plain'
+                    } else {
+                        $resp.StatusCode = 422
+                        Write-RamBridgeText -Response $resp -Text 'rejected' -Type 'text/plain'
+                    }
+                } else {
+                    $resp.StatusCode = 400
+                    Write-RamBridgeText -Response $resp -Text 'empty' -Type 'text/plain'
                 }
             }
             '/problem' {
@@ -350,7 +416,7 @@ function Receive-RamBridgeCookie {
         $r = Import-RamAccountLine -Line $Cookie
     } catch {
         Write-RamLog "Приём из браузера: не удалось добавить аккаунт: $($_.Exception.Message)" 'err'
-        return
+        return $false
     }
 
     if ($r -and $r.Ok) {
@@ -374,9 +440,13 @@ function Receive-RamBridgeCookie {
         $what = if ($r.New) { 'Добавлен аккаунт' } else { 'Обновлён вход' }
         Show-RamMessage -Kind 'ok' -Message ("$what из браузера:" + [Environment]::NewLine + [Environment]::NewLine +
                                              $r.Alias)
+        return $true
     } else {
         $why = if ($r -and $r.Error) { $r.Error } else { 'Roblox не подтвердил вход' }
         Write-RamLog "Приём из браузера: кука пришла, но аккаунт не добавлен — $why" 'warn'
+        Show-RamMainWindow
+        Show-RamMessage -Kind 'warn' -Message ("Вход из браузера не принят." + [Environment]::NewLine + [Environment]::NewLine + $why)
+        return $false
     }
 }
 
@@ -459,7 +529,7 @@ function Invoke-RamBrowserGrab {
         }
         return $false
     }
-    $url = "http://127.0.0.1:$port/grab?althub_grab=$port"
+    $url = "http://127.0.0.1:$port/grab?althub_grab=$port&althub_token=$($script:Bridge.Token)"
     try {
         Start-Process $url | Out-Null
         Write-RamLog 'Прошу браузер отдать текущий вход…' 'info'

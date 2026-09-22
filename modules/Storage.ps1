@@ -301,6 +301,35 @@ function Save-RamAccounts {
     $path = Get-RamAccountsPath
     $tmp  = "$path.tmp"
     ConvertTo-Json -InputObject $envelope -Depth 4 | Set-Content -LiteralPath $tmp -Encoding UTF8 -Force
+
+    # Никогда не заменяем рабочее хранилище файлом, который сами же не можем
+    # прочитать. Так обрезанная запись или неверная кодировка обнаруживается
+    # до потери последней рабочей копии.
+    try {
+        $probeEnvelope = ConvertFrom-Json -InputObject (Get-Content -LiteralPath $tmp -Raw -Encoding UTF8)
+        $probeBytes = Unprotect-RamBytes -Envelope $probeEnvelope -Password $Password
+        $probeJson = [System.Text.Encoding]::UTF8.GetString($probeBytes)
+        [void](ConvertFrom-Json -InputObject $probeJson)
+        [Array]::Clear($probeBytes, 0, $probeBytes.Length)
+    } catch {
+        Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
+        throw "Проверка нового файла accounts.dat не прошла: $($_.Exception.Message)"
+    }
+
+    # Ротационные копии содержат тот же зашифрованный envelope, а не открытые
+    # куки. Храним пять последних успешно заменённых версий.
+    if (Test-Path -LiteralPath $path) {
+        $backupDir = Join-Path (Get-RamDataDir) 'backups\accounts'
+        if (-not (Test-Path -LiteralPath $backupDir)) {
+            [void](New-Item -ItemType Directory -Path $backupDir -Force)
+        }
+        $stamp = Get-Date -Format 'yyyyMMdd-HHmmss-fff'
+        Copy-Item -LiteralPath $path -Destination (Join-Path $backupDir "accounts-$stamp.dat") -Force
+        @(Get-ChildItem -LiteralPath $backupDir -Filter 'accounts-*.dat' -File |
+            Sort-Object LastWriteTime -Descending | Select-Object -Skip 5) |
+            ForEach-Object { Remove-Item -LiteralPath $_.FullName -Force -ErrorAction SilentlyContinue }
+    }
+
     Move-Item -LiteralPath $tmp -Destination $path -Force
 
     # Затираем открытый текст в памяти, насколько это возможно в .NET.
@@ -344,7 +373,9 @@ function Get-RamStorageMode {
     if (-not (Test-Path -LiteralPath $path)) { return 'none' }
     try {
         $envelope = ConvertFrom-Json -InputObject (Get-Content -LiteralPath $path -Raw -Encoding UTF8)
-        return [string]$envelope.mode
+        $mode = [string]$envelope.mode
+        if ($mode -notin @('dpapi','aes')) { return 'broken' }
+        return $mode
     } catch {
         return 'broken'
     }
@@ -355,8 +386,23 @@ function Get-RamStorageMode {
 function Get-RamDefaultSettings {
     [pscustomobject]@{
         LaunchDelaySec  = 8      # пауза между запусками аккаунтов
+        LaunchMinimized = $true  # новые окна Roblox появляются свёрнутыми
         Locale          = 'ru_ru'
         Theme           = 'dark' # ключ темы (стоковой или своей)
+        MenuStyle       = 'wide' # classic | water | wide; новое меню для чистой установки
+        SettingsSchemaVersion = 14
+        MenuLayoutRevision = 2 # при смене пропорций один раз сбросить старые размеры окна
+        # Размер и место главного окна. 0 — ещё не запоминали, окно посчитает
+        # размер само. Хранится ClientSize, без рамки: иначе окно понемногу
+        # «подрастало» бы на рамку при каждом перезапуске.
+        MainWindowX         = 0
+        MainWindowY         = 0
+        MainWindowW         = 0
+        MainWindowH         = 0
+        MainWindowMaximized = $false
+        MenuWindowGeometry  = @() # отдельные размеры для Pulse / H₂O / Dashboard
+        LastScheduleRun     = ''      # дата, когда расписание уже сработало
+        MultiInstanceNoticeShown = $false  # предупреждали ли про мультизапуск
         CustomThemes    = @()    # свои темы: @{ Key; Title; Colors=@{Bg;...} }
         Games           = @()    # сохранённые игры: @{ Title; PlaceId; LinkCode }
         TileMode        = 'grid' # grid | cascade | columns | rows | main
@@ -406,11 +452,32 @@ function Get-RamDefaultSettings {
 function Load-RamSettings {
     $path = Get-RamSettingsPath
     $s = Get-RamDefaultSettings
+    $script:NeedsMenuStyleChoice = $false
     if (Test-Path -LiteralPath $path) {
         try {
             $loaded = Get-Content -LiteralPath $path -Raw -Encoding UTF8 | ConvertFrom-Json
+            $loadedMenuRevision = 0
+            if ($loaded.PSObject.Properties.Name -contains 'MenuLayoutRevision') {
+                $loadedMenuRevision = [int]$loaded.MenuLayoutRevision
+            }
+            if ($loaded.PSObject.Properties.Name -notcontains 'MenuStyle') {
+                $script:NeedsMenuStyleChoice = $true
+                $s.MenuStyle = 'classic'
+            }
             foreach ($p in $s.PSObject.Properties.Name) {
                 if ($loaded.PSObject.Properties.Name -contains $p) { $s.$p = $loaded.$p }
+            }
+
+            # Старые сохранённые полноэкранные размеры были рассчитаны под
+            # прежние раздутые меню. Один раз открываем новые Pulse/H₂O/
+            # Dashboard в их компактных размерах; последующие изменения
+            # пользователя снова сохраняются отдельно для каждого вида.
+            if ($loadedMenuRevision -lt 2) {
+                $s.MenuLayoutRevision = 2
+                $s.MenuWindowGeometry = @()
+                $s.MainWindowX = 0; $s.MainWindowY = 0
+                $s.MainWindowW = 0; $s.MainWindowH = 0
+                $s.MainWindowMaximized = $false
             }
 
             # РАЗОВАЯ ПОЧИНКА ТЕХ, КОГО СЛОМАЛО.
@@ -438,6 +505,7 @@ function Load-RamSettings {
 
     # Мусор в файле не должен превращаться в непонятное поведение окна.
     if ($s.OnClose -notin @('exit', 'tray')) { $s.OnClose = 'exit' }
+    if ($s.MenuStyle -notin @('classic','water','wide')) { $s.MenuStyle = 'classic' }
     if ([string]::IsNullOrWhiteSpace([string]$s.BridgeHotkey)) { $s.BridgeHotkey = 'F10' }
     if ($s.BridgeHotkey -notin (Get-RamBridgeHotkeyChoices)) { $s.BridgeHotkey = 'F10' }
     return $s

@@ -9,15 +9,15 @@ rem
 rem  Nichego ne menyaet i nikuda ne otpravlyaet: tot zhe AltHub.ps1, prosto
 rem  bez pryatanya konsoli.
 rem ---------------------------------------------------------------------------
-cd /d "%~dp0"
+cd /d "%~dp0.."
 
 echo.
 echo  AltHub - diagnostic start
 echo  --------------------------------------------------
-echo  Folder: %~dp0
+echo  Folder: %~dp0..
 echo.
 
-if not exist "%~dp0AltHub.ps1" (
+if not exist "%~dp0..\AltHub.ps1" (
     echo  [!] AltHub.ps1 not found next to this file.
     echo      Raspakuy arhiv CELIKOM i zapuskay iz raspakovannoy papki,
     echo      a ne pryamo iz arhiva.
@@ -26,7 +26,7 @@ if not exist "%~dp0AltHub.ps1" (
     exit /b 1
 )
 
-powershell.exe -NoProfile -ExecutionPolicy Bypass -STA -File "%~dp0AltHub.ps1"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -STA -File "%~dp0..\AltHub.ps1"
 
 echo.
 echo  --------------------------------------------------

@@ -95,7 +95,10 @@ function Get-RamHttpClient {
 
     $handler = New-Object System.Net.Http.HttpClientHandler
     $handler.UseCookies             = $false   # заголовок Cookie ставим сами
-    $handler.AllowAutoRedirect      = $true
+    # Редиректы обрабатываем сами в Invoke-RamRequest: Roblox иногда меняет
+    # куку в промежуточном ответе, а HttpClient при автоматическом переходе
+    # прячет эти заголовки.
+    $handler.AllowAutoRedirect      = $false
     try {
         $handler.AutomaticDecompression =
             [System.Net.DecompressionMethods]::GZip -bor [System.Net.DecompressionMethods]::Deflate
@@ -120,7 +123,8 @@ function Invoke-RamRequest {
         [string]$Body,
         # Свои заголовки. Нужны для продолжения «вызова» Roblox при входе:
         # rblx-challenge-id / -type / -metadata.
-        [hashtable]$Headers
+        [hashtable]$Headers,
+        [int]$Redirects = 0
     )
 
     $client = Get-RamHttpClient
@@ -169,12 +173,33 @@ function Invoke-RamRequest {
             }
         } catch { }
 
-        # Roblox прислал свежую куку — сообщаем наверх, чтобы её сохранили.
-        if (-not [string]::IsNullOrWhiteSpace($Cookie) -and $setCookies.Count -gt 0) {
+        # При 4xx Roblox может прислать пустую/служебную куку. Обновлять
+        # сохранённый рабочий вход разрешено только успешным ответом или
+        # штатным редиректом.
+        if ([int]$resp.StatusCode -lt 400 -and -not [string]::IsNullOrWhiteSpace($Cookie) -and $setCookies.Count -gt 0) {
             $fresh = Get-RamRefreshedCookie -SetCookieHeaders $setCookies
             if ($fresh -and $fresh -ne $Cookie -and $null -ne $script:RamOnCookieRefresh) {
                 try { & $script:RamOnCookieRefresh $Cookie $fresh } catch { }
             }
+        }
+
+        if ([int]$resp.StatusCode -in @(301,302,303,307,308) -and $null -ne $resp.Headers.Location) {
+            if ($Redirects -ge 5) { throw 'Roblox вернул слишком много перенаправлений.' }
+            $nextUri = New-Object System.Uri($req.RequestUri, $resp.Headers.Location)
+            # Кука .ROBLOSECURITY — это сам вход. Редиректы мы теперь ведём
+            # сами и переотправляем заголовок Cookie, поэтому обязаны убедиться,
+            # что едем к самому Roblox и по https. Иначе перенаправление на
+            # чужой адрес увезло бы вход туда целиком.
+            $nextHost = $nextUri.Host.ToLowerInvariant()
+            $trustedHost = ($nextUri.Scheme -eq 'https') -and ($nextHost -eq 'roblox.com' -or $nextHost.EndsWith('.roblox.com'))
+            if (-not $trustedHost -and -not [string]::IsNullOrWhiteSpace($Cookie)) {
+                throw "Roblox перенаправил запрос на чужой адрес ($($nextUri.Host)). Вход туда не отправлен."
+            }
+            $next = $nextUri.AbsoluteUri
+            $nextMethod = $Method
+            $nextBody = $Body
+            if ([int]$resp.StatusCode -in @(301,302,303)) { $nextMethod = 'GET'; $nextBody = $null }
+            return Invoke-RamRequest -Method $nextMethod -Url $next -Cookie $Cookie -Csrf $Csrf -Body $nextBody -Headers $Headers -Redirects ($Redirects + 1)
         }
 
         return [pscustomobject]@{
@@ -385,7 +410,7 @@ function Get-RamAuthTicket {
         $who = $null
         try { $who = Get-RamAuthenticatedUser -Cookie $Cookie } catch { }
         if ($null -ne $who) {
-            throw "Кука рабочая (аккаунт $($who.Name)), но Roblox отказал в билете запуска (HTTP $($r2.Status)). Запусти Диагностика.ps1 и покажи вывод."
+            throw "Кука рабочая (аккаунт $($who.Name)), но Roblox отказал в билете запуска (HTTP $($r2.Status)). Запусти Проверки\Диагностика.ps1 и покажи вывод."
         }
         throw 'Кука недействительна или протухла — добавь аккаунт заново через мастер.'
     }
@@ -398,15 +423,51 @@ function Get-RamAuthenticatedUser {
     <# Проверка куки: кто мы. Возвращает Id / Name / DisplayName. #>
     param([Parameter(Mandatory)][string]$Cookie)
 
-    $r = Invoke-RamRequest -Method GET -Url 'https://users.roblox.com/v1/users/authenticated' -Cookie $Cookie
-    if ($r.Status -eq 401) { throw 'Кука недействительна или протухла.' }
-    if ($r.Status -ne 200) { throw "Ошибка проверки куки (HTTP $($r.Status))." }
+    $result = Test-RamAuthenticatedUser -Cookie $Cookie
+    if ($result.State -eq 'valid') { return $result.User }
 
-    $o = $r.Body | ConvertFrom-Json
-    return [pscustomobject]@{
-        Id          = [int64]$o.id
-        Name        = [string]$o.name
-        DisplayName = [string]$o.displayName
+    $ex = New-Object System.Exception($result.Message)
+    $ex.Data['RamAuthState'] = $result.State
+    if ($result.RetryAfterSeconds -gt 0) { $ex.Data['RamRetryAfter'] = $result.RetryAfterSeconds }
+    throw $ex
+}
+
+function Test-RamAuthenticatedUser {
+    <#
+      Типизированная проверка входа. Только unauthorized означает мёртвую
+      куку; сеть, 429 и сбой Roblox не имеют права красить карточку.
+    #>
+    param([Parameter(Mandatory)][string]$Cookie)
+
+    try {
+        $r = Invoke-RamRequest -Method GET -Url 'https://users.roblox.com/v1/users/authenticated' -Cookie $Cookie
+    } catch {
+        return [pscustomobject]@{
+            State='transient'; User=$null; StatusCode=0; RetryAfterSeconds=0
+            Message="Связь с Roblox недоступна: $($_.Exception.Message)"
+        }
+    }
+    if ($r.Status -eq 401) {
+        return [pscustomobject]@{ State='unauthorized'; User=$null; StatusCode=401; RetryAfterSeconds=0; Message='Кука недействительна или протухла.' }
+    }
+    if ($r.Status -eq 429) {
+        $wait = Get-RamRetryAfterSeconds -Response $r
+        return [pscustomobject]@{ State='rate_limited'; User=$null; StatusCode=429; RetryAfterSeconds=$wait; Message="Roblox просит сбавить темп. Повтори через $wait с." }
+    }
+    if ($r.Status -ne 200) {
+        return [pscustomobject]@{ State='transient'; User=$null; StatusCode=$r.Status; RetryAfterSeconds=0; Message="Roblox временно не ответил на проверку входа (HTTP $($r.Status))." }
+    }
+
+    try {
+        $o = $r.Body | ConvertFrom-Json
+        $user = [pscustomobject]@{
+            Id          = [int64]$o.id
+            Name        = [string]$o.name
+            DisplayName = [string]$o.displayName
+        }
+        return [pscustomobject]@{ State='valid'; User=$user; StatusCode=200; RetryAfterSeconds=0; Message='Вход подтверждён.' }
+    } catch {
+        return [pscustomobject]@{ State='transient'; User=$null; StatusCode=200; RetryAfterSeconds=0; Message='Roblox вернул повреждённый ответ при проверке входа.' }
     }
 }
 
@@ -594,6 +655,45 @@ function Complete-RamGetAsync {
         try { $Job.Cts.Dispose() } catch { }
     }
     return $res
+}
+
+function Start-RamAuthCheckAsync {
+    param([Parameter(Mandatory)][string]$Cookie, [int]$TimeoutSec = 15)
+    $client = Get-RamHttpClient
+    $req = New-Object System.Net.Http.HttpRequestMessage(
+        [System.Net.Http.HttpMethod]::new('GET'), 'https://users.roblox.com/v1/users/authenticated')
+    $req.Headers.TryAddWithoutValidation('Cookie', ".ROBLOSECURITY=$Cookie") | Out-Null
+    $req.Headers.TryAddWithoutValidation('Accept', 'application/json') | Out-Null
+    $req.Headers.TryAddWithoutValidation('User-Agent', 'Roblox/WinInet') | Out-Null
+    $cts = New-Object System.Threading.CancellationTokenSource
+    $cts.CancelAfter([TimeSpan]::FromSeconds($TimeoutSec))
+    return [pscustomobject]@{ Task=$client.SendAsync($req,$cts.Token); Req=$req; Cts=$cts; Cookie=$Cookie }
+}
+
+function Complete-RamAuthCheckAsync {
+    param([Parameter(Mandatory)]$Job)
+    $result = [pscustomobject]@{ State='transient'; User=$null; StatusCode=0; RetryAfterSeconds=0; Message='Связь с Roblox недоступна.' }
+    try {
+        if ($Job.Task.Status -ne [System.Threading.Tasks.TaskStatus]::RanToCompletion) { return $result }
+        $resp = $Job.Task.Result
+        try {
+            $result.StatusCode = [int]$resp.StatusCode
+            if ($result.StatusCode -eq 401) { $result.State='unauthorized'; $result.Message='Кука недействительна или протухла.'; return $result }
+            if ($result.StatusCode -eq 429) {
+                $result.State='rate_limited'; $result.Message='Roblox просит сбавить темп.'
+                $vals=$null
+                if ($resp.Headers.TryGetValues('Retry-After',[ref]$vals)) { $n=0; if([int]::TryParse(($vals|Select-Object -First 1),[ref]$n)){ $result.RetryAfterSeconds=[Math]::Min(120,[Math]::Max(1,$n)) } }
+                if ($result.RetryAfterSeconds -le 0) { $result.RetryAfterSeconds=8 }
+                return $result
+            }
+            if ($result.StatusCode -ne 200) { $result.Message="Roblox временно ответил HTTP $($result.StatusCode)."; return $result }
+            $o = $resp.Content.ReadAsStringAsync().GetAwaiter().GetResult() | ConvertFrom-Json
+            $result.User=[pscustomobject]@{ Id=[int64]$o.id; Name=[string]$o.name; DisplayName=[string]$o.displayName }
+            $result.State='valid'; $result.Message='Вход подтверждён.'
+            return $result
+        } finally { $resp.Dispose() }
+    } catch { $result.Message="Связь с Roblox недоступна: $($_.Exception.Message)"; return $result }
+    finally { try{$Job.Req.Dispose()}catch{}; try{$Job.Cts.Dispose()}catch{} }
 }
 
 function Get-RamAvatarUrl {

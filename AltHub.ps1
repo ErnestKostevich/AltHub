@@ -4,7 +4,7 @@
  AltHub — менеджер аккаунтов Roblox
 ================================================================================
  Автор: Эрнест Костевич (Ernest Kostevich)
- Версия: 1.3
+ Версия: 1.4
  Лицензия: MIT — см. файл LICENSE рядом. Можно свободно передавать друзьям,
  менять под себя и распространять дальше, сохраняя это указание авторства.
 
@@ -19,7 +19,7 @@
  способа входа «окно браузера». Без этого нажатия в сеть за ним никто не
  ходит, и все остальные способы работают без него.
 
- Запускать через "AltHub.vbs" или "Запустить.cmd" (или: powershell -ExecutionPolicy Bypass
+ Запускать через "AltHub.vbs" или "Запустить AltHub.cmd" (или: powershell -ExecutionPolicy Bypass
  -STA -File AltHub.ps1).
 
  Разбор по файлам. Сам AltHub.ps1 — только точка входа: состояние, журнал и
@@ -62,6 +62,19 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+# AltHub сам масштабирует метрики, поэтому процесс должен знать системный DPI
+# до создания первого WinForms-объекта.
+try {
+    Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public static class RamEarlyDpi {
+    [DllImport("user32.dll")] public static extern bool SetProcessDpiAwarenessContext(IntPtr value);
+}
+'@
+    [void][RamEarlyDpi]::SetProcessDpiAwarenessContext([IntPtr](-2))
+} catch { }
+
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 [System.Windows.Forms.Application]::EnableVisualStyles()
@@ -94,22 +107,24 @@ try {
 } catch { }
 
 $script:Root = $PSScriptRoot
-. (Join-Path $script:Root 'modules\Theme.ps1')
-. (Join-Path $script:Root 'modules\Layout.ps1')
-. (Join-Path $script:Root 'modules\Storage.ps1')
-. (Join-Path $script:Root 'modules\RobloxApi.ps1')
-. (Join-Path $script:Root 'modules\CookieImport.ps1')
-. (Join-Path $script:Root 'modules\CookieBridge.ps1')
-. (Join-Path $script:Root 'modules\ExternalBrowserLogin.ps1')
-. (Join-Path $script:Root 'modules\Hotkeys.ps1')
-. (Join-Path $script:Root 'modules\RobloxSettings.ps1')
-. (Join-Path $script:Root 'modules\Presets.ps1')
-. (Join-Path $script:Root 'modules\Launcher.ps1')
-. (Join-Path $script:Root 'modules\WindowTools.ps1')
-. (Join-Path $script:Root 'modules\UiWizard.ps1')
-. (Join-Path $script:Root 'modules\UiDialogs.ps1')
-. (Join-Path $script:Root 'modules\Accounts.ps1')
-. (Join-Path $script:Root 'modules\UiMain.ps1')
+$moduleFiles = @(
+    'modules\Theme.ps1','modules\Layout.ps1',
+    'modules\menus\Classic.ps1','modules\menus\Water.ps1','modules\menus\Wide.ps1','modules\MenuStyles.ps1',
+    'modules\Storage.ps1','modules\RobloxApi.ps1','modules\CookieImport.ps1','modules\CookieBridge.ps1',
+    'modules\ExternalBrowserLogin.ps1','modules\Hotkeys.ps1','modules\RobloxSettings.ps1','modules\Presets.ps1',
+    'modules\Launcher.ps1','modules\WindowTools.ps1','modules\UiWizard.ps1','modules\UiDialogs.ps1',
+    'modules\Accounts.ps1','modules\UiMain.ps1','modules\UiModern.ps1','modules\UiPulse.ps1'
+)
+foreach ($moduleFile in $moduleFiles) {
+    try {
+        . (Join-Path $script:Root $moduleFile)
+    } catch {
+        $moduleMessage = "AltHub не смог загрузить $moduleFile.`n`n$($_.Exception.Message)"
+        if ($NoAutoStart) { throw $moduleMessage }
+        [void][System.Windows.Forms.MessageBox]::Show($moduleMessage, 'AltHub — ошибка модуля', 'OK', 'Error')
+        exit 1
+    }
+}
 
 # ------------------------------------------------------------ состояние -----
 
@@ -118,6 +133,7 @@ $script:Settings       = $null    # настройки
 $script:MasterPassword = ''       # пустая строка = режим DPAPI
 $script:UI             = @{}      # ссылки на элементы главного окна
 $script:Cards          = @{}      # Id аккаунта -> элементы его карточки
+$script:CheckedIds     = @{}      # отмеченные Id живут независимо от фильтра/перерисовки
 $script:Instances      = @{}      # Id аккаунта -> запущенный клиент
 $script:LaunchQueue    = New-Object System.Collections.ArrayList
 $script:AvatarQueue    = New-Object System.Collections.ArrayList
@@ -135,19 +151,30 @@ $script:DragId         = ''       # что тащим мышью
 $script:DragStart      = 0
 $script:DragMoved      = $false
 $script:Section        = 'accounts'
-$script:LastScheduleRun = ''
+# «Сегодня расписание уже сработало» — в настройках: LastScheduleRun.
 $script:UndoStack       = New-Object System.Collections.ArrayList  # шаги для Ctrl+Z
 $script:StatusHoldUntil = [datetime]::MinValue                     # см. Set-RamStatus
 $script:PendingTileUntil = [datetime]::MinValue                    # см. Invoke-RamPendingTile
+$script:SingletonKills = 0; $script:SingletonKillWarned = $false  # см. Update-RamInstances
 $script:WarnedAboutLoad  = $false                                 # предупреждали ли про перегруз машины
 $script:AwaitWindowFor   = ''                                      # см. Test-RamSettingsFileFree
 $script:LaunchTries      = @{}     # Id -> сколько раз пробовали запустить
 $script:LaunchFailed     = @{}     # Id -> почему не вышло (для отчёта в конце)
 $script:AwaitWindowUntil = [datetime]::MinValue
+$script:AwaitSettingsReadyAt = [datetime]::MinValue
 $script:LastWindowState  = 'Normal'   # см. обработчик Resize главного окна
 $script:SettingsTouched = $false   # трогали ли общий файл настроек Roblox
 $script:LastLaunchAt    = [datetime]::MinValue
 $script:RestartCount   = @{}      # Id аккаунта -> сколько раз перезапускали
+$script:AccountsWriteBlocked = $false # защита от перезаписи после ошибки чтения
+$script:RebuildUi       = $false
+$script:RestartRequested = $false
+$script:LogLines        = New-Object System.Collections.ArrayList
+$script:AvatarImages    = @{}      # Bitmap-кэш принадлежит приложению, не карточкам
+$script:UpdatingInstances = $false
+$script:CookieCheckState = $null
+$script:LastExternalForeground = [IntPtr]::Zero
+$script:AppWatchJob     = $null     # фоновая проверка входа из приложения Roblox
 
 # Режим «только чтение». Включается вместе с -NoAutoStart, то есть во всех
 # проверочных и диагностических скриптах. Нужен потому, что обработчик закрытия
@@ -155,9 +182,11 @@ $script:RestartCount   = @{}      # Id аккаунта -> сколько раз
 # аккаунтами, при закрытии записал бы их поверх настоящих. Один раз так и
 # случилось; теперь это невозможно.
 $script:ReadOnly = [bool]$NoAutoStart
+# Вместе с «только чтение» — и без модальных окон: на стенде их некому закрыть.
+$Global:RamNoDialogs = [bool]$NoAutoStart
 
 $script:AppName    = 'AltHub'
-$script:AppVersion = '1.3'
+$script:AppVersion = '1.4'
 $script:AppAuthor  = 'Эрнест Костевич'
 
 function Get-RamAvatarDir { Join-Path (Get-RamDataDir) 'avatars' }
@@ -186,6 +215,9 @@ function Write-RamLog {
         default { ' ' }
     }
     $line = '{0} [{1}] {2}' -f (Get-Date).ToString('HH:mm:ss'), $prefix, $safe
+
+    [void]$script:LogLines.Add($line)
+    while ($script:LogLines.Count -gt 1000) { $script:LogLines.RemoveAt(0) }
 
     if ($script:UI.ContainsKey('Log') -and $null -ne $script:UI.Log) {
         $script:UI.Log.AppendText($line + [Environment]::NewLine)
@@ -433,25 +465,19 @@ function Update-RamHeaderCounts {
     }
     if ($script:Settings -and $script:Settings.AutoRestart) { $txt += "   •   автоперезапуск вкл" }
     $script:UI.Subtitle.Text = $txt
+    if ($script:UI.ContainsKey('SidebarCounts') -and $null -ne $script:UI.SidebarCounts) {
+        $script:UI.SidebarCounts.Accounts.Text = [string]$n
+        $script:UI.SidebarCounts.Running.Text = [string]$r
+        $script:UI.SidebarCounts.Queue.Text = [string]$q
+    }
 }
 
 function Restart-AltHub {
     <# Перезапуск самого себя: сохраняем данные, отпускаем замки и стартуем
        новый экземпляр тем же способом, каким запустились. #>
     Save-RamState
-    Disable-RamMultiInstance
-
-    $psi = New-Object System.Diagnostics.ProcessStartInfo
-    $psi.FileName        = (Get-Process -Id $PID).Path
-    $psi.Arguments       = '-NoProfile -ExecutionPolicy Bypass -STA -WindowStyle Hidden -File "' +
-                           (Join-Path $script:Root 'AltHub.ps1') + '"'
-    $psi.UseShellExecute = $true
-    [void][System.Diagnostics.Process]::Start($psi)
-
-    if ($script:UI.ContainsKey('Form') -and $null -ne $script:UI.Form) {
-        $script:Settings.ConfirmOnExit = $false
-        $script:UI.Form.Close()
-    }
+    $script:RestartRequested = $true
+    if ($script:UI.ContainsKey('Form') -and $null -ne $script:UI.Form) { $script:UI.Form.Close() }
 }
 
 # ------------------------------------------------------------- старт --------
@@ -468,6 +494,14 @@ function Start-AltHub {
 
     $script:Settings = Load-RamSettings
 
+    try {
+        if (Recover-RamPendingRobloxSettings) {
+            Write-RamLog 'Восстановлены обычные настройки Roblox после незавершённого прошлого запуска.' 'warn'
+        }
+    } catch {
+        Write-RamLog "Не удалось автоматически восстановить настройки Roblox: $($_.Exception.Message)" 'warn'
+    }
+
     # Тему надо поставить ДО создания любых элементов: цвета кнопок и карточек
     # запоминаются в момент их создания.
     Set-RamTheme -Name $script:Settings.Theme | Out-Null
@@ -480,10 +514,20 @@ function Start-AltHub {
     }
 
     $mode = Get-RamStorageMode
+    if ($mode -eq 'broken') {
+        $script:AccountsWriteBlocked = $true
+        Show-RamError "Файл accounts.dat повреждён или имеет неизвестный формат.`n`nAltHub не будет открывать пустой список и не перезапишет файл. Восстанови одну из копий в data\backups\accounts либо пришли журнал автору."
+        return
+    }
     if ($mode -eq 'aes') {
         while ($true) {
             $p = Show-RamPasswordDialog -Prompt 'Хранилище защищено мастер-паролем:'
-            if ($null -eq $p) { return }
+            if ($null -eq $p) {
+                # Отмена — не поломка, но молча исчезать нельзя: со стороны
+                # это неотличимо от падения программы.
+                Show-RamInfo 'Без мастер-пароля список аккаунтов не открыть, поэтому AltHub закрывается. Запусти его снова, когда пароль будет под рукой.'
+                return
+            }
             try {
                 $script:Accounts = @(Load-RamAccounts -Password $p)
                 $script:MasterPassword = $p
@@ -496,14 +540,22 @@ function Start-AltHub {
         try {
             $script:Accounts = @(Load-RamAccounts -Password '')
         } catch {
-            Show-RamError "Не удалось прочитать сохранённые аккаунты:`n`n$($_.Exception.Message)`n`nСписок будет пустым, файл не тронут."
-            $script:Accounts = @()
+            # ОДНО ОКНО, И ЧЕСТНОЕ. Раньше их было два подряд, и первое
+            # обещало «список будет пустым» — хотя программа дальше
+            # закрывается. Файл действительно не тронут: запись заблокирована.
+            $script:AccountsWriteBlocked = $true
+            Show-RamError ("Не удалось прочитать сохранённые аккаунты:`n`n$($_.Exception.Message)`n`n" +
+                           "AltHub закроется и НЕ тронет accounts.dat — иначе он перезаписал бы его пустым списком.`n`n" +
+                           "Частая причина: папку перенесли на другой компьютер или в другую учётную запись Windows. " +
+                           "Такой файл читается только там, где был создан. Резервные копии лежат в data\backups\accounts.")
+            return
         }
     }
 
     # Мастер первого запуска — до главного окна: он может сменить тему, а
     # цвета запоминаются кнопками в момент создания.
     Invoke-RamSafe -What 'мастер первого запуска' -Body { Invoke-RamFirstRun }
+    Invoke-RamSafe -What 'выбор меню после обновления' -Body { Show-RamMenuStyleUpgradeChoice }
 
     $form = New-RamMainForm
 
@@ -598,8 +650,10 @@ function Start-AltHub {
             } else {
                 # Все порты диапазона заняты. Молчать нельзя: галочка стоит,
                 # а приёма нет, и понять это можно только зайдя в настройки.
+                $bridgeWhy = Get-RamBridgeStartError
+                if (-not $bridgeWhy) { $bridgeWhy = 'Все порты из диапазона 52713-52717 заняты другими программами.' }
                 Show-RamMessage -Kind 'warn' -Message (
-                    'Приём входа из браузера включить не вышло: все порты из диапазона 52713-52717 заняты другими программами.' +
+                    ('Приём входа из браузера включить не вышло: ' + $bridgeWhy) +
                     [Environment]::NewLine + [Environment]::NewLine +
                     'Закрой лишнее и перезапусти AltHub, либо пользуйся другими способами добавить аккаунт.')
             }
@@ -647,13 +701,39 @@ function Start-AltHub {
     # завершался. Со стороны это выглядело как «крестик просто закрывает».
     #
     # Application.Run живёт до закрытия окна и переживает Hide() спокойно.
-    [System.Windows.Forms.Application]::Run($form)
+    do {
+        $script:RebuildUi = $false
+        [System.Windows.Forms.Application]::Run($form)
+        $form.Dispose()
+
+        if ($script:RebuildUi) {
+            Set-RamTheme -Name $script:Settings.Theme | Out-Null
+            $Global:RamShowEmoji = [bool]$script:Settings.ShowEmoji
+            $script:UI = @{}
+            $script:Cards = @{}
+            $form = New-RamMainForm
+            Build-RamCards
+            Update-RamStatsPanel
+            Update-RamGamesPanel
+            Update-RamProfilesPanel
+            Set-RamStatus 'Оформление применено. Roblox и очередь запуска не прерывались.'
+            if ($script:LaunchQueue.Count -gt 0) { $script:UI.LaunchTimer.Start() }
+        }
+    } while ($script:RebuildUi)
 
     # Порт освобождаем явно, а не надеемся на завершение процесса: если
     # программу перезапустят быстро, следующий запуск наткнётся на занятый
     # порт и приём молча не включится.
     Invoke-RamSafe -What 'остановка приёма из браузера' -Body { Stop-RamCookieBridge }
-    $form.Dispose()
+    foreach ($img in @($script:AvatarImages.Values)) { try { $img.Dispose() } catch { } }
+    $script:AvatarImages = @{}
+    if ($script:RestartRequested) {
+        $psi = New-Object System.Diagnostics.ProcessStartInfo
+        $psi.FileName        = (Get-Process -Id $PID).Path
+        $psi.Arguments       = '-NoProfile -ExecutionPolicy Bypass -STA -WindowStyle Hidden -File "' + (Join-Path $script:Root 'AltHub.ps1') + '"'
+        $psi.UseShellExecute = $true
+        [void][System.Diagnostics.Process]::Start($psi)
+    }
 }
 
 # Запускается со скрытой консолью, поэтому ошибку старта показываем окном,

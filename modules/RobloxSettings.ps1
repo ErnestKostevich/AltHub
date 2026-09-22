@@ -34,7 +34,16 @@
 #>
 
 function Get-RamRobloxSettingsPath {
-    Join-Path $env:LOCALAPPDATA 'Roblox\GlobalBasicSettings_13.xml'
+    $candidates = @((Join-Path $env:LOCALAPPDATA 'Roblox\GlobalBasicSettings_13.xml'))
+    $packages = Join-Path $env:LOCALAPPDATA 'Packages'
+    if (Test-Path -LiteralPath $packages) {
+        foreach ($dir in Get-ChildItem -LiteralPath $packages -Directory -Filter '*ROBLOX*' -ErrorAction SilentlyContinue) {
+            $candidates += (Join-Path $dir.FullName 'LocalState\GlobalBasicSettings_13.xml')
+        }
+    }
+    $existing = @($candidates | Where-Object { Test-Path -LiteralPath $_ } | ForEach-Object { Get-Item -LiteralPath $_ })
+    if ($existing.Count -gt 0) { return ($existing | Sort-Object LastWriteTime -Descending | Select-Object -First 1).FullName }
+    return $candidates[0]
 }
 
 function Test-RamRobloxSettingsFile {
@@ -45,26 +54,80 @@ function Get-RamSettingsBackupPath {
     Join-Path (Get-RamDataDir) 'roblox-settings-backup.xml'
 }
 
+function Get-RamSettingsBackupMetaPath {
+    Join-Path (Get-RamDataDir) 'roblox-settings-backup.json'
+}
+
 function Backup-RamRobloxSettings {
     <# Одноразовая копия исходных настроек Roblox. Делается перед самой первой
        записью и больше не перезаписывается — чтобы «как было» осталось «как
        было», а не «как было в прошлый раз». #>
     $src = Get-RamRobloxSettingsPath
     $dst = Get-RamSettingsBackupPath
+    $metaPath = Get-RamSettingsBackupMetaPath
     if (-not (Test-Path -LiteralPath $src)) { return $null }
-    if (Test-Path -LiteralPath $dst) { return $dst }
+
+    # Старые версии оставляли один снимок навсегда. Не используем его как
+    # базу новой операции: сохраняем в историю и снимаем свежий слепок.
+    if ((Test-Path -LiteralPath $dst) -and -not (Test-Path -LiteralPath $metaPath)) {
+        $legacyDir = Join-Path (Get-RamDataDir) 'backups\roblox-settings'
+        if (-not (Test-Path -LiteralPath $legacyDir)) { [void](New-Item -ItemType Directory -Path $legacyDir -Force) }
+        Move-Item -LiteralPath $dst -Destination (Join-Path $legacyDir ("legacy-{0}.xml" -f (Get-Date -Format 'yyyyMMdd-HHmmss'))) -Force
+    }
+    if ((Test-Path -LiteralPath $dst) -and (Test-Path -LiteralPath $metaPath)) { return $dst }
+
     Copy-Item -LiteralPath $src -Destination $dst -Force
+    [pscustomobject]@{
+        CreatedAt       = (Get-Date).ToString('o')
+        OriginalHash    = (Get-FileHash -Algorithm SHA256 -LiteralPath $dst).Hash
+        LastManagedHash = ''
+    } | ConvertTo-Json | Set-Content -LiteralPath $metaPath -Encoding UTF8 -Force
     return $dst
+}
+
+function Set-RamSettingsManagedHash {
+    $path = Get-RamRobloxSettingsPath
+    $metaPath = Get-RamSettingsBackupMetaPath
+    if (-not (Test-Path -LiteralPath $path) -or -not (Test-Path -LiteralPath $metaPath)) { return }
+    $meta = ConvertFrom-Json -InputObject (Get-Content -LiteralPath $metaPath -Raw -Encoding UTF8)
+    $meta.LastManagedHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $path).Hash
+    $meta | ConvertTo-Json | Set-Content -LiteralPath $metaPath -Encoding UTF8 -Force
 }
 
 function Restore-RamRobloxSettings {
     <# Вернуть исходные настройки Roblox из копии. #>
     $src = Get-RamSettingsBackupPath
+    $metaPath = Get-RamSettingsBackupMetaPath
     if (-not (Test-Path -LiteralPath $src)) { throw 'Резервной копии настроек Roblox нет — значит, они и не менялись.' }
     if (@(Get-Process -Name 'RobloxPlayerBeta' -ErrorAction SilentlyContinue).Count -gt 0) {
         throw 'Сначала закрой все окна Roblox — иначе клиент запишет свои настройки обратно.'
     }
-    Copy-Item -LiteralPath $src -Destination (Get-RamRobloxSettingsPath) -Force
+    $dst = Get-RamRobloxSettingsPath
+    if (Test-Path -LiteralPath $metaPath) {
+        $meta = ConvertFrom-Json -InputObject (Get-Content -LiteralPath $metaPath -Raw -Encoding UTF8)
+        if ((Test-Path -LiteralPath $dst) -and $meta.LastManagedHash) {
+            $currentHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $dst).Hash
+            if ($currentHash -ne [string]$meta.LastManagedHash) {
+                throw 'Файл настроек Roblox изменился после записи AltHub. Автовосстановление отменено, чтобы не затереть более новые ручные изменения.'
+            }
+        }
+    }
+    Copy-Item -LiteralPath $src -Destination $dst -Force
+    Remove-Item -LiteralPath $src -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $metaPath -Force -ErrorAction SilentlyContinue
+    return $true
+}
+
+function Recover-RamPendingRobloxSettings {
+    <# После сбоя/выключения возвращает незавершённую транзакцию прошлого запуска. #>
+    if (-not (Test-Path -LiteralPath (Get-RamSettingsBackupPath))) { return $false }
+    if (-not (Test-Path -LiteralPath (Get-RamSettingsBackupMetaPath))) { return $false }
+    if (@(Get-Process -Name 'RobloxPlayerBeta' -ErrorAction SilentlyContinue).Count -gt 0) {
+        $script:SettingsTouched = $true
+        return $false
+    }
+    [void](Restore-RamRobloxSettings)
+    $script:SettingsTouched = $false
     return $true
 }
 
@@ -91,7 +154,21 @@ function Set-RamXmlValue {
         [Parameter(Mandatory)][string]$Value
     )
     $node = $Xml.SelectSingleNode("//*[@name='$Name']")
-    if ($null -eq $node) { return $false }
+    if ($null -eq $node) {
+        $types = @{
+            SavedQualityLevel='token'; GraphicsQualityLevel='int'; MaxQualityEnabled='bool'
+            FramerateCap='int'; MasterVolume='float'; Fullscreen='bool'
+        }
+        if (-not $types.ContainsKey($Name)) { throw "Неизвестное поле настроек Roblox: $Name" }
+        $anchor = $Xml.SelectSingleNode("//*[@name='GraphicsQualityLevel']")
+        if ($null -eq $anchor) { $anchor = $Xml.SelectSingleNode("//*[@name='MasterVolume']") }
+        if ($null -eq $anchor -or $null -eq $anchor.ParentNode) {
+            throw "В XML Roblox не найден раздел пользовательских настроек; поле $Name создать негде."
+        }
+        $node = $Xml.CreateElement([string]$types[$Name])
+        [void]$node.SetAttribute('name', $Name)
+        [void]$anchor.ParentNode.AppendChild($node)
+    }
     $node.InnerText = $Value
     return $true
 }
@@ -148,6 +225,45 @@ function Get-RamClientSettingsKey {
             [string]$Account.Fullscreen)
 }
 
+function Get-RamExpectedClientSettings {
+    param([Parameter(Mandatory)]$Account)
+    $expected = [ordered]@{}
+    $g = Convert-RamGraphicsToLevels -Graphics ([string]$Account.Graphics)
+    if ($null -ne $g) {
+        $expected.SavedQualityLevel=[string]$g.Saved
+        $expected.GraphicsQualityLevel=[string]$g.Slider
+        $expected.MaxQualityEnabled=[string]$g.MaxQuality
+    }
+    if (-not [string]::IsNullOrWhiteSpace([string]$Account.FramerateCap)) {
+        $fps=0
+        if ([int]::TryParse([string]$Account.FramerateCap,[ref]$fps)) { $expected.FramerateCap=[string][Math]::Max(0,$fps) }
+    }
+    if (-not [string]::IsNullOrWhiteSpace([string]$Account.Volume)) {
+        $vol=0
+        if ([int]::TryParse([string]$Account.Volume,[ref]$vol)) {
+            $vol=[Math]::Min(100,[Math]::Max(0,$vol))
+            $expected.MasterVolume=([string][Math]::Round($vol/100.0,3)).Replace(',','.')
+        }
+    }
+    if (-not [string]::IsNullOrWhiteSpace([string]$Account.Fullscreen)) {
+        $expected.Fullscreen=$(if([string]$Account.Fullscreen -eq 'yes'){'true'}else{'false'})
+    }
+    return $expected
+}
+
+function Assert-RamClientSettingsXml {
+    param([Parameter(Mandatory)][xml]$Xml,[Parameter(Mandatory)]$Account)
+    $expected=Get-RamExpectedClientSettings -Account $Account
+    foreach($name in $expected.Keys){
+        $node=$Xml.SelectSingleNode("//*[@name='$name']")
+        if($null-eq$node){throw "После записи в XML отсутствует поле $name."}
+        if(([string]$node.InnerText).Trim() -ne ([string]$expected[$name]).Trim()){
+            throw "Проверка XML не прошла: $name='$($node.InnerText)', ожидалось '$($expected[$name])'."
+        }
+    }
+    return $true
+}
+
 function Apply-RamAccountClientSettings {
     <#
       Записывает настройки конкретного аккаунта в файл настроек Roblox.
@@ -175,9 +291,10 @@ function Apply-RamAccountClientSettings {
     # --- графика
     $g = Convert-RamGraphicsToLevels -Graphics ([string]$Account.Graphics)
     if ($null -ne $g) {
-        [void](Set-RamXmlValue -Xml $xml -Name 'SavedQualityLevel'    -Value ([string]$g.Saved))
-        [void](Set-RamXmlValue -Xml $xml -Name 'GraphicsQualityLevel' -Value ([string]$g.Slider))
-        [void](Set-RamXmlValue -Xml $xml -Name 'MaxQualityEnabled'    -Value $g.MaxQuality)
+        $ok1 = Set-RamXmlValue -Xml $xml -Name 'SavedQualityLevel'     -Value ([string]$g.Saved)
+        $ok2 = Set-RamXmlValue -Xml $xml -Name 'GraphicsQualityLevel' -Value ([string]$g.Slider)
+        $ok3 = Set-RamXmlValue -Xml $xml -Name 'MaxQualityEnabled'    -Value $g.MaxQuality
+        if (-not ($ok1 -and $ok2 -and $ok3)) { throw 'Не все настройки графики удалось записать.' }
         $applied += $(if ($g.Saved -eq 0) { 'графика: авто' } else { "графика: $($g.Saved)" })
     }
 
@@ -186,7 +303,7 @@ function Apply-RamAccountClientSettings {
         $fps = 0
         if ([int]::TryParse([string]$Account.FramerateCap, [ref]$fps)) {
             if ($fps -lt 0) { $fps = 0 }
-            [void](Set-RamXmlValue -Xml $xml -Name 'FramerateCap' -Value ([string]$fps))
+            if (-not (Set-RamXmlValue -Xml $xml -Name 'FramerateCap' -Value ([string]$fps))) { throw 'Не удалось записать предел FPS.' }
             $applied += $(if ($fps -eq 0) { 'FPS: без предела' } else { "FPS: $fps" })
         }
     }
@@ -198,7 +315,7 @@ function Apply-RamAccountClientSettings {
             if ($vol -lt 0)   { $vol = 0 }
             if ($vol -gt 100) { $vol = 100 }
             $f = [math]::Round($vol / 100.0, 3)
-            [void](Set-RamXmlValue -Xml $xml -Name 'MasterVolume' -Value ([string]$f).Replace(',', '.'))
+            if (-not (Set-RamXmlValue -Xml $xml -Name 'MasterVolume' -Value ([string]$f).Replace(',', '.'))) { throw 'Не удалось записать громкость.' }
             $applied += "звук: $vol%"
         }
     }
@@ -206,7 +323,7 @@ function Apply-RamAccountClientSettings {
     # --- полноэкранный режим
     if (-not [string]::IsNullOrWhiteSpace([string]$Account.Fullscreen)) {
         $fs = ([string]$Account.Fullscreen -eq 'yes')
-        [void](Set-RamXmlValue -Xml $xml -Name 'Fullscreen' -Value $(if ($fs) { 'true' } else { 'false' }))
+        if (-not (Set-RamXmlValue -Xml $xml -Name 'Fullscreen' -Value $(if ($fs) { 'true' } else { 'false' }))) { throw 'Не удалось записать полноэкранный режим.' }
         $applied += $(if ($fs) { 'полный экран' } else { 'в окне' })
     }
 
@@ -215,7 +332,11 @@ function Apply-RamAccountClientSettings {
         # настоящий файл настроек останется целым.
         $tmp = "$path.althub-tmp"
         $xml.Save($tmp)
+        $verify = New-Object xml
+        $verify.Load($tmp)
+        [void](Assert-RamClientSettingsXml -Xml $verify -Account $Account)
         Move-Item -LiteralPath $tmp -Destination $path -Force
+        Set-RamSettingsManagedHash
     }
 
     return $applied

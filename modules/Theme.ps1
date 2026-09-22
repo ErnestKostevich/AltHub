@@ -1,4 +1,10 @@
 ﻿#requires -Version 5.1
+function New-RamForm {
+    $form = New-Object System.Windows.Forms.Form
+    $form.AutoScaleMode = [System.Windows.Forms.AutoScaleMode]::None
+    return $form
+}
+
 <#
 ================================================================================
  Theme.ps1 — тёмное оформление
@@ -70,7 +76,7 @@ function Get-RamMetrics {
         RowHLg   = & $k 38
         LabelH   = & $k 20
         CaptionH = & $k 18
-        BtnPadX  = & $k 34
+        BtnPadX  = & $k 28
         BtnMinW  = & $k 110
         CardPad  = & $k 24
         StripeH  = & $k 4
@@ -93,9 +99,15 @@ function Measure-RamText {
     if ([string]::IsNullOrEmpty($Text)) { return (New-Object System.Drawing.Size(0, 0)) }
 
     if ($MaxWidth -gt 0) {
+        # Чуть уже заданной ширины: Label рисует текст с внутренними полями, и
+        # строка, «влезшая» по полной ширине, при отрисовке переносилась или
+        # обрезалась многоточием.
+        $sc = 1.0
+        if ($null -ne $Global:RamTheme -and $null -ne $Global:RamTheme.M) { $sc = [double]$Global:RamTheme.M.Scale }
+        $fitW = [Math]::Max(1, $MaxWidth - [Math]::Max(6, [int][Math]::Round(4 * $sc)))
         return [System.Windows.Forms.TextRenderer]::MeasureText(
             $Text, $Font,
-            (New-Object System.Drawing.Size($MaxWidth, 4000)),
+            (New-Object System.Drawing.Size($fitW, 4000)),
             [System.Windows.Forms.TextFormatFlags]::WordBreak)
     }
     return [System.Windows.Forms.TextRenderer]::MeasureText($Text, $Font)
@@ -493,6 +505,24 @@ function Get-RamThemeList {
     return @($list)
 }
 
+function New-RamFont {
+    <#
+      Шрифт в ПИКСЕЛЯХ от единого масштаба Get-RamDpiScale.
+
+      На живом запуске это ровно тот же размер, что и в пунктах: пункт × DPI / 72.
+      Зато при подмене масштаба ($Global:RamForceScale) шрифт и метрики всегда
+      согласованы, на любом экране — пункты такой подмены не слушаются и растут
+      ещё и с настоящим DPI.
+    #>
+    param(
+        [string]$Family = 'Segoe UI',
+        [double]$Points = 9.5,
+        [System.Drawing.FontStyle]$Style = [System.Drawing.FontStyle]::Regular
+    )
+    $px = [single]($Points * 96.0 / 72.0 * (Get-RamDpiScale))
+    return New-Object System.Drawing.Font($Family, $px, $Style, [System.Drawing.GraphicsUnit]::Pixel)
+}
+
 function Set-RamTheme {
     <# Ставит палитру и добавляет к ней шрифты — шрифты общие для всех тем. #>
     param([string]$Name = 'dark')
@@ -503,18 +533,26 @@ function Set-RamTheme {
     if ($known -notcontains $Name) { $Name = 'dark' }
     $p = Get-RamPalette -Name $Name
 
-    # Шрифты заданы в ПУНКТАХ, поэтому на настоящем экране 150% они уже
-    # крупнее сами по себе — умножать не надо. А вот когда Самопроверка
-    # притворяется, что масштаб 150% на обычном экране, умножить необходимо,
-    # иначе эффект просто не воспроизведётся.
-    $fs = 1.0
-    if ($null -ne $Global:RamForceScale) { $fs = [double]$Global:RamForceScale }
+    if ($null -ne $Global:RamTheme) {
+        foreach ($name in @('FontBig','FontTitle','FontBody','FontSmall','FontMono')) {
+            try { if ($null -ne $Global:RamTheme.$name) { $Global:RamTheme.$name.Dispose() } } catch { }
+        }
+    }
+    if ($null -ne $script:RamEmojiFonts) {
+        foreach ($font in @($script:RamEmojiFonts.Values)) { try { $font.Dispose() } catch { } }
+    }
 
-    $p.FontBig   = New-Object System.Drawing.Font('Segoe UI Semibold', (15  * $fs))
-    $p.FontTitle = New-Object System.Drawing.Font('Segoe UI Semibold', (11  * $fs))
-    $p.FontBody  = New-Object System.Drawing.Font('Segoe UI',          (9.5 * $fs))
-    $p.FontSmall = New-Object System.Drawing.Font('Segoe UI',          (8.5 * $fs))
-    $p.FontMono  = New-Object System.Drawing.Font('Consolas',          (9   * $fs))
+    # ШРИФТЫ — В ПИКСЕЛЯХ ОТ ТОГО ЖЕ МАСШТАБА, ЧТО И ВСЕ МЕТРИКИ (New-RamFont).
+    # Раньше размер задавался в пунктах и ещё умножался на подменённый масштаб.
+    # Пункты сами растут с настоящим DPI экрана, поэтому при подмене масштаба
+    # (Самопроверка, стенд вёрстки) шрифт масштабировался дважды: на экране
+    # со 200% «проверка 150%» рисовала текст втрое крупнее расчёта, и вся
+    # проверка вёрстки на крупном масштабе проверяла неправду.
+    $p.FontBig   = New-RamFont -Family 'Segoe UI Semibold' -Points 15
+    $p.FontTitle = New-RamFont -Family 'Segoe UI Semibold' -Points 11
+    $p.FontBody  = New-RamFont -Family 'Segoe UI'          -Points 9.5
+    $p.FontSmall = New-RamFont -Family 'Segoe UI'          -Points 8.5
+    $p.FontMono  = New-RamFont -Family 'Consolas'          -Points 9
 
     # Кэш эмодзи-шрифтов держит РАЗМЕР, поэтому при смене масштаба его надо
     # выбросить — иначе смайлики останутся прежней величины.
@@ -551,6 +589,46 @@ namespace Ram {
     }
 }
 '@ | ForEach-Object { Add-Type -TypeDefinition $_ -ErrorAction SilentlyContinue }
+}
+
+if (-not ('Ram.ScrollTheme' -as [type])) {
+@'
+using System;
+using System.Runtime.InteropServices;
+
+namespace Ram {
+    public static class ScrollTheme {
+        [DllImport("uxtheme.dll", CharSet = CharSet.Unicode)]
+        private static extern int SetWindowTheme(IntPtr hwnd, string app, string idList);
+
+        // Тёмные полосы прокрутки — та же тема, что у Проводника в тёмном
+        // режиме. На старых сборках Windows полоса просто останется светлой.
+        public static void Apply(IntPtr hwnd, bool dark) {
+            SetWindowTheme(hwnd, dark ? "DarkMode_Explorer" : "Explorer", null);
+        }
+    }
+}
+'@ | ForEach-Object { Add-Type -TypeDefinition $_ -ErrorAction SilentlyContinue }
+}
+
+function Test-RamThemeIsDark {
+    <# Тёмная ли тема — по яркости фона: своя тема тоже бывает и светлой, и тёмной. #>
+    $bg = $Global:RamTheme.Bg
+    if ($null -eq $bg) { return $true }
+    return (($bg.R * 299 + $bg.G * 587 + $bg.B * 114) / 1000) -lt 128
+}
+
+function Set-RamScrollTheme {
+    <#
+      Полоса прокрутки в цвет темы. Раньше на тёмной теме она оставалась
+      системной белой — светлая полоса во всю высоту списка.
+      Хендл окна появляется не сразу, поэтому ставим и при его создании.
+    #>
+    param([Parameter(Mandatory)]$Control)
+    if ($Control.IsHandleCreated) {
+        try { [Ram.ScrollTheme]::Apply($Control.Handle, (Test-RamThemeIsDark)) } catch { }
+    }
+    $Control.Add_HandleCreated({ try { [Ram.ScrollTheme]::Apply($this.Handle, (Test-RamThemeIsDark)) } catch { } })
 }
 
 function Set-RamDarkTitleBar {
@@ -591,11 +669,12 @@ function Get-RamEmojiFont {
        бесплатно, а подписи перестраиваются часто. #>
     param([Parameter(Mandatory)][System.Drawing.Font]$Like)
 
-    $key = '{0}|{1}' -f $Like.Size, [int]$Like.Style
+    $key = '{0}|{1}|{2}' -f $Like.Size, [int]$Like.Style, [int]$Like.Unit
     if ($script:RamEmojiFonts.ContainsKey($key)) { return $script:RamEmojiFonts[$key] }
 
     try {
-        $f = New-Object System.Drawing.Font('Segoe UI Emoji', $Like.Size, $Like.Style)
+        # Единица — та же, что у образца: размер темы теперь в пикселях.
+        $f = New-Object System.Drawing.Font('Segoe UI Emoji', $Like.Size, $Like.Style, $Like.Unit)
     } catch {
         $f = $Like
     }
@@ -663,6 +742,217 @@ function Get-RamScaled {
     return [int][Math]::Round($Value * $sc)
 }
 
+# ======================================================== значки-рисунки =====
+#
+# ЗАЧЕМ. Раньше значки кнопок были символами шрифта («◉», «▣», «⚿»). Такие
+# символы у каждого шрифта свои: где-то они мелкие, где-то жирные, где-то
+# вместо значка пустой прямоугольник. Выглядело это разнобойно и заметно
+# старее, чем нужно.
+#
+# Здесь значки РИСУЮТСЯ линиями в квадрате 24x24 и растягиваются под нужный
+# размер. Толщина линии одна на все значки, поэтому весь ряд в меню выглядит
+# единым набором, одинаково на 100%, 125% и 150%.
+
+function Get-RamGlyphNames {
+    @('user','gamepad','profile','chart','history','bolt','play','stop',
+      'windows','key','gear','help','plus','search','trash','assign')
+}
+
+function Test-RamGlyph {
+    param([string]$Name)
+    if (-not $Name) { return $false }
+    return ((Get-RamGlyphNames) -contains $Name)
+}
+
+function Draw-RamGlyph {
+    <#
+      Рисует значок $Name линиями внутри прямоугольника $Rect цветом $Color.
+      Все координаты — в сетке 24x24, поэтому значок одинаково правильный
+      при любом размере.
+    #>
+    param(
+        [Parameter(Mandatory)]$G,
+        [Parameter(Mandatory)][string]$Name,
+        [Parameter(Mandatory)]$Rect,
+        [Parameter(Mandatory)][System.Drawing.Color]$Color
+    )
+
+    $size = [Math]::Min([single]$Rect.Width, [single]$Rect.Height)
+    if ($size -le 4) { return }
+    $u  = $size / 24.0
+    $ox = [single]($Rect.X + ($Rect.Width  - $size) / 2.0)
+    $oy = [single]($Rect.Y + ($Rect.Height - $size) / 2.0)
+
+    $pt = {
+        param($x, $y)
+        New-Object System.Drawing.PointF(([single]($ox + $x * $u)), ([single]($oy + $y * $u)))
+    }
+    $rc = {
+        param($x, $y, $w, $h)
+        New-Object System.Drawing.RectangleF(([single]($ox + $x * $u)), ([single]($oy + $y * $u)),
+                                             ([single]($w * $u)), ([single]($h * $u)))
+    }
+
+    $pen = New-Object System.Drawing.Pen($Color, [single]([Math]::Max(1.3, $size / 12.0)))
+    $pen.StartCap = [System.Drawing.Drawing2D.LineCap]::Round
+    $pen.EndCap   = [System.Drawing.Drawing2D.LineCap]::Round
+    $pen.LineJoin = [System.Drawing.Drawing2D.LineJoin]::Round
+    $brush = New-Object System.Drawing.SolidBrush($Color)
+
+    $old = $G.SmoothingMode
+    $G.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
+
+    try {
+        switch ($Name) {
+
+            'user' {      # аккаунты — голова и плечи
+                $G.DrawEllipse($pen, (& $rc 8 3 8 8))
+                $G.DrawArc($pen, (& $rc 4 12.5 16 13), 200, 140)
+            }
+
+            'profile' {   # профили — тот же человек, но в рамке-медальоне
+                $G.DrawEllipse($pen, (& $rc 9 4 6 6))
+                $G.DrawArc($pen, (& $rc 5.5 12 13 11), 200, 140)
+                $G.DrawEllipse($pen, (& $rc 2.5 2.5 19 19))
+            }
+
+            'gamepad' {   # игры — геймпад: корпус с рожками, крестовина и две кнопки
+                $p = New-Object System.Drawing.Drawing2D.GraphicsPath
+                $p.AddBezier((& $pt 4.5 11.5), (& $pt 4.8 6.5), (& $pt 8 6.2), (& $pt 9.2 8.2))
+                $p.AddLine((& $pt 9.2 8.2), (& $pt 14.8 8.2))
+                $p.AddBezier((& $pt 14.8 8.2), (& $pt 16 6.2), (& $pt 19.2 6.5), (& $pt 19.5 11.5))
+                $p.AddBezier((& $pt 19.5 11.5), (& $pt 19.8 17.5), (& $pt 17.3 18.3), (& $pt 15.6 15.3))
+                $p.AddBezier((& $pt 15.6 15.3), (& $pt 14.6 13.6), (& $pt 9.4 13.6), (& $pt 8.4 15.3))
+                $p.AddBezier((& $pt 8.4 15.3), (& $pt 6.7 18.3), (& $pt 4.2 17.5), (& $pt 4.5 11.5))
+                $p.CloseFigure()
+                $G.DrawPath($pen, $p)
+                $p.Dispose()
+                $G.DrawLine($pen, (& $pt 6.4 11.6), (& $pt 9.4 11.6))
+                $G.DrawLine($pen, (& $pt 7.9 10.1), (& $pt 7.9 13.1))
+                $G.FillEllipse($brush, (& $rc 16.6 9.6 1.9 1.9))
+                $G.FillEllipse($brush, (& $rc 14.3 11.9 1.9 1.9))
+            }
+
+            'chart' {     # статистика — три столбика
+                $G.DrawLine($pen, (& $pt 6 18), (& $pt 6 12))
+                $G.DrawLine($pen, (& $pt 12 18), (& $pt 12 7))
+                $G.DrawLine($pen, (& $pt 18 18), (& $pt 18 14))
+            }
+
+            'history' {   # журнал — часы со стрелкой назад
+                $G.DrawArc($pen, (& $rc 3.5 3.5 17 17), 60, 300)
+                $G.DrawLine($pen, (& $pt 12 8), (& $pt 12 12.4))
+                $G.DrawLine($pen, (& $pt 12 12.4), (& $pt 15.4 14.4))
+                $G.DrawLine($pen, (& $pt 3.4 8.6), (& $pt 6.6 6.4))
+                $G.DrawLine($pen, (& $pt 3.4 8.6), (& $pt 3.2 4.8))
+            }
+
+            'bolt' {      # фаст-настройка — молния
+                $p = New-Object System.Drawing.Drawing2D.GraphicsPath
+                $p.AddPolygon(@((& $pt 13.5 2.5), (& $pt 6 13.5), (& $pt 11 13.5),
+                                (& $pt 10 21.5), (& $pt 18 10.5), (& $pt 13 10.5)))
+                $p.CloseFigure()
+                $G.DrawPath($pen, $p)
+                $p.Dispose()
+            }
+
+            'play' {      # запустить — треугольник
+                $p = New-Object System.Drawing.Drawing2D.GraphicsPath
+                $p.AddPolygon(@((& $pt 8 5.5), (& $pt 19 12), (& $pt 8 18.5)))
+                $G.FillPath($brush, $p)
+                $p.Dispose()
+            }
+
+            'stop' {      # закрыть — квадрат со скруглением
+                $r = & $rc 6.5 6.5 11 11
+                $p = New-RamRoundRect -Rect (New-Object System.Drawing.Rectangle(
+                        [int]$r.X, [int]$r.Y, [int]$r.Width, [int]$r.Height)) -Radius ([int][Math]::Max(2, 2.2 * $u))
+                $G.FillPath($brush, $p)
+                $p.Dispose()
+            }
+
+            'windows' {   # окна — сетка 2x2
+                $G.DrawRectangle($pen, [single]($ox + 3.5 * $u), [single]($oy + 3.5 * $u), [single](7 * $u), [single](7 * $u))
+                $G.DrawRectangle($pen, [single]($ox + 13.5 * $u), [single]($oy + 3.5 * $u), [single](7 * $u), [single](7 * $u))
+                $G.DrawRectangle($pen, [single]($ox + 3.5 * $u), [single]($oy + 13.5 * $u), [single](7 * $u), [single](7 * $u))
+                $G.DrawRectangle($pen, [single]($ox + 13.5 * $u), [single]($oy + 13.5 * $u), [single](7 * $u), [single](7 * $u))
+            }
+
+            'key' {       # проверить входы — ключ
+                $G.DrawEllipse($pen, (& $rc 3 3 8.5 8.5))
+                $G.DrawLine($pen, (& $pt 10.4 11.2), (& $pt 20.5 21.3))
+                $G.DrawLine($pen, (& $pt 17.4 18.2), (& $pt 15.2 20.4))
+                $G.DrawLine($pen, (& $pt 19.6 20.4), (& $pt 17.4 22.6))
+            }
+
+            'gear' {      # настройки — шестерёнка: зубчатый обод и отверстие в центре
+                $p = New-Object System.Drawing.Drawing2D.GraphicsPath
+                $p.AddPolygon(@(
+                    (& $pt 18.6 12.23), (& $pt 21.05 13.68), (& $pt 19.58 17.21), (& $pt 16.83 16.5),
+                    (& $pt 16.5 16.83), (& $pt 17.21 19.58), (& $pt 13.68 21.05), (& $pt 12.23 18.6),
+                    (& $pt 11.77 18.6), (& $pt 10.32 21.05), (& $pt 6.79 19.58), (& $pt 7.5 16.83),
+                    (& $pt 7.17 16.5), (& $pt 4.42 17.21), (& $pt 2.95 13.68), (& $pt 5.4 12.23),
+                    (& $pt 5.4 11.77), (& $pt 2.95 10.32), (& $pt 4.42 6.79), (& $pt 7.17 7.5),
+                    (& $pt 7.5 7.17), (& $pt 6.79 4.42), (& $pt 10.32 2.95), (& $pt 11.77 5.4),
+                    (& $pt 12.23 5.4), (& $pt 13.68 2.95), (& $pt 17.21 4.42), (& $pt 16.5 7.17),
+                    (& $pt 16.83 7.5), (& $pt 19.58 6.79), (& $pt 21.05 10.32), (& $pt 18.6 11.77)
+                ))
+                $p.CloseFigure()
+                $G.DrawPath($pen, $p)
+                $p.Dispose()
+                $G.DrawEllipse($pen, (& $rc 9.4 9.4 5.2 5.2))
+            }
+
+            'help' {      # справка — вопрос в кружке
+                $G.DrawEllipse($pen, (& $rc 2.5 2.5 19 19))
+                $G.DrawArc($pen, (& $rc 8.4 6.4 7.2 7.2), 170, 230)
+                $G.DrawLine($pen, (& $pt 12 13.2), (& $pt 12 15.2))
+                $G.FillEllipse($brush, (& $rc 11 17.2 2 2))
+            }
+
+            'plus' {
+                $G.DrawLine($pen, (& $pt 12 6), (& $pt 12 18))
+                $G.DrawLine($pen, (& $pt 6 12), (& $pt 18 12))
+            }
+
+            'search' {
+                $G.DrawEllipse($pen, (& $rc 4 4 12 12))
+                $G.DrawLine($pen, (& $pt 15.5 15.5), (& $pt 20.5 20.5))
+            }
+
+            'trash' {     # удалить — мусорная корзина: крышка, ручка, корпус, рёбра
+                $G.DrawLine($pen, (& $pt 5 7), (& $pt 19 7))
+                $G.DrawLine($pen, (& $pt 9.5 7), (& $pt 9.5 4.5))
+                $G.DrawLine($pen, (& $pt 9.5 4.5), (& $pt 14.5 4.5))
+                $G.DrawLine($pen, (& $pt 14.5 4.5), (& $pt 14.5 7))
+                $G.DrawLine($pen, (& $pt 6.3 7), (& $pt 7.2 20))
+                $G.DrawLine($pen, (& $pt 7.2 20), (& $pt 16.8 20))
+                $G.DrawLine($pen, (& $pt 16.8 20), (& $pt 17.7 7))
+                $G.DrawLine($pen, (& $pt 10.3 10.2), (& $pt 10.7 17))
+                $G.DrawLine($pen, (& $pt 13.7 10.2), (& $pt 13.3 17))
+            }
+
+            'assign' {    # назначить отмеченным — метка-пин с галочкой внутри
+                $p = New-Object System.Drawing.Drawing2D.GraphicsPath
+                $p.AddBezier((& $pt 4.5 10.5), (& $pt 4.5 5.8), (& $pt 8 2.5), (& $pt 12 2.5))
+                $p.AddBezier((& $pt 12 2.5), (& $pt 16 2.5), (& $pt 19.5 5.8), (& $pt 19.5 10.5))
+                $p.AddBezier((& $pt 19.5 10.5), (& $pt 19.5 15.3), (& $pt 14.3 20.3), (& $pt 12 22.3))
+                $p.AddBezier((& $pt 12 22.3), (& $pt 9.7 20.3), (& $pt 4.5 15.3), (& $pt 4.5 10.5))
+                $p.CloseFigure()
+                $G.DrawPath($pen, $p)
+                $p.Dispose()
+                $G.DrawLine($pen, (& $pt 8.2 10.6), (& $pt 11 13.4))
+                $G.DrawLine($pen, (& $pt 11 13.4), (& $pt 16 7.8))
+            }
+        }
+    } catch { }
+
+    $G.SmoothingMode = $old
+    $pen.Dispose()
+    $brush.Dispose()
+}
+
+
 function New-RamButton {
     <#
       Кнопка на основе Panel: рисуем сами, чтобы получить тёмный фон,
@@ -671,7 +961,15 @@ function New-RamButton {
       Kind: primary | normal | danger | ghost
     #>
     param(
-        [Parameter(Mandatory)][string]$Text,
+        # Mandatory снят: кнопки-иконки без подписи (-IconOnly) передают
+        # -Text '' — пустую строку. PowerShell у Mandatory-параметра типа
+        # string отклоняет '' как «пустой аргумент», даже если сам параметр
+        # присутствует в вызове, и кидает ошибку привязки параметра прямо
+        # при запуске. Явное значение по умолчанию ''  сохраняет то же
+        # поведение для всех обычных кнопок (они как и раньше обязаны
+        # передавать текст), просто без строгой проверки, которая здесь
+        # мешает, а не помогает.
+        [string]$Text = '',
         # ЭТО МИНИМУМ, а не обещание: если надпись длиннее, кнопка будет шире.
         [int]$Width  = 150,
         [int]$Height = 34,
@@ -681,7 +979,27 @@ function New-RamButton {
         [int]$Radius = 7,
         # Не подгонять под текст: ширина ровно такая, как просили, длинное
         # обрезать многоточием. Нужно там, где кнопка прибита к краю окна.
-        [switch]$Fixed
+        [switch]$Fixed,
+        # ЗНАЧОК СЛЕВА — ОТДЕЛЬНО ОТ ТЕКСТА, А НЕ ВПИСАН В НЕГО ПРОБЕЛАМИ.
+        #
+        # Раньше значок был первым символом надписи («   ▣   Игры»), и его
+        # размер совпадал с размером текста — на глаз получалось мельче, чем
+        # хотелось, а расстояние до текста «на глаз» пробелами у разных строк
+        # расходилось на пиксель-два (разные символы разной ширины). Теперь
+        # значок — свой слот фиксированной ширины с собственным, более
+        # крупным шрифтом: одинаковый размер и одно и то же место у каждой
+        # кнопки меню, а текст после него всегда начинается в одной точке.
+        [string]$Icon,
+        [double]$IconScale = 1.35,
+        # Квадратная кнопка-иконка без подписи (▶ ✎ ■ в карточке аккаунта):
+        # значок должен стоять по центру ВСЕЙ кнопки, а не в узком слоте
+        # слева от текста, как в кнопках бокового меню. Раньше для таких
+        # кнопок вообще не использовали -Icon, а клали символ псевдографики
+        # прямо в -Text ('✎') — на мелком шрифте он не читался как гаечный
+        # ключ/шестерёнка и выглядел как непонятная закорючка.
+        [switch]$IconOnly,
+        # Надпись по левому краю с полем — для пунктов бокового меню.
+        [ValidateSet('center','left')][string]$Align = 'center'
     )
 
     $t = $Global:RamTheme
@@ -693,9 +1011,18 @@ function New-RamButton {
     # почти не срабатывало, а при 125% и 150% надписи вырастали, кнопки лезли
     # друг на друга и вылезали за край панели. Теперь размер окончателен сразу.
     $pad  = if ($null -ne $t.M) { $t.M.BtnPadX } else { 26 }
-    $need = (Measure-RamText -Text $Text -Font $t.FontBody).Width + $pad
+    # Слот под значок — фиксированной ширины, от масштаба, но одинаковый у
+    # ВСЕХ кнопок с значком: так их подписи выстраиваются в один столбец.
+    $iconSlotW = 0
+    $iconFont = $null
+    if ($Icon) {
+        $iconFont = New-Object System.Drawing.Font($t.FontBody.FontFamily, [single]($t.FontBody.Size * $IconScale), $t.FontBody.Style, $t.FontBody.Unit)
+        $scaleForIcon = 1
+        if ($null -ne $t.M) { $scaleForIcon = $t.M.Scale }
+        $iconSlotW = [int][Math]::Round(28 * $scaleForIcon)
+    }
+    $need = (Measure-RamText -Text $Text -Font $t.FontBody).Width + $pad + $iconSlotW
     if ($Fixed) { $wantW = $Width } else { $wantW = [Math]::Max($Width, $need) }
-
     $colors = Get-RamButtonColors -Kind $Kind
 
     $btn = New-Object System.Windows.Forms.Panel
@@ -717,6 +1044,13 @@ function New-RamButton {
         IsHover  = $false
         IsDown   = $false
         Enabled  = $true
+        Icon     = $Icon
+        IconFont = $iconFont
+        IconSlotW = $iconSlotW
+        IconOnly = [bool]$IconOnly
+        Align    = $Align
+        # Полоска цвета темы у левого края — признак активного пункта меню.
+        ActiveBar = $false
     }
 
     $btn.Add_Paint({
@@ -746,18 +1080,82 @@ function New-RamButton {
         $path.Dispose()
 
         $fore = if ($st.Enabled) { $st.Fore } else { $Global:RamTheme.Muted }
-        $sf = New-Object System.Drawing.StringFormat
-        $sf.Alignment     = [System.Drawing.StringAlignment]::Center
-        $sf.LineAlignment = [System.Drawing.StringAlignment]::Center
-        # Без NoWrap длинная надпись переносится на вторую строку и обрезается
-        # по высоте — выглядит как «текст немного обрезан».
-        $sf.FormatFlags   = [System.Drawing.StringFormatFlags]::NoWrap
-        $sf.Trimming      = [System.Drawing.StringTrimming]::EllipsisCharacter
 
-        $tb = New-Object System.Drawing.SolidBrush($fore)
-        $g.DrawString($st.Caption, $st.Font, $tb,
-                      (New-Object System.Drawing.RectangleF(2, 0, ($s.Width - 4), $s.Height)), $sf)
-        $tb.Dispose(); $sf.Dispose()
+        if ($st.ActiveBar) {
+            $sc = $Global:RamTheme.M.Scale
+            $barW = [Math]::Max(2, [int][Math]::Round(3 * $sc))
+            $barH = [int]($s.Height * 0.5)
+            $barRect = New-Object System.Drawing.Rectangle(([int][Math]::Round(4 * $sc)), [int](($s.Height - $barH) / 2), $barW, $barH)
+            $barPath = New-RamRoundRect -Rect $barRect -Radius ([Math]::Max(1, [int]($barW / 2)))
+            $barBrush = New-Object System.Drawing.SolidBrush($Global:RamTheme.Accent)
+            $g.FillPath($barBrush, $barPath)
+            $barBrush.Dispose(); $barPath.Dispose()
+        }
+
+        # ЗНАЧОК — В СВОЁМ СЛОТЕ СЛЕВА, ТЕКСТ — ПОСЛЕ НЕГО.
+        # У кнопки без значка (IconSlotW = 0) текст просто по центру, как и
+        # было раньше — старое поведение не трогаем.
+        #
+        # IconOnly — отдельный случай: квадратная кнопка без подписи вообще
+        # (▶ ⚙ ■ в карточке аккаунта). Значок здесь рисуется по центру ВСЕЙ
+        # кнопки, а не в узком слоте слева от текста — слот уже, чем сама
+        # кнопка, и значок съезжал бы влево вместо центра квадрата.
+        if ($st.IconOnly -and (Test-RamGlyph -Name $st.Icon)) {
+            $side = [single]([Math]::Min($s.Width, $s.Height) * 0.5)
+            $gRect = New-Object System.Drawing.RectangleF(
+                         ([single](($s.Width  - $side) / 2.0)),
+                         ([single](($s.Height - $side) / 2.0)), $side, $side)
+            Draw-RamGlyph -G $g -Name $st.Icon -Rect $gRect -Color $fore
+            return
+        }
+
+        $textX = 2
+        $textW = $s.Width - 4
+        if ($st.IconSlotW -gt 0) {
+            $iconRect = New-Object System.Drawing.RectangleF(
+                            ([single]($st.IconSlotW * 0.18)), 0,
+                            ([single]($st.IconSlotW * 0.82)), ([single]$s.Height))
+            if (Test-RamGlyph -Name $st.Icon) {
+                # Нарисованный значок: одна и та же толщина линии у всех
+                # кнопок, никакой зависимости от того, есть ли символ в шрифте.
+                $side = [single]([Math]::Min($iconRect.Width, $s.Height * 0.55))
+                $gRect = New-Object System.Drawing.RectangleF(
+                             ([single]($iconRect.X + ($iconRect.Width - $side) / 2.0)),
+                             ([single](($s.Height - $side) / 2.0)), $side, $side)
+                Draw-RamGlyph -G $g -Name $st.Icon -Rect $gRect -Color $fore
+            } else {
+                $sfIcon = New-Object System.Drawing.StringFormat
+                $sfIcon.Alignment     = [System.Drawing.StringAlignment]::Center
+                $sfIcon.LineAlignment = [System.Drawing.StringAlignment]::Center
+                $ib = New-Object System.Drawing.SolidBrush($fore)
+                $g.DrawString($st.Icon, $st.IconFont, $ib, $iconRect, $sfIcon)
+                $ib.Dispose(); $sfIcon.Dispose()
+            }
+            $textX = [int]$st.IconSlotW
+            $textW = $s.Width - [int]$st.IconSlotW - 4
+        }
+
+        # ТЕКСТ РИСУЕМ ТЕМ ЖЕ, ЧЕМ МЕРИЛИ. Ширину кнопки считает
+        # Measure-RamText через TextRenderer (GDI). Раньше подпись рисовалась
+        # Graphics.DrawString (GDI+) — у двух движков разные метрики, и на 150%
+        # кнопка сама себе обрезала подпись многоточием, хотя место под неё
+        # было посчитано. Со значком — по левому краю оставшегося места,
+        # чтобы текст стоял на одном расстоянии от значка у любой длины.
+        $flags = [System.Windows.Forms.TextFormatFlags]::VerticalCenter -bor
+                 [System.Windows.Forms.TextFormatFlags]::SingleLine -bor
+                 [System.Windows.Forms.TextFormatFlags]::EndEllipsis -bor
+                 [System.Windows.Forms.TextFormatFlags]::NoPrefix
+        if ($st.IconSlotW -gt 0) { $flags = $flags -bor [System.Windows.Forms.TextFormatFlags]::Left }
+        elseif ([string]$st.Align -eq 'left') {
+            $flags = $flags -bor [System.Windows.Forms.TextFormatFlags]::Left
+            $textX = [int][Math]::Round(14 * $Global:RamTheme.M.Scale)
+            $textW = $s.Width - $textX - 4
+        }
+        else                     { $flags = $flags -bor [System.Windows.Forms.TextFormatFlags]::HorizontalCenter }
+        [System.Windows.Forms.TextRenderer]::DrawText(
+            $g, [string]$st.Caption, $st.Font,
+            (New-Object System.Drawing.Rectangle($textX, 0, [Math]::Max(1, $textW), $s.Height)),
+            $fore, $flags)
     })
 
     $btn.Add_MouseEnter({ $this.Tag.IsHover = $true;  $this.Invalidate() })
@@ -777,6 +1175,8 @@ function New-RamButton {
     if ($Tooltip) {
         $tt = New-Object System.Windows.Forms.ToolTip
         $tt.SetToolTip($btn, $Tooltip)
+        $btn.Tag | Add-Member -NotePropertyName ToolTipOwner -NotePropertyValue $tt -Force
+        $btn.Add_Disposed({ try { if ($null -ne $this.Tag.ToolTipOwner) { $this.Tag.ToolTipOwner.Dispose() } } catch { } })
     }
 
     return $btn
@@ -843,7 +1243,9 @@ function Set-RamButtonText {
 
     $t    = $Global:RamTheme
     $pad  = if ($null -ne $t.M) { $t.M.BtnPadX } else { 26 }
-    $need = (Measure-RamText -Text $Text -Font $Button.Tag.Font).Width + $pad
+    $iconSlotW = 0
+    if ($Button.Tag.PSObject.Properties.Name -contains 'IconSlotW') { $iconSlotW = [int]$Button.Tag.IconSlotW }
+    $need = (Measure-RamText -Text $Text -Font $Button.Tag.Font).Width + $pad + $iconSlotW
     $Button.Tag.Natural = New-Object System.Drawing.Size($need, $Button.Height)
 
     $fixed = $false
@@ -875,7 +1277,23 @@ function New-RamLabel {
         # Свободный текст пользователя (имя аккаунта, заметка, название игры).
         # Такой не влезает по определению — для него многоточие это нормально,
         # и проверка вёрстки на него ругаться не должна.
-        [switch]$Truncatable
+        [switch]$Truncatable,
+        # ФОН ПОД ПОДПИСЬЮ — СПЛОШНОЙ, А НЕ Transparent.
+        #
+        # BackColor = Transparent у System.Windows.Forms.Label не даёт
+        # настоящей прозрачности: контрол одноразово копирует то, что было
+        # под ним на момент отрисовки, вместо того чтобы каждый раз честно
+        # брать актуальный фон родителя. На карточке аккаунта это давало
+        # «второй фон» — старый, не смытый кусок кадра, который проступал
+        # из-под подписи при живом ресайзе окна. Сплошная заливка того же
+        # цвета, что у карточки под ней, убирает источник бага полностью:
+        # заливать нечего кэшировать, GDI просто рисует прямоугольник перед
+        # текстом на каждом кадре.
+        # По умолчанию — цвет обычной карточки (берём из активной темы,
+        # какая бы она ни была: Полночь, Изумруд, своя). Если подпись стоит
+        # на другом фоне (например, на панели, а не на карточке), передать
+        # его явно через -BackFill.
+        $BackFill
     )
     $t = $Global:RamTheme
     $l = New-Object System.Windows.Forms.Label
@@ -894,17 +1312,107 @@ function New-RamLabel {
         else       { $l.Text = Remove-RamEmoji -Text $Text }
     }
     $l.ForeColor = if ($null -ne $Color) { $Color } else { $t.Text }
-    $l.BackColor = [System.Drawing.Color]::Transparent
+    $l.BackColor = if ($null -ne $BackFill) { $BackFill } else { $t.Card }
     # Если текст всё-таки не влезает — многоточие вместо обрубленного слова.
     # Так обрезка хотя бы выглядит осмысленно, а не как сломанная вёрстка.
     $l.AutoEllipsis = $true
-    if ($Truncatable) { $l.Tag = 'truncatable' }
+    # Tag хранит и признак «обрезаемый текст» (как раньше, читают по имени
+    # свойства Truncatable), и, для сплошного фона, сам цвет заливки — чтобы
+    # Sync-RamCardLabelFill мог найти и обновить его при смене состояния
+    # карточки (выделение и т.п.).
+    $l.Tag = [pscustomobject]@{ Truncatable = [bool]$Truncatable; Fill = $l.BackColor }
+
+    # ПОДЛОЖКА БЕЗ -BackFill — ПО ТОМУ, КУДА ПОДПИСЬ ПОЛОЖИЛИ.
+    # Сплошная заливка по умолчанию была цветом КАРТОЧКИ. Подписи вне карточек
+    # (боковое меню, фон окна, нижняя строка) получали чужой цвет и выглядели
+    # серыми прямоугольниками под текстом. Явно -BackFill не передавался нигде.
+    # Теперь при попадании в контейнер подпись берёт его фон; на карточке —
+    # цвет карточки (им дальше управляет Sync-RamCardLabelFill), потому что у
+    # самой карточки BackColor — это фон окна под скруглёнными углами.
+    if ($null -eq $BackFill) {
+        $l.Add_ParentChanged({
+            $node = $this.Parent
+            $fill = $null
+            while ($null -ne $node) {
+                $tg = $node.Tag
+                if ($null -ne $tg -and $tg.PSObject -and
+                    ($tg.PSObject.Properties.Name -contains 'IsHover') -and
+                    ($tg.PSObject.Properties.Name -contains 'Selected')) {
+                    $fill = $Global:RamTheme.Card
+                    break
+                }
+                if ($node.BackColor.A -eq 255) { $fill = $node.BackColor; break }
+                $node = $node.Parent
+            }
+            if ($null -ne $fill) {
+                $this.BackColor = $fill
+                if ($null -ne $this.Tag -and ($this.Tag.PSObject.Properties.Name -contains 'Fill')) { $this.Tag.Fill = $fill }
+            }
+        })
+    }
     $l.TextAlign = switch ($Align) {
         'right'  { [System.Drawing.ContentAlignment]::MiddleRight }
         'center' { [System.Drawing.ContentAlignment]::MiddleCenter }
         default  { [System.Drawing.ContentAlignment]::MiddleLeft }
     }
     return $l
+}
+
+function Mix-RamColor {
+    <# Ручное альфа-смешение: имитирует наложение полупрозрачного Color
+       (Overlay, с его собственным Alpha) поверх непрозрачного фона (Base).
+       Нужно там, где сам контрол (Label, обычная заливка в Tag.Fill) не
+       умеет рисовать настоящую полупрозрачность — только сплошной цвет —
+       но результат должен визуально совпадать с тем, что происходит в
+       Add_Paint карточки через FromArgb(alpha, Accent) поверх Graphics.
+       Без этого фон карточки подсвечивался бы при перетаскивании, а фон
+       текстовых подписей поверх него — нет, и получалось два разных
+       фона под одной и той же карточкой. #>
+    param([System.Drawing.Color]$Base, [System.Drawing.Color]$Overlay)
+    $a = $Overlay.A / 255.0
+    $r = [int]([Math]::Round($Overlay.R * $a + $Base.R * (1 - $a)))
+    $g = [int]([Math]::Round($Overlay.G * $a + $Base.G * (1 - $a)))
+    $b = [int]([Math]::Round($Overlay.B * $a + $Base.B * (1 - $a)))
+    return [System.Drawing.Color]::FromArgb(255, $r, $g, $b)
+}
+
+function Sync-RamCardLabelFill {
+    <#
+      Перекрашивает фон всех подписей на карточке под её актуальный цвет
+      (обычная / выделенная / цель перетаскивания), чтобы сплошной фон
+      лейбла (см. New-RamLabel) не «отставал» от заливки карточки при
+      смене состояния — иначе под текстом на миг виден прежний, более
+      тёмный или светлый прямоугольник, то есть тот же самый эффект
+      «второго фона», просто по другой причине.
+      Зовать сразу после того, как поменяли $card.Tag.Selected/IsHover/
+      DropLine и перед тем, как перерисовать карточку.
+    #>
+    param([Parameter(Mandatory)]$Card)
+    $st = $Card.Tag
+    $t  = $Global:RamTheme
+    $fill = if ($st.Selected) { $t.CardSel } elseif ($st.IsHover) { $t.CardHover } else { $t.Card }
+    # DropLine — карточка-цель при перетаскивании: та же полупрозрачная
+    # подсветка, что Add_Paint карточки накладывает на СВОЙ фон поверх
+    # $path (см. FromArgb(70, Accent) там) — здесь того же эффекта
+    # приходится добиваться вручную (Mix-RamColor), потому что у
+    # обычного Label фон не бывает по-настоящему полупрозрачным.
+    if ($st.DropLine) {
+        $fill = Mix-RamColor -Base $fill -Overlay ([System.Drawing.Color]::FromArgb(70, $t.Accent))
+    }
+    foreach ($c in $Card.Controls) {
+        if ($c -is [System.Windows.Forms.Label]) {
+            $c.BackColor = $fill
+            if ($null -ne $c.Tag -and ($c.Tag.PSObject.Properties.Name -contains 'Fill')) {
+                $c.Tag.Fill = $fill
+            }
+        } elseif ($null -ne $c.Tag -and ($c.Tag.PSObject.Properties.Name -contains 'Fill') -and
+                  ($c.Tag.PSObject.Properties.Name -contains 'Caption')) {
+            # Панель статуса (New-RamStatusDot) — своя заливка в Paint,
+            # не BackColor контрола, поэтому обновляем через Tag.Fill.
+            $c.Tag.Fill = $fill
+            $c.Invalidate()
+        }
+    }
 }
 
 function New-RamTextBox {
@@ -946,6 +1454,7 @@ function New-RamTextBox {
         $tb.ScrollBars = 'Vertical'
         $tb.Location   = New-Object System.Drawing.Point(9, 7)
         $tb.Size       = New-Object System.Drawing.Size(($Width - 18), ($Height - 14))
+        Set-RamScrollTheme -Control $tb
     } else {
         # ВАЖНО. У однострочного TextBox высоту задаёт ШРИФТ: заданные 17 px
         # он игнорирует. На крупном масштабе экрана поле становится выше своей
@@ -1020,34 +1529,111 @@ function New-RamCard {
         $e.Graphics.FillPath($brush, $path)
         $brush.Dispose()
 
+        # УКАЗАТЕЛЬ МЕСТА ВСТАВКИ ПРИ ПЕРЕТАСКИВАНИИ.
+        #
+        # Раньше здесь рисовалась толстая акцентная черта у верхнего или
+        # нижнего края карточки — видно, КУДА встанет схваченная карточка
+        # при отпускании, но выглядело как техническая пометка «разрез
+        # между слотами», а не как «вот эта карточка, с которой сейчас
+        # поменяются местами». Теперь вместо черты подсвечивается вся
+        # карточка-цель целиком — тем же акцентным цветом, что и у
+        # схваченной карточки (см. Selected/CardSel выше), но заметно
+        # слабее: сама схваченная карточка красится сплошным $t.CardSel,
+        # а карточка под курсором — тем же оттенком с низкой
+        # непрозрачностью, наложенным поверх её обычной заливки (ДО рамки
+        # и до Dispose пути — path нужен ещё и здесь, и для рамки ниже).
+        # Это читается как «эту карточку сейчас потеснят», а не просто как
+        # линия-разделитель.
+        if ($st.DropLine) {
+            $overlay = [System.Drawing.Color]::FromArgb(70, $t.Accent)
+            $ob = New-Object System.Drawing.SolidBrush($overlay)
+            $e.Graphics.FillPath($ob, $path)
+            $ob.Dispose()
+        }
+
         $pen = New-Object System.Drawing.Pen($(if ($st.Selected) { $t.Accent } else { $t.Border }), 1)
         $e.Graphics.DrawPath($pen, $path)
         $pen.Dispose(); $path.Dispose()
-
-        # Индикатор места вставки при перетаскивании: толстая акцентная черта
-        # у верхнего или нижнего края — видно, КУДА встанет карточка при
-        # отпускании, ещё до того как её отпустили. Без неё перетаскивание
-        # работало, но угадать результат было нельзя.
-        if ($st.DropLine) {
-            $lineY = if ($st.DropLine -eq 'before') { 1 } else { $s.Height - 3 }
-            $lp = New-Object System.Drawing.Pen($t.Accent, 3)
-            $e.Graphics.DrawLine($lp, 6, $lineY, ($s.Width - 6), $lineY)
-            $lp.Dispose()
-        }
     })
 
     return $card
 }
 
+function Get-RamGroupShort {
+    <# Короткая подпись набора для тесных мест (под аватаркой на карточке
+       аккаунта) — «Основной» -> «Основа», «Твины» -> «Твин». Сама группа
+       ($a.Group) остаётся как есть везде, где по ней фильтруют или ищут
+       (Get-RamVisibleAccounts, GroupFilter и т.д.) — это только то, что
+       показываем человеку в самом тесном месте карточки. Любое другое,
+       незнакомое имя набора (свои, пользовательские) остаётся как есть —
+       сокращаем только эти два «встроенных» варианта. #>
+    param([string]$Group)
+    switch ($Group) {
+        'Основной' { return 'Основа' }
+        'Твины'    { return 'Твин' }
+        default    { return $Group }
+    }
+}
+
+function Get-RamStatusDotHeight {
+    <#
+      Высота панели статуса — от шрифта, а не числом. Раньше было 22 точки на
+      статус и 10 на строку набора: строка набора была меньше самого шрифта уже
+      на 100%, а на 150% название набора под «не запущен» обрезалось снизу.
+    #>
+    param([switch]$WithSuffix)
+    $m = $Global:RamTheme.M
+    $line = (Measure-RamText -Text 'Ay' -Font $Global:RamTheme.FontSmall).Height
+    $main = [Math]::Max([int][Math]::Round(22 * $m.Scale), $line + [int][Math]::Round(4 * $m.Scale))
+    if ($WithSuffix) { return $main + $line }
+    return $main
+}
+
 function New-RamStatusDot {
-    <# Цветной кружок статуса + подпись. #>
-    param([int]$X, [int]$Y, [int]$Width = 150)
+    <#
+      Цветной кружок статуса + подпись.
+
+      -NoDot переключает в режим подписи под аватаркой: сама рамка аватарки
+      уже красится в цвет статуса (см. Set-RamStatusDot -Avatar), поэтому
+      здесь кружок лишний — только центрированный цветной текст на всю
+      ширину.
+
+      -GroupSuffix — короткая метка набора («Основа»/«Твин», см.
+      Get-RamGroupShort), рисуется ВТОРОЙ СТРОКОЙ под статусом, а не в
+      одну строку с ним через « · ». Раньше и то и другое пробовали
+      уместить в одну строку («не запущен · Твин») — на панели шириной
+      с аватарку это тут же обрезалось многоточием, и даже сам статус
+      («не запущен»), который раньше всегда влезал целиком, стал
+      обрезаться из-за добавленного хвоста. Метка меняется только при
+      пересборке карточки (Build-RamCards), а не по таймеру состояния —
+      в отличие от Caption/Color, которые обновляет Set-RamStatusDot
+      каждые пару секунд.
+    #>
+    param([int]$X, [int]$Y, [int]$Width = 150, [switch]$NoDot, [switch]$Center, $BackFill, [string]$GroupSuffix)
+
+    $hasSuffix = -not [string]::IsNullOrWhiteSpace($GroupSuffix)
+    # Первая строка (статус) держит СВОЮ прежнюю высоту (22px) — её
+    # позиция и размер не меняются в зависимости от GroupSuffix, иначе сам
+    # статус («не запущен») сдвигается с привычного места и норовит
+    # обрезаться под аватаркой (см. комментарий у вызова в UiMain.ps1).
+    # Вторая строка — чистая прибавка ВНИЗ поверх этих 22px, а не замена
+    # части их высоты. Сделана короче первой (12 против 22) — под ней всё
+    # ещё есть небольшой запас до низа карточки (см. Get-RamCardHeight),
+    # а не вплотную 0px.
+    $rowH = if ($hasSuffix) { (Measure-RamText -Text 'Ay' -Font $Global:RamTheme.FontSmall).Height } else { 0 }
+    $totalH = Get-RamStatusDotHeight -WithSuffix:$hasSuffix
 
     $p = New-Object System.Windows.Forms.Panel
     $p.Location  = New-Object System.Drawing.Point($X, $Y)
-    $p.Size      = New-Object System.Drawing.Size($Width, 22)
+    $p.Size      = New-Object System.Drawing.Size($Width, $totalH)
+    # Тот же случай, что у New-RamLabel: Transparent здесь не настоящая
+    # прозрачность, а кэш кадра на момент отрисовки — на карточке аккаунта
+    # это давало «второй фон», не смытый остаток кадра под подписью статуса
+    # при живом ресайзе. Заливаем сами, сплошным цветом карточки, перед тем
+    # как рисовать точку и текст — тогда кэшировать нечего.
     $p.BackColor = [System.Drawing.Color]::Transparent
-    $p.Tag = [pscustomobject]@{ Caption = 'не запущен'; Color = $Global:RamTheme.Muted }
+    $fillNow = if ($null -ne $BackFill) { $BackFill } else { $Global:RamTheme.Card }
+    $p.Tag = [pscustomobject]@{ Caption = 'не запущен'; Color = $Global:RamTheme.Muted; NoDot = [bool]$NoDot; Center = [bool]$Center; Fill = $fillNow; GroupSuffix = $GroupSuffix; RowH = $rowH }
     Set-RamDoubleBuffered $p
 
     $p.Add_Paint({
@@ -1057,16 +1643,49 @@ function New-RamStatusDot {
         $g.SmoothingMode     = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
         $g.TextRenderingHint = [System.Drawing.Text.TextRenderingHint]::ClearTypeGridFit
 
-        $b = New-Object System.Drawing.SolidBrush($st.Color)
-        $g.FillEllipse($b, 0, 7, 8, 8)
-        $b.Dispose()
+        $fb = New-Object System.Drawing.SolidBrush($st.Fill)
+        $g.FillRectangle($fb, 0, 0, $s.Width, $s.Height)
+        $fb.Dispose()
 
-        $tb = New-Object System.Drawing.SolidBrush($st.Color)
+        $hasSuffix = -not [string]::IsNullOrWhiteSpace($st.GroupSuffix)
+        $statusH = if ($hasSuffix) { $s.Height - $st.RowH } else { $s.Height }
+
+        $textX = 0; $textW = $s.Width
+        if (-not $st.NoDot) {
+            # Кружок и отступ подписи — от масштаба: раньше 8×8 в точке (0, 7)
+            # и 14 точек отступа на любом экране, и на 150% крошечный кружок
+            # висел выше середины выросшей строки.
+            $sc = $Global:RamTheme.M.Scale
+            $d = [int][Math]::Round(8 * $sc)
+            $b = New-Object System.Drawing.SolidBrush($st.Color)
+            $g.FillEllipse($b, 0, [int](($statusH - $d) / 2), $d, $d)
+            $b.Dispose()
+            $textX = [int][Math]::Round(14 * $sc); $textW = $s.Width - $textX
+        }
+
         $sf = New-Object System.Drawing.StringFormat
         $sf.LineAlignment = [System.Drawing.StringAlignment]::Center
+        if ($st.Center) { $sf.Alignment = [System.Drawing.StringAlignment]::Center }
+        # Без NoWrap длинные подписи ("Выключение...") переносились на вторую
+        # строку и обрезались снизу — панель под статус высотой всего 22px.
+        # NoWrap + EllipsisCharacter держит подпись в одну строку, обрезая
+        # многоточием, если совсем не влезает, вместо переноса.
+        $sf.FormatFlags     = [System.Drawing.StringFormatFlags]::NoWrap
+        $sf.Trimming        = [System.Drawing.StringTrimming]::EllipsisCharacter
+
+        $tb = New-Object System.Drawing.SolidBrush($st.Color)
         $g.DrawString($st.Caption, $Global:RamTheme.FontSmall, $tb,
-                      (New-Object System.Drawing.RectangleF(14, 0, ($s.Width - 14), $s.Height)), $sf)
-        $tb.Dispose(); $sf.Dispose()
+                      (New-Object System.Drawing.RectangleF($textX, 0, $textW, $statusH)), $sf)
+        $tb.Dispose()
+
+        if ($hasSuffix) {
+            $gb = New-Object System.Drawing.SolidBrush($Global:RamTheme.Accent)
+            $g.DrawString($st.GroupSuffix, $Global:RamTheme.FontSmall, $gb,
+                          (New-Object System.Drawing.RectangleF($textX, $statusH, $textW, $st.RowH)), $sf)
+            $gb.Dispose()
+        }
+
+        $sf.Dispose()
     })
 
     return $p
@@ -1080,8 +1699,14 @@ function Set-RamStatusDot {
       аккаунту каждые две секунды из таймера. На двадцати аккаунтах это
       двадцать принудительных перерисовок GDI+ в секунду при совершенно
       неподвижной картинке — программа грела процессор, ничего не делая.
+
+      -Avatar необязателен: если передан, рамка аватарки красится в тот же
+      цвет, что и статус (у Set-RamAvatarBorderColor своя проверка "цвет не
+      поменялся" — лишней перерисовки от этого не прибавляется).
     #>
-    param($Dot, [string]$Caption, $Color)
+    param($Dot, [string]$Caption, $Color, $Avatar)
+    if ($null -ne $Avatar) { Set-RamAvatarBorderColor -Box $Avatar -Color $Color }
+
     if ($null -eq $Dot) { return }
 
     $sameText  = ([string]$Dot.Tag.Caption -eq [string]$Caption)
@@ -1101,7 +1726,10 @@ function New-RamAvatarBox {
     $p = New-Object System.Windows.Forms.Panel
     $p.Size      = New-Object System.Drawing.Size($Size, $Size)
     $p.BackColor = [System.Drawing.Color]::Transparent
-    $p.Tag = [pscustomobject]@{ Image = $null; Letter = '?' }
+    # BorderColor красится в цвет статуса через Set-RamAvatarBorderColor.
+    # По умолчанию — нейтральная обводка темы: в классическом виде меню
+    # рамка не должна становиться цветной сама по себе.
+    $p.Tag = [pscustomobject]@{ Image = $null; Letter = '?'; BorderColor = $Global:RamTheme.Border }
     Set-RamDoubleBuffered $p
 
     $p.Add_Paint({
@@ -1116,10 +1744,13 @@ function New-RamAvatarBox {
         $path.AddEllipse($rect)
 
         if ($null -ne $st.Image) {
-            $old = $g.Clip
-            $g.SetClip($path)
-            $g.DrawImage($st.Image, $rect)
-            $g.Clip = $old
+            $state = $g.Save()
+            try {
+                $g.SetClip($path)
+                $g.DrawImage($st.Image, $rect)
+            } finally {
+                $g.Restore($state)
+            }
         } else {
             $b = New-Object System.Drawing.SolidBrush($Global:RamTheme.Panel)
             $g.FillPath($b, $path)
@@ -1134,7 +1765,11 @@ function New-RamAvatarBox {
             $tb.Dispose(); $sf.Dispose()
         }
 
-        $pen = New-Object System.Drawing.Pen($Global:RamTheme.Border, 1)
+        # Рамка — индикатор состояния аккаунта, ей нужно быть заметной: две
+        # точки на 100%, три на 150%. Раньше это было фиксированные 2 пикселя,
+        # которые на крупном масштабе снова становились волоском.
+        $borderColor = if ($null -ne $st.BorderColor) { $st.BorderColor } else { $Global:RamTheme.Border }
+        $pen = New-Object System.Drawing.Pen($borderColor, [single][Math]::Max(1, [Math]::Round(2 * $Global:RamTheme.M.Scale)))
         $g.DrawPath($pen, $path)
         $pen.Dispose(); $path.Dispose()
     })
@@ -1147,6 +1782,20 @@ function Set-RamAvatarImage {
     if ($null -eq $Box) { return }
     if ($null -ne $Image)  { $Box.Tag.Image  = $Image }
     if ($Letter)           { $Box.Tag.Letter = $Letter.Substring(0,1).ToUpper() }
+    $Box.Invalidate()
+}
+
+function Set-RamAvatarBorderColor {
+    <# Красит рамку аватарки в цвет статуса. Перерисовываем только при
+       смене цвета — этот вызов идёт из того же цикла таймера, что и
+       Set-RamStatusDot, по каждому аккаунту. #>
+    param($Box, $Color)
+    if ($null -eq $Box -or $null -eq $Color) { return }
+
+    $same = ($null -ne $Box.Tag.BorderColor -and $Box.Tag.BorderColor.ToArgb() -eq $Color.ToArgb())
+    if ($same) { return }
+
+    $Box.Tag.BorderColor = $Color
     $Box.Invalidate()
 }
 
@@ -1309,5 +1958,6 @@ function New-RamScrollPanel {
     $fp.AutoScroll    = $true
     $fp.Padding       = New-Object System.Windows.Forms.Padding(0, 0, 0, 4)
     Set-RamDoubleBuffered $fp
+    Set-RamScrollTheme -Control $fp
     return $fp
 }

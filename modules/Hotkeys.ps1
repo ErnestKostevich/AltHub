@@ -290,7 +290,7 @@ function Test-RamAlreadyRunning {
 function Show-RamRunningInstance {
     <# Поднимает окно уже запущенной копии: ищем его по заголовку и классу. #>
     $me = $PID
-    $found = $false
+    $script:RamFoundRunningWindow = $false
     $cb = [Ram.Native+EnumWindowsProc]{
         param($h, $l)
         $q = 0
@@ -302,14 +302,14 @@ function Show-RamRunningInstance {
                 [void][Ram.Native]::ShowWindow($h, 9)   # SW_RESTORE
                 [void][Ram.Native]::ShowWindow($h, 1)   # SW_SHOWNORMAL
                 [void][Ram.Native]::SetForegroundWindow($h)
-                $script:found = $true
+                $script:RamFoundRunningWindow = $true
                 return $false
             }
         }
         return $true
     }
     [void][Ram.Native]::EnumWindows($cb, [IntPtr]::Zero)
-    return $found
+    return [bool]$script:RamFoundRunningWindow
 }
 
 function Clear-RamSingleInstance {

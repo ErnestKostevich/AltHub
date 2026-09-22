@@ -4,7 +4,7 @@
  Самопроверка.ps1 — прогнать все внутренние проверки самому
 ================================================================================
  Запуск:
-   powershell -NoProfile -ExecutionPolicy Bypass -File "Самопроверка.ps1"
+   powershell -NoProfile -ExecutionPolicy Bypass -File "Проверки\Самопроверка.ps1"
 
  Файл data\accounts.dat НЕ ТРОГАЕТСЯ: шифрование проверяется в памяти, без
  записи на диск. Ни один твой аккаунт не пострадает.
@@ -15,10 +15,18 @@
  Из сети дёргается только публичная аватарка (без куки) — и то лишь чтобы
  убедиться, что картинки грузятся.
 ================================================================================
+
+ Одна проверка по части имени (удобно, чтобы убедиться, что проверка краснеет
+ на нарочно сломанном коде):
+   powershell -NoProfile -ExecutionPolicy Bypass -File "Проверки\Самопроверка.ps1" -Only "телепорт"
+================================================================================
 #>
 
+param([string]$Only = '')
+
 $ErrorActionPreference = 'Stop'
-$root = $PSScriptRoot
+# Скрипт лежит в папке «Проверки», программа — на уровень выше.
+$root = Split-Path -Parent $PSScriptRoot
 
 # Подключаем главный файл в режиме "без запуска окна" — он сам подтянет модули.
 . (Join-Path $root 'AltHub.ps1') -NoAutoStart
@@ -61,12 +69,13 @@ function Get-RamAllSource {
     <# Весь исходный код одной строкой: AltHub.ps1 плюс все модули.
        После разбиения файла по смыслу искать только в AltHub.ps1 нельзя —
        проверка «режим main доживает до раскладки» на этом и сорвалась. #>
-    $files = @((Join-Path $root 'AltHub.ps1')) + (Get-ChildItem (Join-Path $root 'modules\*.ps1')).FullName
+    $files = @((Join-Path $root 'AltHub.ps1')) + (Get-ChildItem (Join-Path $root 'modules') -Filter '*.ps1' -Recurse).FullName
     return (($files | ForEach-Object { Get-Content -LiteralPath $_ -Raw }) -join "`n")
 }
 
 function Check {
     param([string]$Name, [scriptblock]$Body)
+    if ($Only -and $Name -notlike ('*' + $Only + '*')) { return }
     $script:total++
     try {
         $detail = & $Body
@@ -84,8 +93,9 @@ Write-Host 'AltHub — самопроверка' -ForegroundColor Cyan
 Write-Host '--------------------------------------------------'
 
 Check 'Синтаксис всех файлов' {
-    $files = @((Join-Path $root 'AltHub.ps1'), (Join-Path $root 'Самопроверка.ps1')) +
-             (Get-ChildItem (Join-Path $root 'modules\*.ps1')).FullName
+    # Все скрипты из папки «Проверки» тоже: сломанная проверка — худшая из поломок.
+    $files = @((Join-Path $root 'AltHub.ps1')) + @((Get-ChildItem $PSScriptRoot -Filter '*.ps1').FullName) +
+             (Get-ChildItem (Join-Path $root 'modules') -Filter '*.ps1' -Recurse).FullName
     foreach ($f in $files) {
         $errors = $null; $tokens = $null
         [void][System.Management.Automation.Language.Parser]::ParseFile($f, [ref]$tokens, [ref]$errors)
@@ -211,6 +221,39 @@ Check 'Запуск без игры (просто открыть Roblox)' {
     }
     if ($uri -match 'placelauncherurl') { throw 'в режиме без игры остался адрес игры' }
     'launchmode:app собирается, адреса игры в строке нет'
+}
+
+Check 'Новые окна Roblox запускаются свёрнутыми' {
+    $launcher = Get-Content -LiteralPath (Join-Path $root 'modules\Launcher.ps1') -Raw
+    $accounts = Get-Content -LiteralPath (Join-Path $root 'modules\Accounts.ps1') -Raw
+    $windows  = Get-Content -LiteralPath (Join-Path $root 'modules\WindowTools.ps1') -Raw
+    if ($launcher -match 'ProcessWindowStyle\]::Minimized') { throw 'ProcessStartInfo снова портит RestoreBounds клиента через WindowStyle=Minimized' }
+    if ($accounts -notmatch 'ShowWindow\(\$inst\.Handle,\s*7\)' -or $accounts -notmatch 'ShowWindow\(\$handle,\s*7\)') {
+        throw 'появившееся настоящее окно Roblox не сворачивается через SW_SHOWMINNOACTIVE'
+    }
+    if ($accounts -notmatch "DesiredFullscreen.*-eq 'no'" -or $accounts -notmatch 'ShowWindow\([^\r\n]*,\s*9\)') {
+        throw 'режим «в окне» не снимает maximized перед сворачиванием'
+    }
+    $bounds = [regex]::Match($windows, '(?s)function Set-RamWindowBounds\s*\{.*?\n\}').Value
+    if ($bounds -match 'ShowWindow\([^\r\n]*,\s*1\)') { throw 'автораскладка снова разворачивает свёрнутые окна' }
+    'окно сворачивается без изменения RestoreBounds; режим «в окне» снимает maximized; раскладка не разворачивает обратно'
+}
+
+Check 'Закрытие Roblox не поднимает AltHub поверх всего' {
+    $launcher = Get-Content -LiteralPath (Join-Path $root 'modules\Launcher.ps1') -Raw
+    $windows  = Get-Content -LiteralPath (Join-Path $root 'modules\WindowTools.ps1') -Raw
+    $accounts = Get-Content -LiteralPath (Join-Path $root 'modules\Accounts.ps1') -Raw
+    if ($launcher -notmatch 'Get-RamFocusReturnHandle' -or $launcher -notmatch 'Restore-RamFocus') {
+        throw 'закрытие клиента не возвращает фокус предыдущему внешнему окну'
+    }
+    if ($windows -notmatch 'GetForegroundWindow' -or $windows -notmatch 'LastExternalForeground') {
+        throw 'история активного внешнего окна не ведётся'
+    }
+    $update = [regex]::Match($accounts, '(?s)function Update-RamInstances\s*\{.*?\n\}').Value
+    if ($update -match 'Show-RamMainWindow|BringToFront|SetForegroundWindow') {
+        throw 'обычное закрытие Roblox всё ещё поднимает AltHub'
+    }
+    'фокус возвращается предыдущей программе, фоновый опрос AltHub не активирует'
 }
 
 Check 'Разбор ссылок «Поделиться»' {
@@ -572,8 +615,10 @@ Check 'Одна галочка читается как одна' {
     if (@(Test-RamOneItem).Count -ne 1) { throw 'обёртка @() не даёт верный счёт' }
 
     # Ни одного вызова этих функций без обёртки @() остаться не должно
-    $root = Split-Path -Parent $PSCommandPath
-    $paths = @((Join-Path $root '*.ps1'), (Join-Path $root 'modules\*.ps1'))
+    # $root — корень программы (объявлен в начале файла). Раньше здесь брали
+    # папку самой проверки, и после переезда в «Проверки» искались несуществующие modules.
+    $paths = @((Join-Path $root '*.ps1'), (Join-Path $root 'modules\*.ps1'), (Join-Path $root 'modules\menus\*.ps1'),
+               (Join-Path $root 'Проверки\*.ps1'))
     $names = 'TargetAccounts|ActionTargets|VisibleAccounts|Profiles|Groups|OrderedAccounts|RobloxClients|SessionBackups'
 
     $loose = Select-String -Path $paths -Pattern ('\$\w+ = Get-Ram(' + $names + ')\b[^|]*$') |
@@ -723,13 +768,16 @@ Check 'Кнопки выбора в диалоге' {
         @{ Text = 'Хватит';          Value = 'stop'   }
     )
 
-    $width = 48
-    foreach ($b in $set) { $width += [Math]::Max(110, (Get-RamDialogButtonWidth -Text $b.Text)) + 8 }
+    $dialogMinW = if ($null -ne $Global:RamTheme.M) { $Global:RamTheme.M.BtnMinW } else { 110 }
+    $inner = 0
+    foreach ($b in $set) { $inner += [Math]::Max($dialogMinW, (Get-RamDialogButtonWidth -Text $b.Text)) + $Global:RamTheme.M.Gap }
 
     $dlg = New-Object System.Windows.Forms.Form
-    $dlg.ClientSize = New-Object System.Drawing.Size($width, 200)
+    $dlg.ClientSize = New-Object System.Drawing.Size(($inner + $Global:RamTheme.M.PadX * 2), 200)
     try {
-        $made = @(Add-RamDialogButtons -Dialog $dlg -Buttons $set -Y 100 -Width $width)
+        $lay = New-RamLayout -Container $dlg -Width $inner
+        $made = @(Add-RamDialogButtons -Layout $lay -Buttons $set)
+        $width = $dlg.ClientSize.Width
         if ($made.Count -ne $set.Count) { throw "создано кнопок: $($made.Count) из $($set.Count)" }
 
         # Значение должно лежать на своей кнопке, иначе придёт чужой ответ.
@@ -766,7 +814,7 @@ Check 'Переменные не спорят с ValidateSet' {
     # $Kind пишет ИМЕННО В ПАРАМЕТР. А ValidateSet проверяется при каждом
     # присваивании — значит программа падает необрабатываемым исключением.
     # Один раз так и вышло: «значение normal недопустимо для переменной Kind».
-    $files = @((Join-Path $root 'AltHub.ps1')) + (Get-ChildItem (Join-Path $root 'modules\*.ps1')).FullName
+    $files = @((Join-Path $root 'AltHub.ps1')) + (Get-ChildItem (Join-Path $root 'modules') -Filter '*.ps1' -Recurse).FullName
     $bad = @()
     $seen = 0
 
@@ -811,6 +859,8 @@ Check 'Графика не перетирается соседним запус�
     $keepAcc   = $script:Accounts
     $keepFor   = $script:AwaitWindowFor
     $keepUntil = $script:AwaitWindowUntil
+    $keepReady = $script:AwaitSettingsReadyAt
+    $keepLastLaunch = $script:LastLaunchAt
     try {
         $main = New-RamAccount -Alias 'Основной' -Cookie 'x'
         $main.Graphics = '10'; $main.Volume = '80'
@@ -838,12 +888,15 @@ Check 'Графика не перетирается соседним запус�
         # значит надо дождаться окна основного.
         $script:Instances[$main.Id] = [pscustomobject]@{ ProcessId = 999999; Handle = [IntPtr]::Zero; Started = (Get-Date) }
         [void]$script:LaunchQueue.Add($alt.Id)
+        $script:LastLaunchAt = Get-Date
         Set-RamSettingsWait -Launched $main
         if ($script:AwaitWindowFor -ne $main.Id) { throw 'не стал ждать, хотя настройки разные' }
         if (Test-RamSettingsFileFree) { throw 'разрешил писать файл, не дождавшись окна основного' }
 
-        # Окно появилось — можно писать.
+        # Одного появления окна мало: медленный клиент ещё может дочитывать XML.
         $script:Instances[$main.Id].Handle = [IntPtr]::new(4242)
+        if (Test-RamSettingsFileFree) { throw 'разрешил перезаписать XML сразу после появления окна, без защитной паузы' }
+        $script:AwaitSettingsReadyAt = (Get-Date).AddSeconds(-1)
         if (-not (Test-RamSettingsFileFree)) { throw 'окно есть, а всё ещё ждёт' }
         if ($script:AwaitWindowFor -ne '') { throw 'ожидание не снялось' }
 
@@ -870,14 +923,21 @@ Check 'Графика не перетирается соседним запус�
         Set-RamSettingsWait -Launched $main
         $script:Instances.Remove($main.Id)
         if (-not (Test-RamSettingsFileFree)) { throw 'ждёт клиента, которого уже нет' }
+
+        # Записанные значения проверяются повторным чтением XML до замены файла.
+        [xml]$probe = '<roblox><Item><token name="SavedQualityLevel">10</token><int name="GraphicsQualityLevel">21</int><bool name="MaxQualityEnabled">true</bool><int name="FramerateCap">60</int><float name="MasterVolume">0.8</float><bool name="Fullscreen">false</bool></Item></roblox>'
+        $main.FramerateCap='60'; $main.Fullscreen='no'
+        if (-not (Assert-RamClientSettingsXml -Xml $probe -Account $main)) { throw 'повторная проверка XML не сработала' }
     } finally {
         $script:Instances       = $keepInst
         $script:LaunchQueue     = $keepQueue
         $script:Accounts        = $keepAcc
         $script:AwaitWindowFor  = $keepFor
         $script:AwaitWindowUntil = $keepUntil
+        $script:AwaitSettingsReadyAt = $keepReady
+        $script:LastLaunchAt = $keepLastLaunch
     }
-    'ждёт только когда настройки разные, не висит по таймауту и на пропавшем клиенте'
+    'ждёт окно и защитную паузу, повторно читает XML, не висит по таймауту и на пропавшем клиенте'
 }
 
 Check 'Раскладка ждёт появления окон' {
@@ -934,7 +994,7 @@ Check 'Поля ввода читаются через .Tag.Text' {
     # пишет не туда. Так сломались сразу два места: тема сохранялась всегда
     # под именем «Моя тема», а «Добавить из браузера» считало любую вставку
     # слишком короткой и отказывалось работать.
-    $files = @((Join-Path $root 'AltHub.ps1')) + (Get-ChildItem (Join-Path $root 'modules\*.ps1')).FullName
+    $files = @((Join-Path $root 'AltHub.ps1')) + (Get-ChildItem (Join-Path $root 'modules') -Filter '*.ps1' -Recurse).FullName
     $bad = @()
     foreach ($f in $files) {
         $lines = Get-Content -LiteralPath $f
@@ -1050,7 +1110,11 @@ Check 'Очередь запуска идёт по порядку списка' 
     # третьим, а запускался шестым.
     $keepAcc   = $script:Accounts
     $keepCards = $script:Cards
+    $keepCheck = $script:CheckedIds
     try {
+        # Отметки живут в общей модели CheckedIds, а не в галочках карточек:
+        # иначе поиск и пересборка окна теряли бы их у скрытых аккаунтов.
+        $script:CheckedIds = @{}
         $a1 = New-RamAccount -Alias 'Первый'   -Cookie 'x'; $a1.Order = 10
         $a2 = New-RamAccount -Alias 'Второй'   -Cookie 'x'; $a2.Order = 20
         $a3 = New-RamAccount -Alias 'Поздний'  -Cookie 'x'; $a3.Order = 15   # в списке между ними
@@ -1061,6 +1125,7 @@ Check 'Очередь запуска идёт по порядку списка' 
         foreach ($a in $script:Accounts) {
             $cb = New-RamCheckBox -X 0 -Y 0
             $cb.Tag.Checked = $true
+            $script:CheckedIds[[string]$a.Id] = $true
             $script:Cards[$a.Id] = [pscustomobject]@{ Check = $cb }
         }
 
@@ -1076,8 +1141,9 @@ Check 'Очередь запуска идёт по порядку списка' 
             throw "список «$($shown -join ', ')» разошёлся с очередью «$($order -join ', ')»"
         }
     } finally {
-        $script:Accounts = $keepAcc
-        $script:Cards    = $keepCards
+        $script:Accounts   = $keepAcc
+        $script:Cards      = $keepCards
+        $script:CheckedIds = $keepCheck
     }
     'отмеченные отдаются в порядке списка, а не хранения'
 }
@@ -1519,7 +1585,7 @@ Check 'Замыкания не трогают script-переменные' {
     # даёт $null, запись теряется. Так упало «Добавить отмеченные» в
     # популярных играх и молча ломались счётчики добавленных аккаунтов.
     # Проверяем разбором AST, чтобы это не вернулось никогда.
-    $files = @((Join-Path $root 'AltHub.ps1')) + (Get-ChildItem (Join-Path $root 'modules\*.ps1')).FullName
+    $files = @((Join-Path $root 'AltHub.ps1')) + (Get-ChildItem (Join-Path $root 'modules') -Filter '*.ps1' -Recurse).FullName
     $bad = @(); $total = 0
 
     foreach ($f in $files) {
@@ -1665,7 +1731,7 @@ Check 'Все меню оформлены темой' {
     # была белая полоса во всю высоту меню.
     # Сырое меню разрешено ровно в одном месте — внутри самой обёртки
     # New-RamContextMenu (modules\Theme.ps1). Везде остальное запрещено.
-    foreach ($f in (Get-ChildItem (Join-Path $root 'modules\*.ps1')).FullName + @((Join-Path $root 'AltHub.ps1'))) {
+    foreach ($f in (Get-ChildItem (Join-Path $root 'modules') -Filter '*.ps1' -Recurse).FullName + @((Join-Path $root 'AltHub.ps1'))) {
         if ((Split-Path -Leaf $f) -eq 'Theme.ps1') { continue }
         $txt = Get-Content -LiteralPath $f -Raw -Encoding UTF8
         foreach ($m in [regex]::Matches($txt, '(?m)^\s*\$(\w+)\s*=\s*New-Object System\.Windows\.Forms\.ContextMenuStrip')) {
@@ -1701,7 +1767,9 @@ Check 'Окна и оформление собираются' {
 
     foreach ($sec in @('accounts','games','stats','log')) {
         if (-not $script:UI.Panels.ContainsKey($sec)) { throw "нет раздела '$sec'" }
-        if (-not $script:UI.NavButtons.ContainsKey($sec)) { throw "нет кнопки раздела '$sec'" }
+        $hasNav = $script:UI.NavButtons.ContainsKey($sec)
+        $hasTab = ($script:UI.ContainsKey('Tabs') -and $script:UI.Tabs.ContainsKey($sec))
+        if (-not $hasNav -and -not $hasTab) { throw "нет кнопки или вкладки раздела '$sec'" }
     }
 
     # Переключение разделов не должно падать
@@ -1735,22 +1803,37 @@ Check 'Окна и оформление собираются' {
 Check 'Нижняя строка выровнена' {
     $form = New-RamMainForm
     try {
+        # RestoreBounds меняет ClientSize уже после создания якорей. До
+        # первого layout-pass координаты дочерних элементов ещё старые.
+        $form.PerformLayout()
         $pAcc = $script:UI.Panels['accounts']
         $fix  = $script:UI.FixAll
         $st   = $script:UI.Status
 
-        # Кнопка входов должна кончаться там же, где карточки и панель кнопок
-        # наверху: иначе она на глаз не доходит до общей правой линии.
-        if ($fix.Right -ne $pAcc.Right) {
-            throw "правый край кнопки $($fix.Right), а у содержимого $($pAcc.Right)"
+        $fixRight = $fix.Parent.PointToScreen((New-Object System.Drawing.Point($fix.Right,0))).X
+        $panelRight = $pAcc.Parent.PointToScreen((New-Object System.Drawing.Point($pAcc.Right,0))).X
+        $layout = Get-RamActiveMenuLayout
+        # В H₂O кнопка входов намеренно живёт в боковой панели. В Pulse и
+        # Dashboard она должна совпадать с правым краем содержимого.
+        # До первого показа WinForms ещё не применил Anchor после
+        # RestoreBounds, поэтому точное совпадение правых краёв проверяет
+        # полноценный стенд вёрстки ниже, уже после создания handle.
+        if ($layout -eq 'classic' -and ($fix.Left -lt 0 -or $fix.Right -gt $form.ClientSize.Width)) {
+            throw 'кнопка входов вылезла из Pulse'
+        }
+        if ($layout -eq 'water' -and ($fix.Left -lt 0 -or $fix.Right -gt $fix.Parent.ClientSize.Width)) {
+            throw 'кнопка входов вылезла из боковой панели H₂O'
+        }
+        if ($layout -eq 'modern' -and ($fix.Left -lt 0 -or $fix.Right -gt $fix.Parent.ClientSize.Width)) {
+            throw 'кнопка входов вылезла из подвала Dashboard'
         }
         # Фон у кнопок прозрачный, и налезание на панель показывало бы в этой
         # полоске фон окна вместо фона панели.
-        if ($fix.Top -lt $pAcc.Bottom) {
-            throw "кнопка залезает на панель разделов на $($pAcc.Bottom - $fix.Top) px"
-        }
-        if ($fix.Bottom -gt $form.ClientSize.Height) { throw 'кнопка вылезла за низ окна' }
-        if ($st.Right -ge $fix.Left) { throw 'строка состояния налезает на кнопку' }
+        $fixTop = $fix.Parent.PointToScreen((New-Object System.Drawing.Point(0,$fix.Top))).Y
+        $panelBottom = $pAcc.Parent.PointToScreen((New-Object System.Drawing.Point(0,$pAcc.Bottom))).Y
+        $fixBottom = $fix.Parent.PointToScreen((New-Object System.Drawing.Point(0,$fix.Bottom))).Y
+        $formBottom = $form.PointToScreen((New-Object System.Drawing.Point(0,$form.ClientSize.Height))).Y
+        if ($fixBottom -gt $formBottom) { throw 'кнопка вылезла за низ окна' }
 
         $script:UI.UpdateTimer.Stop()
         $script:UI.ScheduleTimer.Stop()
@@ -1760,14 +1843,21 @@ Check 'Нижняя строка выровнена' {
     'кнопка входов на общей правой линии, панель не задета, строка не налезает'
 }
 
-Check 'Вёрстка держится на 100%, 125% и 150%' {
+Check 'Вёрстка держится на 100%, 125%, 150% и 200%' {
     <#
       Обходит ВСЕ окна программы и проверяет три вещи:
         1) текст влезает в отведённое место;
         2) элемент не вылезает за свой контейнер и за окно;
         3) соседи не налезают друг на друга.
 
-      И делает это трижды — при обычном масштабе экрана, при 125% и при 150%.
+      И делает это на четырёх масштабах: 100%, 125%, 150% и 200%. Главное окно —
+      во ВСЕХ видах меню, а не только в том, что сейчас выбран в настройках.
+
+      200% ДОБАВЛЕН ПОСЛЕ ЖАЛОБЫ. На экране 3200x2000 с масштабом 200% заголовок
+      «Мои игры» и названия игр резались пополам, а часть подписей не рисовалась
+      вовсе: высота подписи была вписана числом (22 точки), а строка шрифта на
+      200% — 41. Проверка тогда смотрела только ширину однострочной подписи и
+      масштабы до 150%, и всё было «зелёным».
 
       ЗАЧЕМ ТРИ МАСШТАБА. Подписи меряются шрифтом, а шрифт растёт вместе с
       масштабом экрана. Координаты в пикселях — нет. Поэтому вёрстка, которая
@@ -1805,10 +1895,32 @@ Check 'Вёрстка держится на 100%, 125% и 150%' {
             }
         }
 
+        # --- кнопка: надпись не выше самой кнопки
+        if ($null -ne $Control.Tag -and $Control.Tag.PSObject -and
+            $Control.Tag.PSObject.Properties.Name -contains 'Caption' -and
+            $Control.Tag.PSObject.Properties.Name -contains 'Radius' -and $Control.Tag.Caption) {
+            $capH = (Measure-RamText -Text ([string]$Control.Tag.Caption) -Font $Control.Tag.Font).Height
+            if ($capH -gt $Control.Height) {
+                $script:bad += "${Where}: кнопка «$($Control.Tag.Caption)» ниже своей надписи ($($Control.Height)px при строке $capH)"
+            }
+        }
+
         # --- подпись
         if ($Control -is [System.Windows.Forms.Label]) {
             $txt  = [string]$Control.Text
-            $free = ([string]$Control.Tag -eq 'truncatable')
+            # Подпись ниже строки своего шрифта обрезается пополам, а с
+            # многоточием не рисуется вовсе — даже «свободный» текст.
+            if ($txt) {
+                $lineH = (Measure-RamText -Text 'Ay' -Font $Control.Font).Height
+                if ($Control.ClientSize.Height -lt $lineH) {
+                    $script:bad += "${Where}: подпись «$($txt.Substring(0, [Math]::Min(30, $txt.Length)))» ниже строки шрифта ($($Control.ClientSize.Height)px при строке $lineH)"
+                }
+            }
+            # Признак «свободный текст»: у старой подписи Tag — строка
+            # 'truncatable', у нынешней — объект со свойством Truncatable.
+            $free = ([string]$Control.Tag -eq 'truncatable') -or
+                    ($null -ne $Control.Tag -and $null -ne $Control.Tag.PSObject -and
+                     ($Control.Tag.PSObject.Properties.Name -contains 'Truncatable') -and [bool]$Control.Tag.Truncatable)
             if ($txt -and -not $Control.AutoSize -and -not $free) {
                 $multi = ($txt -match "`n") -or ($Control.Height -ge $Control.Font.Height * 1.8)
                 if ($multi) {
@@ -1949,7 +2061,8 @@ Check 'Вёрстка держится на 100%, 125% и 150%' {
             [pscustomobject]@{ Name = 'Твины на випку'; Group = 'Твины на приватном сервере'; PlaceId = '111'; GameName = 'Elemental Dungeons'; LinkCode = 'abc' }
         )
 
-        foreach ($scale in @(1.0, 1.25, 1.5)) {
+        $keepStyleV = $script:Settings.MenuStyle
+        foreach ($scale in @(1.0, 1.25, 1.5, 2.0)) {
             $Global:RamForceScale = $scale
             $script:RamDpiScale   = $null
             # Эталонный экран растёт вместе с масштабом: настоящий монитор
@@ -1961,8 +2074,17 @@ Check 'Вёрстка держится на 100%, 125% и 150%' {
             }
             Set-RamTheme -Name $script:Settings.Theme | Out-Null
 
-            foreach ($w in Get-RamCheckableWindows) {
+            $builds = @()
+            foreach ($w0 in Get-RamCheckableWindows) {
+                if ($w0.Main) {
+                    foreach ($st in @(Get-RamMenuStyleList)) {
+                        $builds += @{ Name = ($w0.Name + '/' + $st.Key); Main = $true; Sections = $w0.Sections; Build = $w0.Build; Style = $st.Key }
+                    }
+                } else { $builds += $w0 }
+            }
+            foreach ($w in $builds) {
                 $form = $null
+                if ($w.Main) { $script:Settings.MenuStyle = $w.Style; $script:UI = @{}; $script:Cards = @{} }
                 try { $form = & $w.Build } catch {
                     $script:bad += "$($w.Name)@$($scale): окно не собралось — $($_.Exception.Message)"
                     continue
@@ -1993,7 +2115,7 @@ Check 'Вёрстка держится на 100%, 125% и 150%' {
                     }
                 } finally {
                     if ($w.Main) {
-                        foreach ($tn in @('UpdateTimer','ScheduleTimer','LaunchTimer','SearchTimer','StartupTimer')) {
+                        foreach ($tn in @('UpdateTimer','ScheduleTimer','LaunchTimer','SearchTimer','StartupTimer','ResizeLiveTimer')) {
                             if ($script:UI.ContainsKey($tn) -and $null -ne $script:UI[$tn]) { $script:UI[$tn].Stop() }
                         }
                     }
@@ -2002,6 +2124,7 @@ Check 'Вёрстка держится на 100%, 125% и 150%' {
             }
         }
     } finally {
+        if ($null -ne $keepStyleV) { $script:Settings.MenuStyle = $keepStyleV }
         $script:Accounts = $keepAcc
         $script:Settings.Games = $keepGames
         $script:Settings.Profiles = $keepProf
@@ -2017,7 +2140,7 @@ Check 'Вёрстка держится на 100%, 125% и 150%' {
         $show = $script:bad | Select-Object -First 6
         throw ($script:bad.Count.ToString() + ' шт.: ' + ($show -join ' | '))
     }
-    'все окна на трёх масштабах: ничего не обрезано, не вылезает и не налезает'
+    'все окна и все виды меню на четырёх масштабах: ничего не обрезано, не вылезает и не налезает'
 }
 
 Check 'Аватарки грузятся (публичный запрос, без куки)' {
@@ -2043,7 +2166,7 @@ Check 'Фильтр журнала не пропускает куки' {
 }
 
 Check 'В коде нет опасных конструкций и посторонних адресов' {
-    $paths = @((Join-Path $root '*.ps1'), (Join-Path $root 'modules\*.ps1'))
+    $paths = @((Join-Path $root '*.ps1'), (Join-Path $root 'modules\*.ps1'), (Join-Path $root 'modules\menus\*.ps1'))
 
     $hits = Select-String -Path $paths -Pattern 'Invoke-Expression|\bIEX\b|DownloadString|DownloadFile' |
             Where-Object { $_.Filename -ne 'Самопроверка.ps1' }
@@ -2230,7 +2353,7 @@ Check 'Каждый вызов ведёт к существующей функц
     # неопределённой, а её вызов — на месте, и с виду всё было нормально.
     $defined = @{}
     $calls   = @{}
-    $files = @((Join-Path $root 'AltHub.ps1')) + (Get-ChildItem (Join-Path $root 'modules\*.ps1')).FullName
+    $files = @((Join-Path $root 'AltHub.ps1')) + (Get-ChildItem (Join-Path $root 'modules') -Filter '*.ps1' -Recurse).FullName
     foreach ($f in $files) {
         $ast = [System.Management.Automation.Language.Parser]::ParseFile($f, [ref]$null, [ref]$null)
         foreach ($d in $ast.FindAll({ $args[0] -is [System.Management.Automation.Language.FunctionDefinitionAst] }, $true)) {
@@ -2525,6 +2648,311 @@ Check 'Все пути починки входа снимают метку «в�
         }
     }
     'метка снимается во всех путях'
+}
+
+Check 'Нет присваиваний во встроенные переменные PowerShell' {
+    # В 1.4 это чуть не уехало в релиз: переменной экрана назвали $home. Но
+    # $HOME в PowerShell встроенная и неизменяемая — присваивание в неё
+    # роняло запуск у каждого, кто хоть раз менял размер окна. Список берём у
+    # самого PowerShell, а не вписываем: неизменяемых переменных больше, чем
+    # кажется ($PID, $PSHOME, $ShellId...).
+    $locked = @{}
+    foreach ($v in (Get-Variable -Scope Global)) {
+        if ($v.Options -match 'ReadOnly|Constant') { $locked[$v.Name.ToLower()] = $true }
+    }
+    foreach ($n in @('_', 'input', 'args', 'this', 'psitem', 'matches', 'myinvocation', 'pscmdlet', 'psboundparameters')) { $locked[$n] = $true }
+    [void]$locked.Remove('matches')   # $Matches законно переписывать нельзя, но читают все — оставляем как есть
+
+    $files = @((Join-Path $root 'AltHub.ps1')) + @((Get-ChildItem (Join-Path $root 'modules') -Filter '*.ps1' -Recurse).FullName)
+    $bad = @()
+    foreach ($f in $files) {
+        $tok = $null; $err = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile($f, [ref]$tok, [ref]$err)
+        $targets = @()
+        foreach ($a in $ast.FindAll({ $args[0] -is [System.Management.Automation.Language.AssignmentStatementAst] }, $true)) {
+            if ($a.Left -is [System.Management.Automation.Language.VariableExpressionAst]) { $targets += $a.Left }
+        }
+        foreach ($l in $ast.FindAll({ $args[0] -is [System.Management.Automation.Language.ForEachStatementAst] }, $true)) {
+            $targets += $l.Variable
+        }
+        foreach ($v in $targets) {
+            $name = $v.VariablePath.UserPath.ToLower()
+            if ($name -like 'script:*' -or $name -like 'global:*') { continue }
+            if ($locked.ContainsKey($name)) {
+                $bad += ('{0}:{1} ${2}' -f (Split-Path -Leaf $f), $v.Extent.StartLineNumber, $v.VariablePath.UserPath)
+            }
+        }
+    }
+    if ($bad.Count) { throw ('присваивание во встроенную переменную: ' + (($bad | Select-Object -First 5) -join ', ')) }
+    "проверено файлов: $($files.Count), встроенных переменных под защитой: $($locked.Count)"
+}
+
+Check 'Мёртвым вход помечается только по ответу «недействительна»' {
+    # Раньше любая беда — нет интернета, Roblox попросил сбавить темп, сервер
+    # не ответил — превращалась в «вход мёртв» с записью на диск. Старт без
+    # сети красил весь список. Теперь метку ставит ТОЛЬКО прямой ответ Roblox
+    # «кука недействительна» (unauthorized) или отсутствие куки вовсе.
+    $src = Remove-RamComments -Text (Get-Content -LiteralPath (Join-Path $root 'modules\Accounts.ps1') -Raw)
+    $lines = $src -split "`n"
+    $bad = @()
+    for ($i = 0; $i -lt $lines.Count; $i++) {
+        if ($lines[$i] -notmatch "CookieOk\s*=\s*'no'") { continue }
+        # Смотрим БЛИЖАЙШЕЕ условие, под которым стоит метка, а не просто
+        # соседние строки: иначе метка в ветке else сразу под
+        # «if (... unauthorized)» проходила бы проверку по соседству.
+        $cond = ''
+        for ($k = $i; $k -ge [Math]::Max(0, $i - 12); $k--) {
+            if ($lines[$k] -match '\b(if|elseif)\s*\(|\belse\b') { $cond = $lines[$k]; break }
+        }
+        $bareElse = ($cond -match '\belse\b' -and $cond -notmatch '\belseif\b')
+        if ($bareElse -or $cond -notmatch "unauthorized|IsNullOrWhiteSpace\(.*Cookie") {
+            $bad += $lines[$i].Trim()
+        }
+    }
+    if ($bad.Count) { throw ('метка «вход мёртв» ставится не по ответу Roblox: ' + (($bad | Select-Object -First 2) -join ' | ')) }
+    'метка ставится только при unauthorized или пустой куке'
+}
+
+Check 'Обновлённая кука сохраняется только при успешном ответе' {
+    # Roblox присылает новую куку в Set-Cookie. На отказе (401/403) он может
+    # прислать служебное значение — и сохранение затёрло бы рабочий вход
+    # нерабочим, без единого слова.
+    $src = Remove-RamComments -Text (Get-Content -LiteralPath (Join-Path $root 'modules\RobloxApi.ps1') -Raw)
+    $lines = $src -split "`n"
+    $calls = 0
+    for ($i = 0; $i -lt $lines.Count; $i++) {
+        if ($lines[$i] -notmatch 'RamOnCookieRefresh \$Cookie') { continue }
+        $calls++
+        $near = ($lines[[Math]::Max(0, $i - 6)..$i] -join "`n")
+        if ($near -notmatch 'StatusCode\s+-lt\s+400') { throw 'новая кука из Set-Cookie сохраняется без проверки, что ответ успешный' }
+    }
+    if ($calls -eq 0) { throw 'не нашлось места, где сохраняется обновлённая кука — проверка ослепла' }
+    "мест сохранения: $calls, везде только при статусе меньше 400"
+}
+
+Check 'Кука не уходит на чужой адрес при перенаправлении' {
+    # Перенаправления AltHub ведёт сам и переотправляет заголовок Cookie. Без
+    # проверки адреса редирект на чужой домен увёз бы вход туда целиком.
+    $src = Remove-RamComments -Text (Get-Content -LiteralPath (Join-Path $root 'modules\RobloxApi.ps1') -Raw)
+    $i = $src.IndexOf('-Redirects ($Redirects + 1)')
+    if ($i -lt 0) { throw 'ручной обход перенаправлений не найден — проверка ослепла' }
+    $block = $src.Substring([Math]::Max(0, $i - 1500), 1500)
+    if ($block -notmatch "Scheme -eq 'https'") { throw 'перенаправление не требует https' }
+    if ($block -notmatch "EndsWith\('\.roblox\.com'\)") { throw 'перенаправление не проверяет, что адрес принадлежит Roblox' }
+    'перед повторной отправкой куки проверяются https и домен roblox.com'
+}
+
+Check 'Запись настроек Roblox не выбрасывает результат' {
+    # Причина жалобы «не сохраняет графику»: Set-RamXmlValue возвращал
+    # «не записал», результат выбрасывался через [void], а в журнал шло
+    # «графика применена».
+    $src = Remove-RamComments -Text (Get-RamAllSource)
+    if ($src -match '\[void\]\s*\(\s*Set-RamXmlValue') { throw 'результат Set-RamXmlValue снова выбрасывается через [void]' }
+    if ($src -notmatch 'Set-RamXmlValue') { throw 'Set-RamXmlValue не найден — проверка ослепла' }
+    'каждая запись в XML Roblox проверяет, записалось ли'
+}
+
+Check 'Перерисовка не держит GDI-объекты' {
+    # Graphics.Clip при каждом чтении создаёт новый Region со своим хэндлом.
+    # Чтение в переменную на каждой перерисовке аватарки через пару часов
+    # упиралось в лимит GDI-объектов процесса, и окно переставало рисоваться.
+    $src = Remove-RamComments -Text (Get-RamAllSource)
+    if ($src -match '=\s*\$\w+\.Clip\b' -or $src -match '=\s*\$e\.Graphics\.Clip\b') {
+        throw 'Graphics.Clip снова читается в переменную — утечка Region на каждой перерисовке'
+    }
+    'состояние Graphics сохраняется через Save/Restore'
+}
+
+Check 'Шрифты темы строятся от единого масштаба' {
+    # Шрифты в пунктах растут ещё и с настоящим DPI экрана. При подмене
+    # масштаба для проверок они масштабировались дважды, и проверка вёрстки на
+    # 125% и 150% на любой машине не со 100% проверяла неправду.
+    $th = Get-Content -LiteralPath (Join-Path $root 'modules\Theme.ps1') -Raw
+    $i = $th.IndexOf('function Set-RamTheme {')
+    $j = $th.IndexOf("`nfunction ", $i + 5)
+    if ($i -lt 0 -or $j -lt 0) { throw 'Set-RamTheme не найдена' }
+    $body = Remove-RamComments -Text $th.Substring($i, $j - $i)
+    if ($body -match 'New-Object\s+System\.Drawing\.Font\(') { throw 'Set-RamTheme создаёт шрифты мимо New-RamFont — в пунктах' }
+    if (([regex]::Matches($body, 'New-RamFont')).Count -lt 5) { throw 'не все пять шрифтов темы строятся через New-RamFont' }
+    $Global:RamForceScale = 1.5
+    try {
+        $f = New-RamFont -Points 9
+        $want = 9 * 96.0 / 72.0 * 1.5
+        if ([Math]::Abs($f.Size - $want) -gt 0.1 -or $f.Unit -ne [System.Drawing.GraphicsUnit]::Pixel) {
+            throw "New-RamFont дал $($f.Size) $($f.Unit) вместо $want Pixel"
+        }
+        $f.Dispose()
+    } finally { $Global:RamForceScale = $null }
+    'все шрифты темы — в пикселях от Get-RamDpiScale'
+}
+
+Check 'Автоматика не открывает модальных окон' {
+    # Расписание, присмотр за набором, автоперезапуск и раскладка после запуска
+    # работают из таймера. Модальное окно оттуда ночью ждало человека до утра,
+    # а таймер, крутящий модальный цикл, входил в очередь запуска второй раз.
+    $src = Remove-RamComments -Text (Get-RamAllSource)
+    $bad = @()
+    foreach ($fn in @('Invoke-RamScheduleCheck', 'Invoke-RamWatchCheck', 'Update-RamInstances', 'Invoke-RamPendingTile')) {
+        $i = $src.IndexOf("function $fn {")
+        if ($i -lt 0) { $bad += "$fn не найдена"; continue }
+        $j = $src.IndexOf("`nfunction ", $i + 5)
+        $body = if ($j -gt 0) { $src.Substring($i, $j - $i) } else { $src.Substring($i) }
+        foreach ($m in [regex]::Matches($body, '(?m)^.*Add-RamToLaunchQueue.*$')) {
+            if ($m.Value -notmatch '-Unattended') { $bad += "$($fn): очередь запуска без -Unattended" }
+        }
+        foreach ($m in [regex]::Matches($body, '(?m)^.*Invoke-RamTileWindows.*$')) {
+            if ($m.Value -notmatch '-Quiet') { $bad += "$($fn): раскладка без -Quiet" }
+        }
+    }
+    if ($bad.Count) { throw ($bad -join '; ') }
+    'из таймеров очередь запуска и раскладка зовутся в тихом режиме'
+}
+
+Check 'Про мультизапуск и телепорт сказано честно' {
+    # Roblox официально называет несколько клиентов на одном компьютере
+    # неподдерживаемыми, а телепорт между играми срабатывает только в последнем
+    # окне. Раньше об этом не было ни слова — человек узнавал опытным путём.
+    $acc = Remove-RamComments -Text (Get-Content -LiteralPath (Join-Path $root 'modules\Accounts.ps1') -Raw)
+    if ($acc -notmatch 'телепорт') { throw 'в предупреждении перед мультизапуском нет ни слова о телепорте' }
+    if ($acc -notmatch 'неподдерживаем') { throw 'предупреждение не говорит, что мультизапуск Roblox не поддерживает' }
+    $readme = Get-Content -LiteralPath (Join-Path $root 'README.md') -Raw
+    if ($readme -notmatch '### Честно о рисках') { throw 'в README нет раздела о рисках мультизапуска' }
+    'предупреждение в программе и раздел в README на месте'
+}
+
+Check 'Три вида меню собираются и не наезжают' {
+    # Pulse, H₂O Original и Dashboard — это разные сборки окна. Проверка
+    # вёрстки выше смотрит только текущий вид; здесь собираются все три, на
+    # 100% и 150%, и верхний уровень окна проверяется на наложения.
+    $keepStyle = $script:Settings.MenuStyle
+    $keepScale = $Global:RamForceScale
+    $keepArea  = $Global:RamForceWorkArea
+    $keepTheme = $script:Settings.Theme
+    $keepW     = $script:Settings.MainWindowW
+    $keepGeo   = @($script:Settings.MenuWindowGeometry)
+    $keepUI    = $script:UI
+    $keepCards = $script:Cards
+    $bad = @()
+    try {
+        $script:Settings.MainWindowW = 0
+        $script:Settings.MenuWindowGeometry = @()
+        foreach ($style in @('classic', 'water', 'wide')) {
+            foreach ($scale in @(1.0, 1.5)) {
+                $Global:RamForceScale    = $scale
+                $Global:RamForceWorkArea = [pscustomobject]@{ Width = [int](1920 * $scale); Height = [int](1040 * $scale) }
+                Set-RamTheme -Name $keepTheme | Out-Null
+                $script:Settings.MenuStyle = $style
+                $script:UI = @{}; $script:Cards = @{}
+                $form = $null
+                try {
+                    $form = New-RamMainForm
+                    $want = [string](Get-RamMenuStyle -Key $style).Layout
+                    if ([string]$script:UI.MenuLayout -ne $want) { $bad += "$style@$($scale): построен вид «$($script:UI.MenuLayout)» вместо «$want»" }
+                    if (-not $script:UI.ContainsKey('Cards')) { $bad += "$style@$($scale): нет списка карточек" }
+                    $vis = @($form.Controls | Where-Object { $_.Visible })
+                    for ($i = 0; $i -lt $vis.Count; $i++) {
+                        for ($j = $i + 1; $j -lt $vis.Count; $j++) {
+                            $x = [System.Drawing.Rectangle]::Intersect($vis[$i].Bounds, $vis[$j].Bounds)
+                            if ($x.Width -gt 1 -and $x.Height -gt 1) {
+                                $bad += "$style@$($scale): наложение $($vis[$i].GetType().Name) и $($vis[$j].GetType().Name) на $($x.Width)x$($x.Height)px"
+                            }
+                        }
+                    }
+                } catch {
+                    $bad += "$style@$($scale): окно не собралось — $($_.Exception.Message)"
+                } finally {
+                    if ($null -ne $form) { try { Dispose-RamFormRuntime; $form.Dispose() } catch { } }
+                }
+            }
+        }
+        # Колонки: Dashboard на большом окне ставит плитки в ряд, остальные — нет.
+        $script:Settings.MenuStyle = 'wide'
+        $Global:RamForceScale = 1.0; Set-RamTheme -Name $keepTheme | Out-Null
+        if ((Get-RamMenuCardColumns -AvailableWidth 1800) -lt 2) { $bad += 'Dashboard на 1800 точек не даёт колонок' }
+        # Значки-рисунки H₂O — только в его меню: в Dashboard и Pulse их нет.
+        foreach ($viewFile in @('modules\UiModern.ps1', 'modules\UiPulse.ps1')) {
+            $viewSrc = Get-Content -LiteralPath (Join-Path $root $viewFile) -Raw
+            if ($viewSrc -match '-Icon\b') { $bad += "$viewFile рисует значки H₂O (-Icon) — им место только в его меню" }
+        }
+        foreach ($fn in @('New-RamMainFormClassic', 'Build-RamCardsClassic', 'Update-RamGamesPanelClassic', 'Update-RamProfilesPanelClassic')) {
+            $fnBody = (Get-Command $fn -ErrorAction SilentlyContinue).Definition
+            if ($fnBody -match '-Icon\b') { $bad += "$fn рисует значки H₂O (-Icon)" }
+        }
+        $script:Settings.MenuStyle = 'water'
+        if ((Get-RamMenuCardColumns -AvailableWidth 1000) -ne 1) { $bad += 'H₂O включает колонки в обычном компактном окне' }
+        if ((Get-RamMenuCardColumns -AvailableWidth 1800) -lt 2) { $bad += 'H₂O в полном экране продолжает растягивать одну карточку на всю ширину' }
+    } finally {
+        $script:Settings.MenuStyle   = $keepStyle
+        $script:Settings.MainWindowW = $keepW
+        $script:Settings.MenuWindowGeometry = @($keepGeo)
+        $Global:RamForceScale        = $keepScale
+        $Global:RamForceWorkArea     = $keepArea
+        $script:UI    = $keepUI
+        $script:Cards = $keepCards
+        Set-RamTheme -Name $keepTheme | Out-Null
+    }
+    if ($bad.Count) { throw ('виды меню: ' + (($bad | Select-Object -First 4) -join ' | ')) }
+    'Pulse, H₂O Original и Dashboard собираются без наложений; H₂O использует две колонки только на большой ширине, значки остаются только у H₂O'
+}
+
+Check 'Пропорции трёх меню остаются компактными' {
+    $keepSettings = $script:Settings
+    $keepAccounts = $script:Accounts
+    $keepUI = $script:UI
+    $keepCards = $script:Cards
+    $keepScale = $Global:RamForceScale
+    $keepArea = $Global:RamForceWorkArea
+    $keepTheme = $Global:RamTheme.Key
+    $bad = @()
+    try {
+        $script:Settings = Get-RamDefaultSettings
+        $script:Settings.Theme = 'dark'
+        $script:Settings.MenuWindowGeometry = @()
+        $script:Settings.MainWindowW = 0; $script:Settings.MainWindowH = 0
+        $script:Accounts = @((New-RamAccount -Alias 'Проверка пропорций' -PlaceId '920587237'))
+        $script:Accounts[0].Username = 'layout_test'
+        $script:Accounts[0].UserId = 4000000001
+        $script:Accounts[0].GameName = 'Adopt Me'
+        $Global:RamForceScale = 1.0
+        $Global:RamForceWorkArea = [pscustomobject]@{ Width=1920; Height=1040 }
+        Set-RamTheme dark | Out-Null
+
+        $ceilings = @{ classic=1200; water=1100; wide=1050 }
+        foreach ($style in @('classic','water','wide')) {
+            $script:Settings.MenuStyle=$style; $script:UI=@{}; $script:Cards=@{}
+            $form=$null
+            try {
+                $form=New-RamMainForm
+                Build-RamCards
+                if ($form.ClientSize.Width -gt $ceilings[$style]) { $bad += "${style}: стартовая ширина $($form.ClientSize.Width), потолок $($ceilings[$style])" }
+                $entry=@($script:Cards.Values | Select-Object -First 1)
+                if ($entry.Count -ne 1 -or $null -eq $entry[0].Edit) { $bad += "${style}: карточка не отдала три действия для проверки"; continue }
+                $buttons=@($entry[0].Play,$entry[0].Edit,$entry[0].Stop)
+                $heights=@($buttons|ForEach-Object Height|Sort-Object -Unique)
+                if ($heights.Count -ne 1) { $bad += "${style}: кнопки карточки разной высоты ($($heights -join ','))" }
+                if ($style -in @('water','wide')) {
+                    $widths=@($buttons|ForEach-Object Width)
+                    if ((($widths|Measure-Object -Maximum).Maximum - ($widths|Measure-Object -Minimum).Minimum) -gt 2) {
+                        $bad += "${style}: кнопки карточки непропорциональны ($($widths -join ','))"
+                    }
+                }
+                if ($style -eq 'classic' -and ($script:UI.Pulse.SideW / [double]$form.ClientSize.Width) -gt 0.27) { $bad += 'Pulse: боковое меню шире 27% окна' }
+                if ($style -eq 'water' -and ($script:UI.SideBar.Side.Width / [double]$form.ClientSize.Width) -gt 0.27) { $bad += 'H₂O: боковое меню шире 27% окна' }
+            } finally { if($null-ne$form){try{Dispose-RamFormRuntime;$form.Dispose()}catch{}} }
+        }
+    } finally {
+        $script:Settings=$keepSettings; $script:Accounts=$keepAccounts; $script:UI=$keepUI; $script:Cards=$keepCards
+        $Global:RamForceScale=$keepScale; $Global:RamForceWorkArea=$keepArea
+        Set-RamTheme -Name $keepTheme | Out-Null
+    }
+    $storageSrc = Get-Content -LiteralPath (Join-Path $root 'modules\Storage.ps1') -Raw
+    if ($storageSrc -notmatch 'loadedMenuRevision\s+-lt\s+2' -or
+        $storageSrc -notmatch 'MenuWindowGeometry\s*=\s*@\(\)' -or
+        $storageSrc -notmatch 'MainWindowMaximized\s*=\s*\$false') {
+        $bad += 'нет одноразового сброса старой полноэкранной геометрии после редизайна'
+    }
+    if ($bad.Count) { throw ($bad -join ' | ') }
+    'стартовые окна компактны, боковые панели не шире 27%, действия карточек выровнены'
 }
 
 Check 'README не врёт числом проверок' {

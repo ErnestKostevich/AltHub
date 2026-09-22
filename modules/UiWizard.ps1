@@ -95,7 +95,7 @@ function Show-RamFirstRun {
     $pageW = [Math]::Max($widest + $m.GapLg * 2, [int][Math]::Round(560 * $m.Scale))
 
     # ------------------------------------------------------------------ форма
-    $dlg = New-Object System.Windows.Forms.Form
+    $dlg = New-RamForm
     $dlg.Text            = 'Настройка AltHub'
     $dlg.FormBorderStyle = 'FixedDialog'
     $dlg.StartPosition   = 'CenterScreen'

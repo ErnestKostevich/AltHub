@@ -22,53 +22,119 @@ function Get-RamDialogButtonWidth {
     return (Measure-RamText -Text $Text -Font $Global:RamTheme.FontBody).Width + $pad
 }
 
-function Add-RamDialogButtons {
+function New-RamDialogShell {
     <#
-      Ряд кнопок внизу диалога. Выкладываем справа налево, поэтому идём по
-      списку с конца: первая кнопка в списке оказывается самой левой, как её
-      и описали.
-
-      Вынесено из Show-RamMessage отдельной функцией по двум причинам.
-      Во-первых, так ряд можно проверить, не показывая окно. Во-вторых — и это
-      важнее — здесь НЕТ параметра $Kind.
-
-      ГРАБЛИ POWERSHELL. Имена переменных регистронезависимы. Внутри
-      Show-RamMessage есть параметр $Kind с ValidateSet('info','ok','warn',
-      'error'), и локальная строчка «$kind = 'normal'» писала именно в него.
-      ValidateSet проверяется при КАЖДОМ присваивании, а не только при
-      разборе аргументов, — поэтому окно падало с необрабатываемым
-      исключением, а не просто вело себя странно.
+      Заготовка тёмного диалога: окно, цветная полоса сверху, курсор раскладки
+      и заголовок. Ширина страницы — в настоящих пикселях (уже с масштабом).
+      Всё остальное кладётся раскладчиком, размер окна считает Complete-RamDialogShell.
     #>
     param(
-        [Parameter(Mandatory)]$Dialog,
-        [Parameter(Mandatory)][object[]]$Buttons,
-        [Parameter(Mandatory)][int]$Y,
-        [Parameter(Mandatory)][int]$Width
+        [string]$WindowText,
+        [string]$Caption = '',
+        [int]$Width,
+        $Accent,
+        $CaptionFont
     )
+    $t = $Global:RamTheme; $m = $t.M
+    if ($null -eq $Accent)      { $Accent = $t.Accent }
+    if ($null -eq $CaptionFont) { $CaptionFont = $t.FontBig }
 
+    $dlg = New-RamForm
+    $dlg.Text            = $WindowText
+    $dlg.FormBorderStyle = 'FixedDialog'
+    $dlg.StartPosition   = 'CenterParent'
+    $dlg.MaximizeBox     = $false; $dlg.MinimizeBox = $false
+    $dlg.AutoScaleMode   = [System.Windows.Forms.AutoScaleMode]::None
+    $dlg.BackColor       = $t.Bg
+    $dlg.ForeColor       = $t.Text
+    $dlg.Font            = $t.FontBody
+    $dlg.ClientSize      = New-Object System.Drawing.Size(($Width + $m.PadX * 2), 200)
+    $dlg.Add_HandleCreated({ Set-RamDarkTitleBar $this })
+    Set-RamWindowIcon $dlg
+
+    $stripe = New-Object System.Windows.Forms.Panel
+    $stripe.Location  = New-Object System.Drawing.Point(0, 0)
+    $stripe.Size      = New-Object System.Drawing.Size($dlg.ClientSize.Width, $m.StripeH)
+    $stripe.BackColor = $Accent
+    $dlg.Controls.Add($stripe)
+
+    $lay = New-RamLayout -Container $dlg -Width $Width
+    [void](Add-RamGap -Layout $lay -Height $m.StripeH)
+    if ($Caption) {
+        [void](Add-RamTextBlock -Layout $lay -Text $Caption -Font $CaptionFont -Color $t.Text -SingleLine)
+    }
+    return [pscustomobject]@{ Form = $dlg; Stripe = $stripe; Layout = $lay }
+}
+
+function Add-RamTextBlock {
+    <#
+      Подпись во всю ширину раскладки. Высота — по переносу текста этим
+      шрифтом, поэтому она не может обрезаться ни на каком масштабе.
+      -SingleLine: одна строка с многоточием (заголовки, имена).
+    #>
+    param(
+        [Parameter(Mandatory)]$Layout,
+        [AllowEmptyString()][string]$Text,
+        $Font, $Color,
+        [switch]$SingleLine,
+        [int]$Lines = 0
+    )
+    $t = $Global:RamTheme; $m = $t.M
+    if ($null -eq $Font)  { $Font  = $t.FontBody }
+    if ($null -eq $Color) { $Color = $t.Text }
+    $lineH = (Measure-RamText -Text 'Ау' -Font $Font).Height
+    if ($SingleLine) {
+        $h = $lineH + [int][Math]::Round(2 * $m.Scale)
+    } else {
+        # Мерим чуть уже самой подписи: Label рисует текст с внутренними полями,
+        # и по полной ширине последняя строка обрезалась многоточием.
+        $h = (Measure-RamText -Text $(if ($Text) { $Text } else { 'Ау' }) -Font $Font -MaxWidth ([Math]::Max(1, $Layout.Width - $m.Gap))).Height + $m.GapSm
+        if ($Lines -gt 0) { $h = [Math]::Max($h, $lineH * $Lines + $m.GapSm) }
+    }
+    $lbl = New-RamLabel -Text $Text -X 0 -Y 0 -Width $Layout.Width -Height $h -Font $Font -Color $Color -Truncatable:$SingleLine
+    $lbl.UseMnemonic = $false
+    if (-not $SingleLine) { $lbl.TextAlign = [System.Drawing.ContentAlignment]::TopLeft }
+    [void](Add-RamRow -Layout $Layout -Height $h -Items @(@{ Control = $lbl; Width = $Layout.Width }))
+    return $lbl
+}
+
+function Complete-RamDialogShell {
+    <# Размер окна — по содержимому, не больше экрана; полоса сверху — во всю ширину. #>
+    param([Parameter(Mandatory)]$Shell)
+    [void](Complete-RamLayout -Layout $Shell.Layout -ClampToScreen)
+    $Shell.Stripe.Size = New-Object System.Drawing.Size($Shell.Form.ClientSize.Width, $Global:RamTheme.M.StripeH)
+    return $Shell.Form
+}
+
+function Add-RamDialogButtons {
+    <#
+      Ряд кнопок внизу диалога: первая в списке — самая левая, все прижаты
+      вправо. Каждая кнопка кладёт свой Value в Tag окна и закрывает его.
+
+      ГРАБЛИ POWERSHELL: здесь нет параметра $Kind — имена переменных
+      регистронезависимы, и «$kind = ...» внутри Show-RamMessage писал бы в
+      параметр с ValidateSet и ронял окно.
+    #>
+    param(
+        [Parameter(Mandatory)]$Layout,
+        [Parameter(Mandatory)][object[]]$Buttons
+    )
+    $m = $Global:RamTheme.M
     $made = @()
-    $x = $Width - 24
-
-    for ($i = $Buttons.Count - 1; $i -ge 0; $i--) {
-        $b     = $Buttons[$i]
+    foreach ($b in $Buttons) {
         $bKind = if ($b.Kind) { [string]$b.Kind } else { 'normal' }
-        $minW  = if ($null -ne $Global:RamTheme.M) { $Global:RamTheme.M.BtnMinW } else { 110 }
-        $bw    = [Math]::Max($minW, (Get-RamDialogButtonWidth -Text $b.Text))
-
-        $btn = New-RamButton -Text $b.Text -Width $bw -Height 34 -Kind $bKind -OnClick {
+        $btn = New-RamButton -Text $b.Text -Width $m.BtnMinW -Height $m.RowH -Kind $bKind -OnClick {
             $f = $this.FindForm()
             $f.Tag = $this.Tag.Value
             $f.Close()
         }
         $btn.Tag | Add-Member -NotePropertyName Value -NotePropertyValue $b.Value -Force
-
-        $x -= $bw
-        $btn.Location = New-Object System.Drawing.Point($x, $Y)
-        $x -= 8
-        $Dialog.Controls.Add($btn)
         $made += $btn
     }
-
+    if ($made.Count -gt 0) {
+        $secondary = if ($made.Count -gt 1) { @($made[0..($made.Count - 2)]) } else { @() }
+        [void](Add-RamButtonBar -Layout $Layout -Primary $made[$made.Count - 1] -Secondary $secondary)
+    }
     return @($made)
 }
 
@@ -90,7 +156,18 @@ function Show-RamMessage {
         [switch]$BuildOnly
     )
 
-    $t = $Global:RamTheme
+    # СТЕНДЫ БЕЗ ОКОН. Самопроверка, проверка моста и диагностика запускают
+    # программу с -NoAutoStart, и отвечать на модальное окно там некому: одно
+    # честное «вход не принят» подвешивало стенд до таймаута. В этом режиме
+    # сообщение уходит в журнал, а ответ — безопасный: «нет» на вопрос и
+    # «отмена» на выбор из кнопок.
+    if ($Global:RamNoDialogs -and -not $BuildOnly) {
+        try { Write-RamLog ('[без окна] ' + $Title + ': ' + ($Message -replace "`r?`n", ' ')) 'info' } catch { }
+        if ($YesNo) { return $false }
+        return $null
+    }
+
+    $t = $Global:RamTheme; $m = $t.M
     $accent = switch ($Kind) {
         'ok'    { $t.Ok }
         'warn'  { $t.Warn }
@@ -98,94 +175,61 @@ function Show-RamMessage {
         default { $t.Accent }
     }
 
-    $width = 480
+    # Да/Отмена: «Да» слева, «Отмена» крайняя — так было всегда.
+    $spec = if ($Buttons.Count -gt 0) { $Buttons }
+            elseif ($YesNo) { @(@{ Text = 'Да'; Value = $true; Kind = 'primary' }, @{ Text = 'Отмена'; Value = $false }) }
+            else { @(@{ Text = 'Понятно'; Value = $null; Kind = 'primary' }) }
 
-    # Со своим набором кнопок окно расширяем под них, иначе крайняя уедет
-    # за край — на четырёх кнопках это заметно.
-    if ($Buttons.Count -gt 0) {
-        $need = 48
-        $minW = if ($null -ne $Global:RamTheme.M) { $Global:RamTheme.M.BtnMinW } else { 110 }
-        foreach ($b in $Buttons) { $need += [Math]::Max($minW, (Get-RamDialogButtonWidth -Text $b.Text)) + 8 }
-        if ($need -gt $width) { $width = $need }
+    # Ширина: по самой длинной строке сообщения, в разумных пределах, и не уже ряда кнопок.
+    $longest = 0
+    foreach ($line in ($Message -split "`r?`n")) {
+        $lw = (Measure-RamText -Text $line -Font $t.FontBody).Width
+        if ($lw -gt $longest) { $longest = $lw }
     }
+    $btnsW = 0
+    foreach ($b in $spec) { $btnsW += [Math]::Max($m.BtnMinW, (Get-RamDialogButtonWidth -Text $b.Text)) + $m.Gap }
+    $pageW = [Math]::Min([int][Math]::Round(620 * $m.Scale), $longest + $m.GapLg)
+    $pageW = [Math]::Max($pageW, [int][Math]::Round(420 * $m.Scale))
+    $pageW = [Math]::Max($pageW, $btnsW)
 
-    $textW = $width - 48
-    $size  = [System.Windows.Forms.TextRenderer]::MeasureText(
-                $Message, $t.FontBody,
-                (New-Object System.Drawing.Size($textW, 1000)),
-                [System.Windows.Forms.TextFormatFlags]::WordBreak)
-    $textH = [Math]::Max(40, [Math]::Min(420, $size.Height + 8))
+    $shell = New-RamDialogShell -WindowText $Title -Caption $Title -Width $pageW -Accent $accent -CaptionFont $t.FontTitle
+    $dlg = $shell.Form
+    $lay = $shell.Layout
 
-    $dlg = New-Object System.Windows.Forms.Form
-    $dlg.Text            = $Title
-    $dlg.FormBorderStyle = 'FixedDialog'
-    $dlg.StartPosition   = 'CenterParent'
-    $dlg.MaximizeBox     = $false; $dlg.MinimizeBox = $false
-    $dlg.BackColor       = $t.Bg
-    $dlg.ForeColor       = $t.Text
-    $dlg.Font            = $t.FontBody
-    $dlg.ClientSize      = New-Object System.Drawing.Size($width, (76 + $textH + 56))
-
-    $stripe = New-Object System.Windows.Forms.Panel
-    $stripe.Location  = New-Object System.Drawing.Point(0, 0)
-    $stripe.Size      = New-Object System.Drawing.Size($width, 4)
-    $stripe.BackColor = $accent
-    $dlg.Controls.Add($stripe)
-
-    $dlg.Controls.Add((New-RamLabel -Text $Title -X 24 -Y 22 -Width ($width - 48) -Height 28 `
-                                    -Font $t.FontTitle -Color $t.Text))
-
-    $lbl = New-Object System.Windows.Forms.Label
-    $lbl.Text      = $Message
-    $lbl.Location  = New-Object System.Drawing.Point(24, 60)
-    $lbl.Size      = New-Object System.Drawing.Size($textW, $textH)
-    $lbl.Font      = $t.FontBody
-    $lbl.ForeColor = $t.Text
-    $lbl.BackColor = [System.Drawing.Color]::Transparent
-    $dlg.Controls.Add($lbl)
-
-    $btnY = 70 + $textH
-    $result = $null
-
-    if ($Buttons.Count -gt 0) {
-        [void](Add-RamDialogButtons -Dialog $dlg -Buttons $Buttons -Y $btnY -Width $width)
-        $dlg.Tag = $null
-    } elseif ($YesNo) {
-        $yes = New-RamButton -Text 'Да' -Width 110 -Height 34 -Kind 'primary' -OnClick {
-            $this.FindForm().Tag = $true
-            $this.FindForm().Close()
-        }
-        $yesW = (Measure-RamControl -Control $yes).Width
-        $dlg.Controls.Add($yes)
-
-        $no = New-RamButton -Text 'Отмена' -Width 110 -Height 34 -OnClick {
-            $this.FindForm().Tag = $false
-            $this.FindForm().Close()
-        }
-        $noW = (Measure-RamControl -Control $no).Width
-        $no.Location  = New-Object System.Drawing.Point(($width - 24 - $noW), $btnY)
-        $yes.Location = New-Object System.Drawing.Point(($width - 24 - $noW - 8 - $yesW), $btnY)
-        $dlg.Controls.Add($no)
-
-        $dlg.Tag = $false
+    # Очень длинный текст — в поле с прокруткой, а не за край экрана.
+    $textH = (Measure-RamText -Text $Message -Font $t.FontBody -MaxWidth ([Math]::Max(1, $pageW - $m.Gap))).Height + $m.GapSm
+    $maxH = [int][Math]::Round(420 * $m.Scale)
+    if ($textH -le $maxH) {
+        [void](Add-RamTextBlock -Layout $lay -Text $Message -Font $t.FontBody -Color $t.Text)
     } else {
-        $ok = New-RamButton -Text 'Понятно' -Width 130 -Height 34 -Kind 'primary' -OnClick {
-            $this.FindForm().Close()
-        }
-        $ok.Location = New-Object System.Drawing.Point(($width - 24 - (Measure-RamControl -Control $ok).Width), $btnY)
-        $dlg.Controls.Add($ok)
+        $box = New-Object System.Windows.Forms.TextBox
+        $box.Multiline   = $true
+        $box.ReadOnly    = $true
+        $box.ScrollBars  = 'Vertical'
+        $box.BorderStyle = 'None'
+        $box.BackColor   = $t.Bg
+        $box.ForeColor   = $t.Text
+        $box.Font        = $t.FontBody
+        $box.Text        = ($Message -replace "`r?`n", [Environment]::NewLine)
+        $box.Height      = $maxH
+        Set-RamScrollTheme -Control $box
+        [void](Add-RamRow -Layout $lay -Height $maxH -Items @(@{ Control = $box; Width = $lay.Width }))
     }
+    [void](Add-RamGap -Layout $lay -Height $m.Gap)
+    [void](Add-RamDialogButtons -Layout $lay -Buttons $spec)
+    [void](Complete-RamDialogShell -Shell $shell)
 
+    $dlg.Tag = if ($YesNo -and $Buttons.Count -eq 0) { $false } else { $null }
     if ($BuildOnly) { return $dlg }
 
     # ПОВЕРХ ВСЕГО.
     # Windows не даёт процессу поднять окно поверх активного окна другого
     # процесса. Сообщение о том, что вход из браузера приехал, открывалось
     # ЗА браузером — человек смотрел в браузер и видел, что «ничего не
-    # произошло». Восемь раз подряд. TopMost — единственное, что здесь
-    # работает надёжно; окно модальное и короткое, мешать не будет.
+    # произошло». TopMost — единственное, что здесь работает надёжно.
     $dlg.TopMost = $true
     [void]$dlg.ShowDialog()
+    $result = $null
     if     ($Buttons.Count -gt 0) { $result = $dlg.Tag }
     elseif ($YesNo)               { $result = [bool]$dlg.Tag }
     $dlg.Dispose()
@@ -213,121 +257,75 @@ function Show-RamInputDialog {
         # Только для Самопроверки: собрать окно и вернуть, не показывая.
         [switch]$BuildOnly
     )
+    # Стенд без окон (см. Show-RamMessage): ввода нет — значит «отмена».
+    if ($Global:RamNoDialogs -and -not $BuildOnly) { return $null }
 
-    $t = $Global:RamTheme
-    $dlg = New-Object System.Windows.Forms.Form
-    $dlg.Text            = $Title
-    $dlg.FormBorderStyle = 'FixedDialog'
-    $dlg.StartPosition   = 'CenterParent'
-    $dlg.MaximizeBox     = $false; $dlg.MinimizeBox = $false
-    $dlg.BackColor       = $t.Bg
-    $dlg.Font            = $t.FontBody
+    $t = $Global:RamTheme; $m = $t.M
+    $shell = New-RamDialogShell -WindowText $Title -Caption $Title -Width ([int][Math]::Round(480 * $m.Scale)) -CaptionFont $t.FontTitle
+    $dlg = $shell.Form
+    $lay = $shell.Layout
+
+    if ($Prompt) { [void](Add-RamTextBlock -Layout $lay -Text $Prompt -Font $t.FontSmall -Color $t.Muted) }
+
     $hasSug = (@($Suggestions).Count -gt 0 -and -not $Password)
-    $dlgH   = if ($hasSug) { 288 } else { 210 }
-    $dlg.ClientSize      = New-Object System.Drawing.Size(520, $dlgH)
-
-    $stripe = New-Object System.Windows.Forms.Panel
-    $stripe.Size = New-Object System.Drawing.Size(520, 4)
-    $stripe.BackColor = $t.Accent
-    $dlg.Controls.Add($stripe)
-
-    $dlg.Controls.Add((New-RamLabel -Text $Title -X 24 -Y 22 -Width 472 -Height 26 -Font $t.FontTitle))
-    if ($Prompt) {
-        $lblPrompt = New-Object System.Windows.Forms.Label
-        $lblPrompt.Text      = $Prompt
-        $lblPrompt.Location  = New-Object System.Drawing.Point(24, 52)
-        $lblPrompt.Size      = New-Object System.Drawing.Size(472, 52)
-        $lblPrompt.Font      = $t.FontSmall
-        $lblPrompt.ForeColor = $t.Muted
-        $lblPrompt.BackColor = [System.Drawing.Color]::Transparent
-        $dlg.Controls.Add($lblPrompt)
-    }
-
-    $boxY = 110
+    $cbSug = $null
     if ($hasSug) {
-        $dlg.Controls.Add((New-RamLabel -Text 'СОХРАНЁННЫЕ ИГРЫ — ВЫБЕРИ ИЗ СПИСКА' -X 24 -Y 108 -Width 472 -Height 18 `
-                                        -Font $t.FontSmall -Color $t.Muted))
-        $cbSug = New-Object System.Windows.Forms.ComboBox
-        $cbSug.Location      = New-Object System.Drawing.Point(24, 128)
-        $cbSug.Size          = New-Object System.Drawing.Size(472, 26)
-        $cbSug.DropDownStyle = 'DropDownList'
-        $cbSug.FlatStyle     = 'Flat'
-        $cbSug.BackColor     = $t.Card
-        $cbSug.ForeColor     = $t.Text
-        [void]$cbSug.Items.Add('— не выбрано —')
-        foreach ($sg in $Suggestions) { [void]$cbSug.Items.Add($sg.Text) }
-        foreach ($sg in $Suggestions) {
-            if (Test-RamHasEmoji -Text ([string]$sg.Text)) { $cbSug.Font = Get-RamEmojiFont -Like $cbSug.Font; break }
-        }
-        $cbSug.SelectedIndex = 0
-        $dlg.Controls.Add($cbSug)
-
-        $dlg.Controls.Add((New-RamLabel -Text 'ИЛИ ВСТАВЬ ССЫЛКУ ВРУЧНУЮ' -X 24 -Y 162 -Width 472 -Height 18 `
-                                        -Font $t.FontSmall -Color $t.Muted))
-        $boxY = 182
+        [void](Add-RamTextBlock -Layout $lay -Text 'СОХРАНЁННЫЕ ИГРЫ — ВЫБЕРИ ИЗ СПИСКА' -Font $t.FontSmall -Color $t.Muted -SingleLine)
+        $sugItems = @([pscustomobject]@{ Text = '— не выбрано —'; Value = '' })
+        foreach ($sg in $Suggestions) { $sugItems += [pscustomobject]@{ Text = [string]$sg.Text; Value = [string]$sg.Value } }
+        $cbSug = New-RamCombo -X 0 -Y 0 -Width $lay.Width -Items $sugItems -Value ''
+        [void](Add-RamRow -Layout $lay -Items @(@{ Control = $cbSug; Width = $lay.Width }))
+        [void](Add-RamTextBlock -Layout $lay -Text 'ИЛИ ВСТАВЬ ССЫЛКУ ВРУЧНУЮ' -Font $t.FontSmall -Color $t.Muted -SingleLine)
     }
 
-    # Ширину поля считаем ЗАРАНЕЕ. Внутри New-RamTextBox лежит настоящий
-    # TextBox фиксированного размера, и ужать панель постфактум нельзя —
-    # поле останется прежним и вылезет наружу.
-    if ($Password) {
-        $boxWidth = 472
-    } else {
-        $pasteW   = (Get-RamDialogButtonWidth -Text 'Вставить')
-        $boxWidth = 520 - 48 - $pasteW - 8
-    }
-    $box = New-RamTextBox -Width $boxWidth -Height 34 -Value $Value
-    $box.Location = New-Object System.Drawing.Point(24, $boxY)
+    # Ширину поля считаем ЗАРАНЕЕ: внутренний TextBox фиксированного размера,
+    # ужать панель постфактум нельзя — поле вылезет наружу.
+    $pasteW = if ($Password) { 0 } else { Get-RamDialogButtonWidth -Text 'Вставить' }
+    $boxW = if ($Password) { $lay.Width } else { $lay.Width - $pasteW - $m.Gap }
+    $box = New-RamTextBox -Width $boxW -Height $m.RowH -Value $Value
     if ($Password) { $box.Tag.UseSystemPasswordChar = $true }
-    $dlg.Controls.Add($box)
 
-    if (-not $Password) {
-        # Ctrl+V работает, но кнопка нагляднее — особенно когда длинную ссылку
-        # копируешь из браузера и не хочешь промахнуться мимо поля.
-        $btnPasteIn = New-RamButton -Text 'Вставить' -Width $pasteW -Height 34 -Fixed -OnClick {
+    if ($Password) {
+        [void](Add-RamRow -Layout $lay -Items @(@{ Control = $box; Width = $boxW }))
+    } else {
+        # Ctrl+V работает, но кнопка нагляднее — особенно с длинной ссылкой из браузера.
+        $btnPasteIn = New-RamButton -Text 'Вставить' -Width $pasteW -Height $box.Height -Fixed -OnClick {
             try {
                 if ([System.Windows.Forms.Clipboard]::ContainsText()) {
-                    $t = [System.Windows.Forms.Clipboard]::GetText()
-                    if (-not [string]::IsNullOrWhiteSpace($t)) {
-                        $box.Tag.Text = $t.Trim()
+                    $clip = [System.Windows.Forms.Clipboard]::GetText()
+                    if (-not [string]::IsNullOrWhiteSpace($clip)) {
+                        $box.Tag.Text = $clip.Trim()
                         $box.Tag.Focus()
                         $box.Tag.SelectionStart = $box.Tag.TextLength
                     }
                 }
             } catch { }
         }
-        # От правого края: кнопка расширяется под надпись и на крупном
-        # масштабе вылезала за окно.
-        $btnPasteIn.Location = New-Object System.Drawing.Point((520 - 24 - (Measure-RamControl -Control $btnPasteIn).Width), $boxY)
-        $dlg.Controls.Add($btnPasteIn)
+        [void](Add-RamRow -Layout $lay -VAlign 'middle' -Items @(
+            @{ Control = $box; Width = $boxW },
+            @{ Control = $btnPasteIn; Width = $pasteW }
+        ))
     }
 
     if ($hasSug) {
         # Выбор из списка сразу подставляется в поле — дальше всё как обычно.
         $cbSug.Add_SelectedIndexChanged({
-            $i = $cbSug.SelectedIndex
-            if ($i -le 0) { return }
-            $box.Tag.Text = $Suggestions[$i - 1].Value
+            $v = Get-RamComboValue $cbSug
+            if ($v) { $box.Tag.Text = $v }
         })
     }
 
-    $ok = New-RamButton -Text 'OK' -Width 110 -Height 34 -Kind 'primary' -OnClick {
+    [void](Add-RamGap -Layout $lay -Height $m.Gap)
+    $ok = New-RamButton -Text 'OK' -Width $m.BtnMinW -Height $m.RowH -Kind 'primary' -OnClick {
         $this.FindForm().Tag = $true
         $this.FindForm().Close()
     }
-    $okW2 = (Measure-RamControl -Control $ok).Width
-    $dlg.Controls.Add($ok)
-
-    $cancel = New-RamButton -Text 'Отмена' -Width 110 -Height 34 -OnClick {
+    $cancel = New-RamButton -Text 'Отмена' -Width $m.BtnMinW -Height $m.RowH -OnClick {
         $this.FindForm().Tag = $false
         $this.FindForm().Close()
     }
-    # От правого края и по фактической ширине: на крупном масштабе надписи
-    # длиннее, и жёсткие координаты выносили «Отмену» за окно.
-    $cancelW2 = (Measure-RamControl -Control $cancel).Width
-    $cancel.Location = New-Object System.Drawing.Point((520 - 24 - $cancelW2), ($dlgH - 52))
-    $ok.Location     = New-Object System.Drawing.Point((520 - 24 - $cancelW2 - 8 - $okW2), ($dlgH - 52))
-    $dlg.Controls.Add($cancel)
+    [void](Add-RamButtonBar -Layout $lay -Primary $cancel -Secondary @($ok))
+    [void](Complete-RamDialogShell -Shell $shell)
 
     $dlg.Tag = $false
     if ($BuildOnly) { return $dlg }
@@ -377,47 +375,33 @@ function Show-RamBatchAddDialog {
     #>
     param([switch]$BuildOnly)
 
-    $t = $Global:RamTheme
-    $dlg = New-Object System.Windows.Forms.Form
-    $dlg.Text            = 'Вставить пачкой'
-    $dlg.FormBorderStyle = 'FixedDialog'
-    $dlg.StartPosition   = 'CenterParent'
-    $dlg.MaximizeBox     = $false; $dlg.MinimizeBox = $false
-    $dlg.BackColor       = $t.Bg
-    $dlg.ForeColor       = $t.Text
-    $dlg.Font            = $t.FontBody
-    $dlg.ClientSize      = New-Object System.Drawing.Size(600, 460)
+    $t = $Global:RamTheme; $m = $t.M
+    $shell = New-RamDialogShell -WindowText 'Вставить пачкой' -Caption 'Вставить пачкой' -Width ([int][Math]::Round(544 * $m.Scale))
+    $dlg = $shell.Form
+    $lay = $shell.Layout
 
-    $stripe = New-Object System.Windows.Forms.Panel
-    $stripe.Size = New-Object System.Drawing.Size(600, 4); $stripe.BackColor = $t.Accent
-    $dlg.Controls.Add($stripe)
-
-    $dlg.Controls.Add((New-RamLabel -Text 'Вставить пачкой' -X 28 -Y 22 -Width 400 -Height 30 -Font $t.FontBig))
-    # Явные переносы: одной строкой текст не влезает ни при каком масштабе.
-    $batchHint = "По одному аккаунту на строку. Строка — это либо кука`n(.ROBLOSECURITY целиком), либо приглашение althub://."
-    $dlg.Controls.Add((New-RamLabel -Text $batchHint `
-                                    -X 28 -Y 58 -Width 544 -Height 48 -Font $t.FontSmall -Color $t.Muted))
+    [void](Add-RamTextBlock -Layout $lay -Font $t.FontSmall -Color $t.Muted `
+           -Text 'По одному аккаунту на строку. Строка — это либо кука (.ROBLOSECURITY целиком), либо приглашение althub://.')
 
     $box = New-Object System.Windows.Forms.TextBox
     $box.Multiline   = $true
     $box.ScrollBars  = 'Vertical'
     $box.WordWrap    = $false
-    $box.Location    = New-Object System.Drawing.Point(28, 114)
-    $box.Size        = New-Object System.Drawing.Size(544, 240)
     $box.BackColor   = $t.LogBack
     $box.ForeColor   = $t.Text
     $box.BorderStyle = 'FixedSingle'
     $box.Font        = $t.FontMono
-    $dlg.Controls.Add($box)
+    $box.Height      = [int][Math]::Round(240 * $m.Scale)
+    Set-RamScrollTheme -Control $box
+    [void](Add-RamRow -Layout $lay -Height $box.Height -Items @(@{ Control = $box; Width = $lay.Width }))
 
-    $lblResult = New-RamLabel -Text '' -X 28 -Y 366 -Width 544 -Height 40 -Font $t.FontSmall -Color $t.Muted
-    $dlg.Controls.Add($lblResult)
+    $lblResult = Add-RamTextBlock -Layout $lay -Text '' -Font $t.FontSmall -Color $t.Muted -Lines 2
 
     # Ответ наружу отдаём через хэш: он захватывается по ссылке и переживает
     # .GetNewClosure(). Запись в $script: отсюда потерялась бы молча.
     $result = @{ Added = 0 }
 
-    $btnGo = New-RamButton -Text 'Добавить все' -Width 180 -Height 36 -Kind 'primary' -OnClick ({
+    $btnGo = New-RamButton -Text 'Добавить все' -Width $m.BtnMinW -Height $m.RowH -Kind 'primary' -OnClick ({
         $text = $box.Text
         if ([string]::IsNullOrWhiteSpace($text)) { Show-RamInfo 'Вставь хотя бы одну куку или приглашение.'; return }
 
@@ -443,12 +427,9 @@ function Show-RamBatchAddDialog {
             Write-RamLog "Пачкой: добавлено $($sum.Added), обновлено $($sum.Updated), не вышло $($sum.Failed)." 'ok'
         }
     }.GetNewClosure())
-    $btnGo.Location = New-Object System.Drawing.Point(28, 410)
-    $dlg.Controls.Add($btnGo)
-
-    $btnClose = New-RamButton -Text 'Закрыть' -Width 120 -Height 36 -OnClick { $this.FindForm().Close() }
-    $btnClose.Location = New-Object System.Drawing.Point(452, 410)
-    $dlg.Controls.Add($btnClose)
+    $btnClose = New-RamButton -Text 'Закрыть' -Width $m.BtnMinW -Height $m.RowH -OnClick { $this.FindForm().Close() }
+    [void](Add-RamButtonBar -Layout $lay -Primary $btnGo -Secondary @($btnClose))
+    [void](Complete-RamDialogShell -Shell $shell)
 
     if ($BuildOnly) { return $dlg }
 
@@ -471,73 +452,38 @@ function Show-RamBrowserGuide {
     #>
     param([switch]$BuildOnly)
 
-    $t = $Global:RamTheme
-    $dlg = New-Object System.Windows.Forms.Form
-    $dlg.Text            = 'Из браузера'
-    $dlg.FormBorderStyle = 'FixedDialog'
-    $dlg.StartPosition   = 'CenterParent'
-    $dlg.MaximizeBox     = $false; $dlg.MinimizeBox = $false
-    $dlg.BackColor       = $t.Bg
-    $dlg.ForeColor       = $t.Text
-    $dlg.Font            = $t.FontBody
-    $dlg.ClientSize      = New-Object System.Drawing.Size(620, 470)
-
-    $stripe = New-Object System.Windows.Forms.Panel
-    $stripe.Size = New-Object System.Drawing.Size(620, 4); $stripe.BackColor = $t.Accent
-    $dlg.Controls.Add($stripe)
-
-    $dlg.Controls.Add((New-RamLabel -Text 'Добавить из браузера' -X 28 -Y 22 -Width 460 -Height 30 -Font $t.FontBig))
+    $t = $Global:RamTheme; $m = $t.M
+    $shell = New-RamDialogShell -WindowText 'Из браузера' -Caption 'Добавить из браузера' -Width ([int][Math]::Round(600 * $m.Scale))
+    $dlg = $shell.Form
+    $lay = $shell.Layout
 
     $steps = @'
-Куку берём руками из самого браузера — AltHub в его хранилище не лезет.
-Это безопасно и работает в любом браузере.
+Куку берём руками из самого браузера — AltHub в его хранилище не лезет. Это безопасно и работает в любом браузере.
 
-  1. Нажми «Открыть Roblox» ниже и войди под нужным аккаунтом.
+  1. Нажми «Открыть Roblox в браузере» ниже и войди под нужным аккаунтом.
   2. Нажми F12 — откроются инструменты разработчика.
   3. Вкладка Application (или «Приложение»)  ->  слева Cookies  ->  https://www.roblox.com
   4. Найди строку .ROBLOSECURITY, скопируй её значение (двойной клик по Value, Ctrl+C).
   5. Вставь сюда, в поле ниже, и нажми «Добавить».
 
-Значение длинное и начинается с _|WARNING:-DO-NOT-SHARE-THIS... — это нормально,
-так и должно быть. Никому его не показывай: это ключ от аккаунта.
+Значение длинное и начинается с _|WARNING:-DO-NOT-SHARE-THIS... — так и должно быть. Никому его не показывай: это ключ от аккаунта.
 '@
-    $lbl = New-Object System.Windows.Forms.Label
-    $lbl.Text = $steps
-    # Всё, что ниже, отсчитывается от фактического низа инструкции: её
-    # высота зависит от шрифта, а он растёт вместе с масштабом экрана.
-    $stepsH = [Math]::Max(210, (Measure-RamText -Text $steps -Font $t.FontBody -MaxWidth 564).Height + 10)
-    $yOpen  = 58 + $stepsH + 12
-    $yBox   = $yOpen + 50
-    $yHint  = $yBox + 42
-    $yBtns  = $yHint + 32
-    $dlg.ClientSize = New-Object System.Drawing.Size(620, ($yBtns + 60))
+    [void](Add-RamTextBlock -Layout $lay -Text $steps -Font $t.FontBody -Color $t.Text)
 
-    $lbl.Location = New-Object System.Drawing.Point(28, 58)
-    # Высота по факту: на крупном масштабе фиксированные 210 px обрезали
-    # последние строки инструкции.
-    $lbl.Size = New-Object System.Drawing.Size(564, ([Math]::Max(210, (Measure-RamText -Text $steps -Font $t.FontBody -MaxWidth 564).Height + 10)))
-    $lbl.Font = $t.FontBody
-    $lbl.ForeColor = $t.Text
-    $lbl.BackColor = [System.Drawing.Color]::Transparent
-    $dlg.Controls.Add($lbl)
-
-    $btnOpen = New-RamButton -Text 'Открыть Roblox в браузере' -Width 260 -Height 34 -Kind 'ghost' -OnClick {
+    $btnOpen = New-RamButton -Text 'Открыть Roblox в браузере' -Width 1 -Height $m.RowH -Kind 'ghost' -OnClick {
         try { Start-Process 'https://www.roblox.com/home' } catch { Show-RamError 'Не получилось открыть браузер.' }
     }
-    $btnOpen.Location = New-Object System.Drawing.Point(28, $yOpen)
-    $dlg.Controls.Add($btnOpen)
+    [void](Add-RamRow -Layout $lay -Items @($btnOpen))
+    [void](Add-RamGap -Layout $lay -Height $m.GapSm)
 
     # $box — это ПАНЕЛЬ-обёртка, само поле лежит в .Tag. Читать надо
-    # $box.Tag.Text: у панели свой пустой .Text, и проверка «длина меньше 50»
-    # срабатывала всегда, сколько бы куку ни вставляли.
-    $box = New-RamTextBox -Width 564 -Height 30
-    $box.Location = New-Object System.Drawing.Point(28, $yBox)
-    $dlg.Controls.Add($box)
-    $dlg.Controls.Add((New-RamLabel -Text 'Сюда вставь значение .ROBLOSECURITY' -X 28 -Y $yHint -Width 400 -Height 18 -Font $t.FontSmall -Color $t.Muted))
+    # $box.Tag.Text: у панели свой пустой .Text.
+    $box = New-RamTextBox -Width $lay.Width -Height $m.RowH
+    [void](Add-RamField -Layout $lay -Caption 'Сюда вставь значение .ROBLOSECURITY' -Control $box)
 
-    # То же самое: хэш вместо $script:-флага, иначе результат не дойдёт.
+    # Хэш вместо $script:-флага, иначе результат не дойдёт из замыкания.
     $result = @{ Ok = $false }
-    $btnAdd = New-RamButton -Text 'Добавить' -Width 160 -Height 36 -Kind 'primary' -OnClick ({
+    $btnAdd = New-RamButton -Text 'Добавить' -Width $m.BtnMinW -Height $m.RowH -Kind 'primary' -OnClick ({
         $val = ([string]$box.Tag.Text).Trim()
         if ($val.Length -lt 50) { Show-RamError 'Похоже, вставилось не всё. Значение .ROBLOSECURITY длинное.'; return }
         $this.FindForm().Cursor = [System.Windows.Forms.Cursors]::WaitCursor
@@ -553,12 +499,10 @@ function Show-RamBrowserGuide {
             Show-RamError "Не вышло: $($r.Error)"
         }
     }.GetNewClosure())
-    $btnAdd.Location = New-Object System.Drawing.Point(28, $yBtns)
-    $dlg.Controls.Add($btnAdd)
-
-    $btnClose = New-RamButton -Text 'Закрыть' -Width 120 -Height 36 -OnClick { $this.FindForm().Close() }
-    $btnClose.Location = New-Object System.Drawing.Point(472, $yBtns)
-    $dlg.Controls.Add($btnClose)
+    $btnClose = New-RamButton -Text 'Закрыть' -Width $m.BtnMinW -Height $m.RowH -OnClick { $this.FindForm().Close() }
+    [void](Add-RamGap -Layout $lay -Height $m.Gap)
+    [void](Add-RamButtonBar -Layout $lay -Primary $btnAdd -Secondary @($btnClose))
+    [void](Complete-RamDialogShell -Shell $shell)
 
     if ($BuildOnly) { return $dlg }
 
@@ -610,15 +554,11 @@ function Import-RamDroppedFile {
 
 function Update-RamAddedList {
     <#
-      Перерисовывает список «Добавлено за этот заход» и раздвигает окно под
-      его настоящую высоту.
+      Список «Добавлено за этот заход». Это поле с прокруткой фиксированной
+      высоты: сколько бы аккаунтов ни добавили, окно не растёт и ничего не
+      обрезается — последние строки видны, остальное листается.
 
-      Раньше это была подпись жёсткой высоты 56 px: три строки влезали,
-      четвёртая и дальше просто обрезались, и человек не видел, что аккаунт
-      добавился. Теперь высота меряется по тексту, а нижний ряд кнопок и само
-      окно съезжают на разницу.
-
-      Всё ищется по именам через форму: обработчики живут дольше, чем вызов
+      Ищется по имени через форму: обработчики живут дольше, чем вызов
       Show-RamAddWizard, и локалы им уже недоступны.
     #>
     param(
@@ -626,41 +566,16 @@ function Update-RamAddedList {
         [AllowNull()][AllowEmptyCollection()][object[]]$Names
     )
     if ($null -eq $Form) { return }
-
-    $lbl = $Form.Controls.Find('ramAddedList', $true) | Select-Object -First 1
-    if ($null -eq $lbl) { return }
-
-    if ($null -eq $Names) { $Names = @() }
-    $list = @($Names)
-
-    # Больше десятка строк окно бы вытолкнуло за экран — остаток сворачиваем
-    # в одну строку, но счёт остаётся честным.
-    $maxRows = 10
+    $listBox = $Form.Controls.Find('ramAddedList', $true) | Select-Object -First 1
+    if ($null -eq $listBox) { return }
+    $list = @($Names | Where-Object { $null -ne $_ })
     if ($list.Count -eq 0) {
-        $text = '— пока ничего —'
-    } elseif ($list.Count -le $maxRows) {
-        $text = ($list | ForEach-Object { '  ✓  ' + $_ }) -join [Environment]::NewLine
+        $listBox.Text = '— пока ничего —'
     } else {
-        $head = $list[0..($maxRows - 1)] | ForEach-Object { '  ✓  ' + $_ }
-        $text = ($head -join [Environment]::NewLine) +
-                [Environment]::NewLine + ('     и ещё {0}' -f ($list.Count - $maxRows))
+        $listBox.Text = ($list | ForEach-Object { '✓  ' + $_ }) -join [Environment]::NewLine
+        $listBox.SelectionStart = $listBox.TextLength
+        $listBox.ScrollToCaret()
     }
-    $lbl.Text = $text
-
-    $need = (Measure-RamText -Text $text -Font $lbl.Font -MaxWidth $lbl.Width).Height + 4
-    $min  = [int][Math]::Round(56 * $Global:RamTheme.M.Scale)
-    if ($need -lt $min) { $need = $min }
-
-    $delta = $need - $lbl.Height
-    if ($delta -eq 0) { return }
-    $lbl.Height = $need
-
-    foreach ($n in @('ramAddMore', 'ramAddHint', 'ramAddDone')) {
-        $c = $Form.Controls.Find($n, $true) | Select-Object -First 1
-        if ($null -ne $c) { $c.Top = $c.Top + $delta }
-    }
-    $Form.ClientSize = New-Object System.Drawing.Size(
-        $Form.ClientSize.Width, ($Form.ClientSize.Height + $delta))
 }
 
 function Show-RamAddWizard {
@@ -675,119 +590,83 @@ function Show-RamAddWizard {
         [switch]$BuildOnly
     )
 
-    $t = $Global:RamTheme
+    $t = $Global:RamTheme; $m = $t.M
     $w = @{ Cookie = ''; User = $null; Added = @(); Busy = $false }
 
-    $dlg = New-Object System.Windows.Forms.Form
-    $dlg.Text            = 'Добавление аккаунтов'
-    $dlg.FormBorderStyle = 'FixedDialog'
-    $dlg.StartPosition   = 'CenterParent'
-    $dlg.MaximizeBox     = $false; $dlg.MinimizeBox = $false
-    $dlg.BackColor       = $t.Bg
-    $dlg.Font            = $t.FontBody
+    $shell = New-RamDialogShell -WindowText 'Добавление аккаунтов' -Caption 'Добавление аккаунтов' -Width ([int][Math]::Round(680 * $m.Scale))
+    $dlg = $shell.Form
+    $lay = $shell.Layout
+
     $howto = @'
-Менеджер читает, под каким аккаунтом ты сейчас вошёл в приложении Roblox,
-и забирает этот вход себе. Пароль не нужен.
+Менеджер читает, под каким аккаунтом ты сейчас вошёл в приложении Roblox, и забирает этот вход себе. Пароль не нужен.
 
   1. Войди в приложении Roblox под нужным аккаунтом
   2. Нажми «Проверить снова» — появится ник этого аккаунта
   3. Нажми «Добавить этот аккаунт»
   4. Нажми «Сменить аккаунт» — и снова с шага 1
 
-НИКОГДА не жми «Выйти» в самом Roblox: эта кнопка убивает вход на сервере,
-и аккаунт, который ты только что добавил, перестанет запускаться. Кнопка
-«Сменить аккаунт» делает то же самое, но безопасно — приложение просто
-забывает вход, а на сервере он остаётся живым.
+НИКОГДА не жми «Выйти» в самом Roblox: эта кнопка убивает вход на сервере, и аккаунт, который ты только что добавил, перестанет запускаться. Кнопка «Сменить аккаунт» делает то же самое, но безопасно — приложение просто забывает вход, а на сервере он остаётся живым.
 '@
-
-    # Высота окна складывается из фактической высоты блоков. Раньше все
-    # координаты были вписаны числами под обычный шрифт, и на масштабе 125%
-    # длинная инструкция вырастала и наезжала на карточку под ней.
-    $howH  = [Math]::Max(228, (Measure-RamText -Text $howto -Font $t.FontBody -MaxWidth 624).Height + 10)
-    $yCard = 62 + $howH + 12
-    $yRow1 = $yCard + 110
-    $yRow2 = $yRow1 + 46
-    $yAdd  = $yRow2 + 50
-    $yBot  = $yAdd + 94
-    $dlgH  = $yBot + 92
-
-    $dlgW = [Math]::Max(680, [int](680 * $Global:RamTheme.M.Scale))
-    $dlg.ClientSize      = New-Object System.Drawing.Size($dlgW, $dlgH)
-
-    $stripe = New-Object System.Windows.Forms.Panel
-    $stripe.Size = New-Object System.Drawing.Size(680, 4); $stripe.BackColor = $t.Accent
-    $dlg.Controls.Add($stripe)
-
-    $dlg.Controls.Add((New-RamLabel -Text 'Добавление аккаунтов' -X 28 -Y 24 -Width 620 -Height 32 -Font $t.FontBig))
-
-    $lblHow = New-Object System.Windows.Forms.Label
-    $lblHow.Text      = $howto
-    $lblHow.Location  = New-Object System.Drawing.Point(28, 62)
-    # Высота по факту: текст меряется шрифтом, и на крупном масштабе
-    # фиксированные 228 px обрезали последние строки.
-    $lblHow.Size      = New-Object System.Drawing.Size(624, $howH)
-    $lblHow.Font      = $t.FontBody
-    $lblHow.ForeColor = $t.Muted
-    $lblHow.BackColor = [System.Drawing.Color]::Transparent
-    $dlg.Controls.Add($lblHow)
+    [void](Add-RamTextBlock -Layout $lay -Text $howto -Font $t.FontBody -Color $t.Muted)
 
     # --- карточка "кто сейчас в приложении"
-    $card = New-RamCard -Width 624 -Height 96
-    $card.Location = New-Object System.Drawing.Point(28, $yCard)
-    $dlg.Controls.Add($card)
+    $k = { param($n) [int][Math]::Round($n * $m.Scale) }
+    $pad = & $k 18
+    $avS = & $k 60
+    $titleH = (Measure-RamText -Text 'Ау' -Font $t.FontTitle).Height + (& $k 2)
+    $smallH = (Measure-RamText -Text 'Ау' -Font $t.FontSmall).Height
+    $whoX = $pad + $avS + (& $k 16)
+    $whoW = $lay.Width - $whoX - $pad
+    $who2H = $smallH * 2 + $m.GapSm
+    $cardH = [Math]::Max($avS, $titleH + $who2H) + $pad * 2
+    $card = New-RamCard -Width $lay.Width -Height $cardH
 
-    $av = New-RamAvatarBox -Size 60
-    $av.Location = New-Object System.Drawing.Point(18, 18)
+    $av = New-RamAvatarBox -Size $avS
+    $av.Location = New-Object System.Drawing.Point($pad, [int](($cardH - $avS) / 2))
     $card.Controls.Add($av)
 
-    $lblWho = New-RamLabel -Text 'Проверяю приложение Roblox...' -X 94 -Y 22 -Width 400 -Height 26 -Font $t.FontTitle
+    $textTop = [int](($cardH - $titleH - $who2H) / 2)
+    $lblWho = New-RamLabel -Text 'Проверяю приложение Roblox...' -X $whoX -Y $textTop -Width $whoW -Height $titleH -Font $t.FontTitle -Truncatable
     $card.Controls.Add($lblWho)
-
-    $lblWho2 = New-RamLabel -Text '' -X 94 -Y 48 -Width 500 -Height 30 -Font $t.FontSmall -Color $t.Muted
+    $lblWho2 = New-RamLabel -Text '' -X $whoX -Y ($textTop + $titleH) -Width $whoW -Height $who2H -Font $t.FontSmall -Color $t.Muted
+    $lblWho2.TextAlign = [System.Drawing.ContentAlignment]::TopLeft
     $card.Controls.Add($lblWho2)
+    [void](Add-RamRow -Layout $lay -Height $cardH -Items @(@{ Control = $card; Width = $lay.Width }))
 
-    # --- кнопки
-    $btnRefresh = New-RamButton -Text 'Проверить снова' -Width 180 -Height 38
-    $btnRefresh.Location = New-Object System.Drawing.Point(28, $yRow1)
-    $xRow = 28 + (Measure-RamControl -Control $btnRefresh).Width + 12
-    $dlg.Controls.Add($btnRefresh)
-
-    $btnAdd = New-RamButton -Text 'Добавить этот аккаунт' -Width 240 -Height 38 -Kind 'primary'
-    $btnAdd.Location = New-Object System.Drawing.Point($xRow, $yRow1)
-    $xRow += (Measure-RamControl -Control $btnAdd).Width + 12
-    $dlg.Controls.Add($btnAdd)
-
-    $btnManual = New-RamButton -Text 'Ввести куку вручную' -Width 180 -Height 38 -Kind 'ghost'
-    $btnManual.Location = New-Object System.Drawing.Point($xRow, $yRow1)
-    $dlg.Controls.Add($btnManual)
-
-    # --- список добавленного
-    $dlg.Controls.Add((New-RamLabel -Text 'Добавлено за этот заход:' -X 28 -Y $yAdd -Width 300 -Height 22 `
-                                    -Font $t.FontSmall -Color $t.Muted))
-
-    # Высота этого списка ФИКСИРОВАННОЙ быть не может: сколько аккаунтов
-    # добавят за заход, столько строк и будет. С жёсткими 56 px помещалось
-    # ровно три, четвёртый и дальше просто обрезались.
-    $lblAdded = New-Object System.Windows.Forms.Label
-    $lblAdded.Name      = 'ramAddedList'
-    $lblAdded.Text      = '— пока ничего —'
-    $lblAdded.Location  = New-Object System.Drawing.Point(28, ($yAdd + 24))
-    $lblAdded.Size      = New-Object System.Drawing.Size(624, 56)
-    $lblAdded.Font      = $t.FontBody
-    $lblAdded.ForeColor = $t.Ok
-    $lblAdded.BackColor = [System.Drawing.Color]::Transparent
-    $dlg.Controls.Add($lblAdded)
+    # --- кнопки. Ширина «Добавить» — под длинную надпись «Обновить вход…»:
+    # надпись меняется на лету, и кнопка не должна налезать на соседку.
+    $btnRefresh = New-RamButton -Text 'Проверить снова' -Width 1 -Height $m.RowHLg
+    $addW = [Math]::Max((Get-RamDialogButtonWidth -Text 'Добавить этот аккаунт'), (Get-RamDialogButtonWidth -Text 'Обновить вход этого аккаунта'))
+    $btnAdd = New-RamButton -Text 'Добавить этот аккаунт' -Width $addW -Height $m.RowHLg -Fixed -Kind 'primary'
+    $btnManual = New-RamButton -Text 'Ввести куку вручную' -Width 1 -Height $m.RowHLg -Kind 'ghost'
+    [void](Add-RamRow -Layout $lay -Items @($btnRefresh, $btnAdd, $btnManual))
 
     # Главная кнопка всего мастера: сменить аккаунт, не убив забранный вход.
-    $btnSwitch = New-RamButton -Text 'Сменить аккаунт (безопасно)' -Width 260 -Height 38 -Kind 'primary' `
+    $btnSwitch = New-RamButton -Text 'Сменить аккаунт (безопасно)' -Width 1 -Height $m.RowHLg -Kind 'primary' `
                                -Tooltip 'Закрыть Roblox и заставить его забыть вход, не разлогинивая на сервере'
-    $btnSwitch.Location = New-Object System.Drawing.Point(28, $yRow2)
-    $dlg.Controls.Add($btnSwitch)
-
-    $btnRestore = New-RamButton -Text 'Вернуть прошлый вход' -Width 220 -Height 38 -Kind 'ghost' `
+    $btnRestore = New-RamButton -Text 'Вернуть прошлый вход' -Width 1 -Height $m.RowHLg -Kind 'ghost' `
                                 -Tooltip 'Положить обратно последний сохранённый вход приложения'
-    $btnRestore.Location = New-Object System.Drawing.Point((28 + (Measure-RamControl -Control $btnSwitch).Width + 12), $yRow2)
-    $dlg.Controls.Add($btnRestore)
+    [void](Add-RamRow -Layout $lay -Items @($btnSwitch, $btnRestore))
+
+    # --- список добавленного: поле с прокруткой, окно от него не растёт
+    [void](Add-RamGap -Layout $lay -Height $m.GapSm)
+    $lblAdded = New-Object System.Windows.Forms.TextBox
+    $lblAdded.Name        = 'ramAddedList'
+    $lblAdded.Multiline   = $true
+    $lblAdded.ReadOnly    = $true
+    $lblAdded.ScrollBars  = 'Vertical'
+    $lblAdded.BorderStyle = 'None'
+    $lblAdded.BackColor   = $t.Bg
+    $lblAdded.ForeColor   = $t.Ok
+    $lblAdded.Font        = $t.FontBody
+    $lblAdded.Text        = '— пока ничего —'
+    $lblAdded.TabStop     = $false
+    $lblAdded.Height      = (Measure-RamText -Text 'Ау' -Font $t.FontBody).Height * 4 + $m.GapSm
+    Set-RamScrollTheme -Control $lblAdded
+    [void](Add-RamField -Layout $lay -Caption 'Добавлено за этот заход:' -Control $lblAdded)
+
+    [void](Add-RamTextBlock -Layout $lay -Font $t.FontSmall -Color $t.Muted `
+           -Text 'Подсказка: список кук или файл настроек можно просто перетащить на главное окно.')
 
     $btnSwitch.Add_Click({
         $label = if ($null -ne $w.User) { $w.User.Name } else { 'session' }
@@ -831,13 +710,9 @@ function Show-RamAddWizard {
         }
     }.GetNewClosure()
 
-    $btnMore = New-RamButton -Text 'Ещё способы  ▾' -Width 180 -Height 38 -Kind 'ghost' `
+    $btnMore = New-RamButton -Text 'Ещё способы  ▾' -Width 1 -Height $m.RowHLg -Kind 'ghost' `
                              -Tooltip 'Вставить несколько кук сразу, забрать из браузера или из файла'
     $btnMore.Name = 'ramAddMore'
-    $btnMore.Location = New-Object System.Drawing.Point(28, $yBot)
-    $moreW = (Measure-RamControl -Control $btnMore).Width
-    $dlg.Controls.Add($btnMore)
-
     $moreMenu = New-RamContextMenu
     [void](Add-RamMenuItem -Menu $moreMenu -Text 'Вставить пачкой (несколько кук сразу)' -OnClick ({
         $n = Show-RamBatchAddDialog
@@ -854,17 +729,13 @@ function Show-RamAddWizard {
     })
     $btnMore.Add_Click({ $moreMenu.Show($this, (New-Object System.Drawing.Point(0, $this.Height))) }.GetNewClosure())
 
-    $lblDropHint = New-RamLabel -Text 'Подсказка: список кук или файл настроек можно просто перетащить на главное окно.' `
-                                -X (28 + $moreW + 12) -Y ($yBot + 2) -Width 260 -Height 72 -Font $t.FontSmall -Color $t.Muted
-    $lblDropHint.Name = 'ramAddHint'
-    $dlg.Controls.Add($lblDropHint)
-
-    $btnDone = New-RamButton -Text 'Готово' -Width 130 -Height 38 -Kind 'primary' -OnClick {
+    $btnDone = New-RamButton -Text 'Готово' -Width $m.BtnMinW -Height $m.RowHLg -Kind 'primary' -OnClick {
         $this.FindForm().Close()
     }
     $btnDone.Name = 'ramAddDone'
-    $btnDone.Location = New-Object System.Drawing.Point(($dlgW - 28 - (Measure-RamControl -Control $btnDone).Width), $yBot)
-    $dlg.Controls.Add($btnDone)
+    [void](Add-RamGap -Layout $lay -Height $m.Gap)
+    [void](Add-RamButtonBar -Layout $lay -Primary $btnDone -Extra @($btnMore))
+    [void](Complete-RamDialogShell -Shell $shell)
 
     # --- логика
     $refresh = {
@@ -944,7 +815,7 @@ function Show-RamAddWizard {
             Update-RamAddedList -Form $lblAdded.FindForm() -Names $w.Added
             Set-RamButtonEnabled $btnAdd $false
 
-            $lblWho2.Text = 'Готово. Теперь нажми «Сменить аккаунт (безопасно)» внизу — и войди под следующим. Кнопку «Выйти» в самом Roblox не трогай.'
+            $lblWho2.Text = 'Готово. Теперь нажми «Сменить аккаунт (безопасно)» — и войди под следующим. Кнопку «Выйти» в самом Roblox не трогай.'
             $lblWho2.ForeColor = $t.Ok
 
             Build-RamCards
@@ -1085,6 +956,7 @@ function Show-RamAccountDialog {
     )
 
     $t = $Global:RamTheme
+    $mm = $t.M
     $isNew = ($null -eq $Account)
 
     $acc = New-RamAccount
@@ -1094,36 +966,26 @@ function Show-RamAccountDialog {
         }
     }
 
-    $dlg = New-Object System.Windows.Forms.Form
-    $dlg.Text            = $(if ($isNew) { 'Новый аккаунт' } else { "Аккаунт: $($acc.Alias)" })
-    $dlg.FormBorderStyle = 'FixedDialog'
-    $dlg.StartPosition   = 'CenterParent'
-    $dlg.MaximizeBox     = $false; $dlg.MinimizeBox = $false
-    $dlg.BackColor       = $t.Bg
-    $dlg.Font            = $t.FontBody
-    $dlg.ClientSize      = New-Object System.Drawing.Size(920, 620)
-    $dlg.Add_HandleCreated({ Set-RamDarkTitleBar $this })
+    $winText = if ($isNew) { 'Новый аккаунт' } else { "Аккаунт: $($acc.Alias)" }
+    $shell = New-RamDialogShell -WindowText $winText -Caption $winText -Width ([int][Math]::Round(864 * $mm.Scale))
+    $dlg = $shell.Form
+    $lay = $shell.Layout
 
-    $stripe = New-Object System.Windows.Forms.Panel
-    $stripe.Size = New-Object System.Drawing.Size(920, 4); $stripe.BackColor = $t.Accent
-    $dlg.Controls.Add($stripe)
-
-    $dlg.Controls.Add((New-RamLabel -Text $dlg.Text -X 28 -Y 20 -Width 560 -Height 32 -Font $t.FontBig))
+    $cols = Add-RamColumns -Layout $lay -Weights @(1, 1)
+    $lc = $cols[0]
+    $rc = $cols[1]
+    $LW = $lc.Width
+    $RW = $rc.Width
 
     # ============================================ ЛЕВАЯ КОЛОНКА: кто и куда ==
-    $L = 28; $LW = 400
+    $tbAlias = New-RamTextBox -Width $LW -Height $mm.RowH -Value $acc.Alias
+    [void](Add-RamField -Layout $lc -Caption 'НАЗВАНИЕ В СПИСКЕ' -Control $tbAlias)
 
-    $dlg.Controls.Add((New-RamLabel -Text 'НАЗВАНИЕ В СПИСКЕ' -X $L -Y 66 -Width 300 -Height 18 -Font $t.FontSmall -Color $t.Muted))
-    $tbAlias = New-RamTextBox -Width $LW -Height 32 -Value $acc.Alias
-    $tbAlias.Location = New-Object System.Drawing.Point($L, 86)
-    $dlg.Controls.Add($tbAlias)
+    $tbCookie = New-RamTextBox -Width $LW -Height ([int][Math]::Round(64 * $mm.Scale)) -Multiline -Value $acc.Cookie
+    [void](Add-RamField -Layout $lc -Caption 'КУКА .ROBLOSECURITY' -Control $tbCookie)
 
-    $dlg.Controls.Add((New-RamLabel -Text 'КУКА .ROBLOSECURITY' -X $L -Y 128 -Width 300 -Height 18 -Font $t.FontSmall -Color $t.Muted))
-    $tbCookie = New-RamTextBox -Width $LW -Height 64 -Multiline -Value $acc.Cookie
-    $tbCookie.Location = New-Object System.Drawing.Point($L, 148)
-    $dlg.Controls.Add($tbCookie)
-
-    $btnFromApp = New-RamButton -Text 'Из приложения' -Width 194 -Height 30 -OnClick {
+    $halfW = [int](($LW - $mm.Gap) / 2)
+    $btnFromApp = New-RamButton -Text 'Из приложения' -Width $halfW -Height $mm.RowH -Fixed -OnClick {
         try {
             $c = Import-RamCurrentAccountCookie
             $tbCookie.Tag.Text = $c
@@ -1131,16 +993,15 @@ function Show-RamAccountDialog {
             $lblWho.ForeColor = $t.Ok
         } catch { Show-RamError $_.Exception.Message }
     }
-    $btnFromApp.Location = New-Object System.Drawing.Point($L, 220)
-    $dlg.Controls.Add($btnFromApp)
-
-    $btnCheck = New-RamButton -Text 'Проверить' -Width 198 -Height 30 -Kind 'primary' -OnClick {
+    $btnCheck = New-RamButton -Text 'Проверить' -Width ($LW - $halfW - $mm.Gap) -Height $mm.RowH -Fixed -Kind 'primary' -OnClick {
         $c = $tbCookie.Tag.Text.Trim()
         if ([string]::IsNullOrWhiteSpace($c)) { Show-RamError 'Сначала вставь куку.'; return }
         $dlg.Cursor = [System.Windows.Forms.Cursors]::WaitCursor
         try {
             $u = Get-RamAuthenticatedUser -Cookie $c
             $acc.Username = $u.Name; $acc.UserId = $u.Id
+            $acc.CookieOk = 'yes'
+            $acc.CookieCheckedAt = (Get-Date).ToString('s')
             $lblWho.Text = "Аккаунт: $($u.Name)  (ID $($u.Id))"
             $lblWho.ForeColor = $t.Ok
             if ([string]::IsNullOrWhiteSpace($tbAlias.Tag.Text) -or $tbAlias.Tag.Text -eq 'Новый аккаунт') {
@@ -1151,19 +1012,14 @@ function Show-RamAccountDialog {
             $lblWho.ForeColor = $t.Danger
         } finally { $dlg.Cursor = [System.Windows.Forms.Cursors]::Default }
     }
-    $btnCheck.Location = New-Object System.Drawing.Point(($L + 202), 220)
-    $dlg.Controls.Add($btnCheck)
+    [void](Add-RamRow -Layout $lc -Items @(@{ Control = $btnFromApp; Width = $halfW }, @{ Control = $btnCheck; Width = ($LW - $halfW - $mm.Gap) }))
 
-    $lblWho = New-RamLabel -Text $(if ($acc.Username) { "Аккаунт: $($acc.Username)  (ID $($acc.UserId))" } else { 'Аккаунт не проверен' }) `
-                           -X $L -Y 256 -Width $LW -Height 22 -Font $t.FontSmall -Color $t.Muted
-    $dlg.Controls.Add($lblWho)
+    $lblWho = Add-RamTextBlock -Layout $lc -Font $t.FontSmall -Color $t.Muted -Lines 2 `
+                               -Text $(if ($acc.Username) { "Аккаунт: $($acc.Username)  (ID $($acc.UserId))" } else { 'Аккаунт не проверен' })
 
-    $dlg.Controls.Add((New-RamLabel -Text 'ИГРА — ССЫЛКА ИЛИ ID' -X $L -Y 288 -Width $LW -Height 18 -Font $t.FontSmall -Color $t.Muted))
-    $tbPlace = New-RamTextBox -Width 258 -Height 32 -Value $acc.PlaceId
-    $tbPlace.Location = New-Object System.Drawing.Point($L, 308)
-    $dlg.Controls.Add($tbPlace)
-
-    $btnResolve = New-RamButton -Text 'Узнать' -Width 134 -Height 32 -OnClick {
+    $resolveW = Get-RamDialogButtonWidth -Text 'Узнать'
+    $tbPlace = New-RamTextBox -Width ($LW - $resolveW - $mm.Gap) -Height $mm.RowH -Value $acc.PlaceId
+    $btnResolve = New-RamButton -Text 'Узнать' -Width $resolveW -Height $tbPlace.Height -Fixed -OnClick {
         if ([string]::IsNullOrWhiteSpace($tbPlace.Tag.Text)) {
             $acc.GameName = ''
             $lblGame.Text = 'Игра не задана — Roblox просто откроется'
@@ -1188,37 +1044,22 @@ function Show-RamAccountDialog {
             $lblGame.ForeColor = $t.Danger
         } finally { $dlg.Cursor = [System.Windows.Forms.Cursors]::Default }
     }
-    $btnResolve.Location = New-Object System.Drawing.Point(($L + 266), 308)
-    $dlg.Controls.Add($btnResolve)
+    [void](Add-RamTextBlock -Layout $lc -Text 'ИГРА — ССЫЛКА ИЛИ ID' -Font $t.FontSmall -Color $t.Muted -SingleLine)
+    [void](Add-RamRow -Layout $lc -VAlign 'middle' -Items @(
+        @{ Control = $tbPlace; Width = ($LW - $resolveW - $mm.Gap) },
+        @{ Control = $btnResolve; Width = $resolveW }
+    ))
+    $lblGame = Add-RamTextBlock -Layout $lc -Font $t.FontSmall -Color $t.Muted -SingleLine `
+                                -Text $(if ($acc.GameName) { "Игра: $($acc.GameName)" } else { 'Название игры не загружено' })
 
-    $lblGame = New-RamLabel -Text $(if ($acc.GameName) { "Игра: $($acc.GameName)" } else { 'Название игры не загружено' }) `
-                            -X $L -Y 348 -Width $LW -Height 20 -Font $t.FontSmall -Color $t.Muted -Truncatable
-    $dlg.Controls.Add($lblGame)
+    $tbLink = New-RamTextBox -Width $LW -Height $mm.RowH -Value $acc.LinkCode
+    [void](Add-RamField -Layout $lc -Caption 'ПРИВАТНЫЙ СЕРВЕР' -Control $tbLink)
 
-    $dlg.Controls.Add((New-RamLabel -Text 'ПРИВАТНЫЙ СЕРВЕР' -X $L -Y 378 -Width $LW -Height 18 -Font $t.FontSmall -Color $t.Muted))
-    $tbLink = New-RamTextBox -Width $LW -Height 32 -Value $acc.LinkCode
-    $tbLink.Location = New-Object System.Drawing.Point($L, 398)
-    $dlg.Controls.Add($tbLink)
-
-    $dlg.Controls.Add((New-RamLabel -Text 'JOBID КОНКРЕТНОГО СЕРВЕРА' -X $L -Y 440 -Width $LW -Height 18 -Font $t.FontSmall -Color $t.Muted))
-    $tbJob = New-RamTextBox -Width $LW -Height 32 -Value $acc.JobId
-    $tbJob.Location = New-Object System.Drawing.Point($L, 460)
-    $dlg.Controls.Add($tbJob)
+    $tbJob = New-RamTextBox -Width $LW -Height $mm.RowH -Value $acc.JobId
+    [void](Add-RamField -Layout $lc -Caption 'JOBID КОНКРЕТНОГО СЕРВЕРА' -Control $tbJob)
 
     # =========================================== ПРАВАЯ КОЛОНКА: настройки ===
-    # Здесь координат больше нет: колонка ведёт себя сама, поэтому ряд готовых
-    # наборов удалось вставить, ничего под ним не двигая руками.
-    $R = 480; $RW = 412
-    $mm = $t.M
-
-    $rc = New-RamLayout -Container $dlg -PadX 0 -PadY 0 -Width $RW
-    $rc.X = $R; $rc.Y = 66; $rc.Gap = $mm.Gap
-
-    $capH = (Measure-RamText -Text 'Ay' -Font $t.FontSmall).Height + 2
-    [void](Add-RamRow -Layout $rc -Height $capH -Gap $mm.GapSm -Items @(
-        @{ Control = (New-RamLabel -Text 'ГОТОВЫЕ НАБОРЫ' -X 0 -Y 0 -Width 10 -Height $capH -Font $t.FontSmall -Color $t.Muted)
-           Width   = $RW }
-    ))
+    [void](Add-RamTextBlock -Layout $rc -Text 'ГОТОВЫЕ НАБОРЫ' -Font $t.FontSmall -Color $t.Muted -SingleLine)
 
     # Кнопки наборов. Ключ живёт на самой кнопке, а списки обработчик находит
     # через форму по имени — так он не зависит от локалов этой функции.
@@ -1240,40 +1081,26 @@ function Show-RamAccountDialog {
         $pb.Tag | Add-Member -NotePropertyName 'PresetKey' -NotePropertyValue ([string]$p.Key) -Force
         $presetBtns += $pb
     }
-    # Столбиком во всю ширину колонки. По две в ряд надписи не влезали на
-    # 150% и уезжали за край, а резать их многоточием — терять смысл кнопки.
-    [void](Add-RamStack -Layout $rc -Items $presetBtns -Align 'fill' -Gap $mm.GapSm)
-
-    $noteH = (Measure-RamText -Text 'Один щелчок ставит графику, кадры и звук. Дальше можно поправить руками.' -Font $t.FontSmall -MaxWidth $RW).Height + 2
-    [void](Add-RamRow -Layout $rc -Height $noteH -Gap $mm.GapSm -Items @(
-        @{ Control = (New-RamLabel -Text 'Один щелчок ставит графику, кадры и звук. Дальше можно поправить руками.' `
-                                   -X 0 -Y 0 -Width 10 -Height $noteH -Font $t.FontSmall -Color $t.Muted)
-           Width   = $RW }
-    ))
+    # Столбиком во всю ширину колонки: по две в ряд надписи не влезают на 150%.
+    [void](Add-RamStack -Layout $rc -Items $presetBtns -Align 'fill')
+    [void](Add-RamTextBlock -Layout $rc -Font $t.FontSmall -Color $t.Muted `
+           -Text 'Один щелчок ставит графику, кадры и звук. Дальше можно поправить руками.')
     [void](Add-RamGap -Layout $rc -Height $mm.GapSm)
-
-    [void](Add-RamRow -Layout $rc -Height $capH -Gap $mm.GapSm -Items @(
-        @{ Control = (New-RamLabel -Text 'НАСТРОЙКИ КЛИЕНТА ДЛЯ ЭТОГО АККАУНТА' -X 0 -Y 0 -Width 10 -Height $capH -Font $t.FontSmall -Color $t.Muted)
-           Width   = $RW }
-    ))
+    [void](Add-RamTextBlock -Layout $rc -Text 'НАСТРОЙКИ КЛИЕНТА ДЛЯ ЭТОГО АККАУНТА' -Font $t.FontSmall -Color $t.Muted -SingleLine)
 
     # Ширина подписей — по самой длинной, а не назначенная числом.
     $rowCaps = @('Качество графики', 'Предел кадров (FPS)', 'Режим окна', 'Громкость', 'Набор', 'Цветная метка')
     $capW = 0
     foreach ($c in $rowCaps) {
-        $w = (Measure-RamText -Text $c -Font $t.FontBody).Width
-        if ($w -gt $capW) { $capW = $w }
+        $cw = (Measure-RamText -Text $c -Font $t.FontBody).Width
+        if ($cw -gt $capW) { $capW = $cw }
     }
     $capW += $mm.GapLg
     $fieldW = $RW - $capW - $mm.Gap
 
     $addRight = {
         param([string]$caption, $control)
-        $h = (Measure-RamText -Text $caption -Font $t.FontBody).Height + 2
-        [void](Add-RamRow -Layout $rc -VAlign 'middle' -Items @(
-            @{ Control = (New-RamLabel -Text $caption -X 0 -Y 0 -Width 10 -Height $h); Width = $capW },
-            @{ Control = $control; Width = $fieldW }
-        ))
+        [void](Add-RamField -Layout $rc -Caption $caption -Control $control -Placement 'side' -CaptionWidth $capW -Font $t.FontBody -Color $t.Text)
     }
 
     $cbGfx = New-RamCombo -X 0 -Y 0 -Width $fieldW -Items (Get-RamGraphicsChoices) -Value ([string]$acc.Graphics)
@@ -1296,12 +1123,8 @@ function Show-RamAccountDialog {
     $cbVol.Name = 'ramAccVol'
     & $addRight 'Громкость' $cbVol
 
-    # --- набор и метка
     [void](Add-RamGap -Layout $rc -Height $mm.GapSm)
-    [void](Add-RamRow -Layout $rc -Height $capH -Gap $mm.GapSm -Items @(
-        @{ Control = (New-RamLabel -Text 'НАБОР И МЕТКА' -X 0 -Y 0 -Width 10 -Height $capH -Font $t.FontSmall -Color $t.Muted)
-           Width   = $RW }
-    ))
+    [void](Add-RamTextBlock -Layout $rc -Text 'НАБОР И МЕТКА' -Font $t.FontSmall -Color $t.Muted -SingleLine)
 
     $tbGroup = New-RamTextBox -Width $fieldW -Height $mm.RowHSm -Value $acc.Group
     & $addRight 'Набор' $tbGroup
@@ -1312,21 +1135,13 @@ function Show-RamAccountDialog {
     & $addRight 'Цветная метка' $cbColor
 
     [void](Add-RamGap -Layout $rc -Height $mm.GapSm)
-    [void](Add-RamRow -Layout $rc -Height $capH -Gap $mm.GapSm -Items @(
-        @{ Control = (New-RamLabel -Text 'ЗАМЕТКА — ВИДНА НА КАРТОЧКЕ' -X 0 -Y 0 -Width 10 -Height $capH -Font $t.FontSmall -Color $t.Muted)
-           Width   = $RW }
-    ))
     $tbNote = New-RamTextBox -Width $RW -Height $mm.RowHSm -Value $acc.Note
-    [void](Add-RamRow -Layout $rc -Items @(@{ Control = $tbNote; Width = $RW }))
+    [void](Add-RamField -Layout $rc -Caption 'ЗАМЕТКА — ВИДНА НА КАРТОЧКЕ' -Control $tbNote)
 
-    # --- место окна
     $winTxt = if ([int]$acc.WindowW -gt 0) {
         "Место окна запомнено: $($acc.WindowX);$($acc.WindowY)  размер $($acc.WindowW)x$($acc.WindowH)"
     } else { 'Место окна не запомнено' }
-    $winH = (Measure-RamText -Text $winTxt -Font $t.FontSmall -MaxWidth $RW).Height + 2
-    $lblWin = New-RamLabel -Text $winTxt -X 0 -Y 0 -Width 10 -Height $winH -Font $t.FontSmall -Color $t.Muted
-    [void](Add-RamRow -Layout $rc -Height $winH -Gap $mm.GapSm -Items @(@{ Control = $lblWin; Width = $RW }))
-
+    $lblWin = Add-RamTextBlock -Layout $rc -Text $winTxt -Font $t.FontSmall -Color $t.Muted
     $btnForgetWin = New-RamButton -Text 'Забыть место окна' -Width 1 -Height $mm.RowHSm -Kind 'ghost' -OnClick {
         $acc.WindowX = -1; $acc.WindowY = -1; $acc.WindowW = -1; $acc.WindowH = -1
         $lblWin.Text = 'Место окна не запомнено'
@@ -1334,25 +1149,16 @@ function Show-RamAccountDialog {
     [void](Add-RamRow -Layout $rc -Items @($btnForgetWin))
 
     # ============================================================== низ ======
-    # Низ считается от самой длинной колонки, а не от прежних жёстких 560:
-    # правая колонка теперь растёт вместе со шрифтом, и на 125% упиралась
-    # прямо в кнопку «Сохранить».
-    $lowest = 0
-    foreach ($c in $dlg.Controls) { if ($c.Bottom -gt $lowest) { $lowest = $c.Bottom } }
-
-    $bar = New-RamLayout -Container $dlg -PadX 28 -PadY 0 -Width (920 - 56)
-    $bar.Y = $lowest + $mm.GapLg
-    $bar.Bottom = $bar.Y
-
-    $btnSave = New-RamButton -Text 'Сохранить' -Width 1 -Height $mm.RowHLg -Kind 'primary' -OnClick {
+    [void](Close-RamColumns -Layout $lay -Columns $cols)
+    [void](Add-RamGap -Layout $lay -Height $mm.Gap)
+    $btnSave = New-RamButton -Text 'Сохранить' -Width $mm.BtnMinW -Height $mm.RowHLg -Kind 'primary' -OnClick {
         $this.FindForm().Tag = $true; $this.FindForm().Close()
     }
-    $btnCancel = New-RamButton -Text 'Отмена' -Width 1 -Height $mm.RowHLg -OnClick {
+    $btnCancel = New-RamButton -Text 'Отмена' -Width $mm.BtnMinW -Height $mm.RowHLg -OnClick {
         $this.FindForm().Tag = $false; $this.FindForm().Close()
     }
-    [void](Add-RamButtonBar -Layout $bar -Primary $btnSave -Secondary @($btnCancel))
-    [void](Complete-RamLayout -Layout $bar -MinWidth 920 -ClampToScreen)
-    $stripe.Size = New-Object System.Drawing.Size($dlg.ClientSize.Width, $mm.StripeH)
+    [void](Add-RamButtonBar -Layout $lay -Primary $btnSave -Secondary @($btnCancel))
+    [void](Complete-RamDialogShell -Shell $shell)
     $dlg.Tag = $false
 
     if ($BuildOnly) { return $dlg }
@@ -1385,9 +1191,9 @@ function Show-RamAccountDialog {
     $acc.Volume       = Get-RamComboValue $cbVol
     $acc.Color        = Get-RamComboValue $cbColor
 
-    $lc = ConvertTo-RamLinkCode -Value $tbLink.Tag.Text
-    if (-not $lc -and $tbLink.Tag.Text.Trim() -match '^[A-Za-z0-9_\-]{6,}$') { $lc = $tbLink.Tag.Text.Trim() }
-    $acc.LinkCode = $lc
+    $lc2 = ConvertTo-RamLinkCode -Value $tbLink.Tag.Text
+    if (-not $lc2 -and $tbLink.Tag.Text.Trim() -match '^[A-Za-z0-9_\-]{6,}$') { $lc2 = $tbLink.Tag.Text.Trim() }
+    $acc.LinkCode = $lc2
 
     $dlg.Dispose()
     return $acc
@@ -1427,7 +1233,12 @@ function Draw-RamThemePreview {
     if ($null -eq $pal) { return }
     $g = $Graphics
     $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
-    $W = $Panel.Width; $H = $Panel.Height
+    # Макет нарисован в координатах 100%: растягиваем его под масштаб экрана,
+    # а шрифты берём в пикселях, чтобы они не выросли второй раз от DPI.
+    $sc = [double]$Global:RamTheme.M.Scale
+    if ($sc -le 0) { $sc = 1.0 }
+    $g.ScaleTransform([single]$sc, [single]$sc)
+    $W = [int]($Panel.Width / $sc); $H = [int]($Panel.Height / $sc)
 
     $brush = { param($col) New-Object System.Drawing.SolidBrush($col) }
     $round = {
@@ -1443,9 +1254,10 @@ function Draw-RamThemePreview {
     # боковая панель
     $sb = & $brush $pal.Panel; $g.FillRectangle($sb, 0, 0, 108, $H); $sb.Dispose()
 
-    $fTitle = New-Object System.Drawing.Font('Segoe UI Semibold', 10)
-    $fSmall = New-Object System.Drawing.Font('Segoe UI', 7.5)
-    $fBody  = New-Object System.Drawing.Font('Segoe UI', 8)
+    $px = [System.Drawing.GraphicsUnit]::Pixel
+    $fTitle = New-Object System.Drawing.Font('Segoe UI Semibold', [single]13.3, [System.Drawing.FontStyle]::Regular, $px)
+    $fSmall = New-Object System.Drawing.Font('Segoe UI', [single]10, [System.Drawing.FontStyle]::Regular, $px)
+    $fBody  = New-Object System.Drawing.Font('Segoe UI', [single]10.7, [System.Drawing.FontStyle]::Regular, $px)
 
     # логотип
     $tb = & $brush $pal.Text
@@ -1536,6 +1348,8 @@ function Show-RamThemeConstructor {
     param([string]$EditKey = '', [switch]$BuildOnly)
 
     $t = $Global:RamTheme
+    $mm = $t.M
+    $k = { param($n) [int][Math]::Round($n * $mm.Scale) }
 
     # --- рабочее состояние
     $existing = $null
@@ -1556,8 +1370,8 @@ function Show-RamThemeConstructor {
         $state.Base = if ((ConvertTo-RamHsl -Color $pal.Bg).L -gt 0.5) { 'light' }
                       elseif ((ConvertTo-RamHsl -Color $pal.Bg).L -lt 0.05) { 'black' }
                       else { 'dark' }
-        foreach ($k in @('Bg','Panel','Card','CardHover','CardSel','Border','Text','Muted','Accent','AccentHov','Ok','Warn','Danger','DangerHov','LogBack')) {
-            $state.Manual[$k] = $pal[$k]
+        foreach ($key0 in @('Bg','Panel','Card','CardHover','CardSel','Border','Text','Muted','Accent','AccentHov','Ok','Warn','Danger','DangerHov','LogBack')) {
+            $state.Manual[$key0] = $pal[$key0]
         }
     }
 
@@ -1565,36 +1379,28 @@ function Show-RamThemeConstructor {
         param($st)
         # Базовая палитра из акцента и основы, поверх — ручные переопределения.
         $auto = New-RamDerivedPalette -Accent $st.Accent -Base $st.Base
-        foreach ($k in @($st.Manual.Keys)) { $auto[$k] = $st.Manual[$k] }
+        foreach ($kk in @($st.Manual.Keys)) { $auto[$kk] = $st.Manual[$kk] }
         $st.Palette = $auto
     }
     if ($null -eq $state.Palette) { Rebuild-Palette $state }
 
-    $dlg = New-Object System.Windows.Forms.Form
-    $dlg.Text            = 'Конструктор тем'
-    $dlg.FormBorderStyle = 'FixedDialog'
-    $dlg.StartPosition   = 'CenterParent'
-    $dlg.MaximizeBox     = $false; $dlg.MinimizeBox = $false
-    $dlg.BackColor       = $t.Bg
-    $dlg.ForeColor       = $t.Text
-    $dlg.Font            = $t.FontBody
-    $dlg.ClientSize      = New-Object System.Drawing.Size(880, 640)
+    $shell = New-RamDialogShell -WindowText 'Конструктор тем' -Caption 'Конструктор тем' -Width (& $k 824)
+    $dlg = $shell.Form
+    $lay = $shell.Layout
 
-    $stripe = New-Object System.Windows.Forms.Panel
-    $stripe.Size = New-Object System.Drawing.Size(880, 4); $stripe.BackColor = $t.Accent
-    $dlg.Controls.Add($stripe)
-
-    $dlg.Controls.Add((New-RamLabel -Text 'Конструктор тем' -X 28 -Y 22 -Width 400 -Height 30 -Font $t.FontBig))
+    $previewW = & $k 400
+    $cols = Add-RamColumns -Layout $lay -Weights @(0, $previewW)
+    $lc = $cols[0]
+    $pc = $cols[1]
 
     # --- превью справа
     $preview = New-Object System.Windows.Forms.Panel
-    $preview.Location = New-Object System.Drawing.Point(452, 64)
-    $preview.Size     = New-Object System.Drawing.Size(400, 300)
-    $preview.Tag      = [pscustomobject]@{ Palette = $state.Palette }
+    $preview.Size = New-Object System.Drawing.Size($previewW, (& $k 300))
+    $preview.Tag  = [pscustomobject]@{ Palette = $state.Palette }
     Set-RamDoubleBuffered $preview
     $preview.Add_Paint({ param($src, $e) Draw-RamThemePreview -Panel $src -Graphics $e.Graphics })
-    $dlg.Controls.Add($preview)
-    $dlg.Controls.Add((New-RamLabel -Text 'Так будет выглядеть окно' -X 452 -Y 372 -Width 400 -Height 20 -Font $t.FontSmall -Color $t.Muted))
+    [void](Add-RamRow -Layout $pc -Height $preview.Height -Items @(@{ Control = $preview; Width = $previewW }))
+    [void](Add-RamTextBlock -Layout $pc -Text 'Так будет выглядеть окно' -Font $t.FontSmall -Color $t.Muted -SingleLine)
 
     $refreshPreview = {
         Rebuild-Palette $state
@@ -1602,55 +1408,44 @@ function Show-RamThemeConstructor {
         $preview.Invalidate()
     }.GetNewClosure()
 
-    # Кнопки-образцы подробной правки. Объявляем ЗДЕСЬ, до пресетов акцента:
-    # их клики зовут $refreshSwatches, а замыкание запоминает переменную в
-    # момент создания. $swatchButtons — хэш, поэтому заполнить его можно и
-    # позже: замыкание держит ссылку на тот же объект.
+    # Кнопки-образцы подробной правки. Хэш заполняется позже, замыкание держит
+    # ссылку на тот же объект.
     $swatchButtons = @{}
     $refreshSwatches = {
-        foreach ($k in @($swatchButtons.Keys)) { $swatchButtons[$k].BackColor = $state.Palette[$k] }
+        foreach ($sk in @($swatchButtons.Keys)) { $swatchButtons[$sk].BackColor = $state.Palette[$sk] }
     }.GetNewClosure()
 
-    # --- имя
-    $dlg.Controls.Add((New-RamLabel -Text 'Название темы' -X 28 -Y 70 -Width 200 -Height 20 -Font $t.FontSmall -Color $t.Muted))
-    # Значение задаём через -Value и читаем через .Tag.Text: у панели-обёртки
-    # свой собственный .Text, и запись в него не доходила до поля, а чтение
-    # возвращало старое значение. Из-за этого тема всегда сохранялась под
-    # именем «Моя тема», как бы её ни назвали.
-    $tbName = New-RamTextBox -Width 360 -Height 30 -Value $(
+    # --- имя. Значение через -Value, чтение через .Tag.Text: у панели-обёртки
+    # свой .Text, и тема сохранялась под именем «Моя тема», как бы её ни назвали.
+    $tbName = New-RamTextBox -Width $lc.Width -Height $mm.RowH -Value $(
         if ($null -ne $existing) { [string]$existing.Title } else { 'Моя тема' })
-    $tbName.Location = New-Object System.Drawing.Point(28, 92)
-    $dlg.Controls.Add($tbName)
+    [void](Add-RamField -Layout $lc -Caption 'Название темы' -Control $tbName)
 
     # --- основа
-    $dlg.Controls.Add((New-RamLabel -Text 'Основа' -X 28 -Y 132 -Width 200 -Height 20 -Font $t.FontSmall -Color $t.Muted))
+    [void](Add-RamTextBlock -Layout $lc -Text 'Основа' -Font $t.FontSmall -Color $t.Muted -SingleLine)
     $baseButtons = @{}
-    $baseDefs = @(@('dark','Тёмная'), @('light','Светлая'), @('black','Чёрная'))
-    $bx = 28
-    foreach ($bd in $baseDefs) {
-        $key = $bd[0]
-        $btn = New-RamButton -Text $bd[1] -Width 116 -Height 32 -Kind $(if ($state.Base -eq $key) { 'primary' } else { 'ghost' }) -OnClick ({
+    $baseRow = @()
+    foreach ($bd in @(@('dark','Тёмная'), @('light','Светлая'), @('black','Чёрная'))) {
+        $bkey = $bd[0]
+        $btn = New-RamButton -Text $bd[1] -Width (& $k 100) -Height $mm.RowH -Kind $(if ($state.Base -eq $bkey) { 'primary' } else { 'ghost' }) -OnClick ({
             $state.Base = $this.Tag.BaseKey
-            foreach ($k in $baseButtons.Keys) { Set-RamButtonKind -Button $baseButtons[$k] -Kind $(if ($k -eq $state.Base) { 'primary' } else { 'ghost' }) }
+            foreach ($bk in $baseButtons.Keys) { Set-RamButtonKind -Button $baseButtons[$bk] -Kind $(if ($bk -eq $state.Base) { 'primary' } else { 'ghost' }) }
             & $refreshPreview
         }.GetNewClosure())
-        $btn.Tag | Add-Member -NotePropertyName BaseKey -NotePropertyValue $key -Force
-        $btn.Location = New-Object System.Drawing.Point($bx, 154)
-        $dlg.Controls.Add($btn)
-        $baseButtons[$key] = $btn
-        # Шаг по фактической ширине: на крупном масштабе надписи длиннее и
-        # кнопки налезали друг на друга.
-        $bx += (Measure-RamControl -Control $btn).Width + 8
+        $btn.Tag | Add-Member -NotePropertyName BaseKey -NotePropertyValue $bkey -Force
+        $baseButtons[$bkey] = $btn
+        $baseRow += $btn
     }
+    [void](Add-RamRow -Layout $lc -Items $baseRow)
 
     # --- акцент: пресеты + свой
-    $dlg.Controls.Add((New-RamLabel -Text 'Главный цвет' -X 28 -Y 198 -Width 200 -Height 20 -Font $t.FontSmall -Color $t.Muted))
+    [void](Add-RamTextBlock -Layout $lc -Text 'Главный цвет' -Font $t.FontSmall -Color $t.Muted -SingleLine)
     $presets = @('#00A2FF','#8B6CFF','#10B981','#22C5D3','#A878F5','#F45E96','#FB7140','#F59E0B','#EF4444','#16A34A')
-    $px = 28; $py = 220
+    $swS = & $k 32
+    $rowItems = @()
     foreach ($hex in $presets) {
         $sw = New-Object System.Windows.Forms.Panel
-        $sw.Size = New-Object System.Drawing.Size(32, 32)
-        $sw.Location = New-Object System.Drawing.Point($px, $py)
+        $sw.Size = New-Object System.Drawing.Size($swS, $swS)
         $sw.BackColor = (ConvertFrom-RamHex -Hex $hex)
         $sw.Cursor = [System.Windows.Forms.Cursors]::Hand
         $sw.Tag = $hex
@@ -1662,12 +1457,15 @@ function Show-RamThemeConstructor {
             & $refreshPreview
             if ($state.Detailed) { & $refreshSwatches }
         }.GetNewClosure())
-        $dlg.Controls.Add($sw)
-        $px += 38
-        if ($px -gt 28 + 38 * 5 - 1) { $px = 28; $py += 38 }
+        $rowItems += $sw
+        if ($rowItems.Count -eq 5) {
+            [void](Add-RamRow -Layout $lc -Items $rowItems)
+            $rowItems = @()
+        }
     }
+    if ($rowItems.Count -gt 0) { [void](Add-RamRow -Layout $lc -Items $rowItems) }
 
-    $btnCustomAccent = New-RamButton -Text 'Свой цвет...' -Width 140 -Height 30 -Kind 'ghost' -OnClick {
+    $btnCustomAccent = New-RamButton -Text 'Свой цвет...' -Width 1 -Height $mm.RowHSm -Kind 'ghost' -OnClick {
         $cd = New-Object System.Windows.Forms.ColorDialog
         $cd.FullOpen = $true
         $cd.Color = $state.Accent
@@ -1679,29 +1477,30 @@ function Show-RamThemeConstructor {
         }
         $cd.Dispose()
     }.GetNewClosure()
-    $btnCustomAccent.Location = New-Object System.Drawing.Point(232, 258)
-    $dlg.Controls.Add($btnCustomAccent)
 
-    # --- подробная правка (по кнопке)
+    # --- подробная правка (по кнопке). Цвета — в две колонки, а место под них
+    # окно добавляет себе только при раскрытии: иначе снизу висела пустота.
+    $keyDefs = @(Get-RamPaletteColorKeys)
+    $rowH = [Math]::Max((& $k 24), (Measure-RamText -Text 'Ау' -Font $t.FontSmall).Height + (& $k 6))
+    $perCol = [int][Math]::Ceiling($keyDefs.Count / 2)
+    $colW2 = [int](($lc.Width - $mm.Gap) / 2)
     $detailHost = New-Object System.Windows.Forms.Panel
-    $detailHost.Location = New-Object System.Drawing.Point(28, 300)
-    $detailHost.Size     = New-Object System.Drawing.Size(384, 272)
     $detailHost.BackColor = $t.Bg
     $detailHost.Visible = $false
-    $dlg.Controls.Add($detailHost)
-
-    $keyDefs = Get-RamPaletteColorKeys
+    $detailHost.Size = New-Object System.Drawing.Size($lc.Width, ($rowH * $perCol))
     $ry = 0
+    $di = 0
     foreach ($kd in $keyDefs) {
-        $key = $kd.Key
-        $lbl = New-RamLabel -Text $kd.Title -X 44 -Y ($ry + 4) -Width 250 -Height 18 -Font $t.FontSmall -Color $t.Text
-        $detailHost.Controls.Add($lbl)
+        $dx = if ($di -lt $perCol) { 0 } else { $colW2 + $mm.Gap }
+        $ry = $rowH * ($di % $perCol)
+        $di++
+        $ckey = $kd.Key
         $sw = New-Object System.Windows.Forms.Panel
-        $sw.Size = New-Object System.Drawing.Size(28, 20)
-        $sw.Location = New-Object System.Drawing.Point(0, ($ry + 2))
-        $sw.BackColor = $state.Palette[$key]
+        $sw.Size = New-Object System.Drawing.Size((& $k 28), ($rowH - (& $k 4)))
+        $sw.Location = New-Object System.Drawing.Point($dx, ($ry + (& $k 2)))
+        $sw.BackColor = $state.Palette[$ckey]
         $sw.Cursor = [System.Windows.Forms.Cursors]::Hand
-        $sw.Tag = $key
+        $sw.Tag = $ckey
         $sw.Add_Click({
             $cd = New-Object System.Windows.Forms.ColorDialog
             $cd.FullOpen = $true
@@ -1714,25 +1513,39 @@ function Show-RamThemeConstructor {
             $cd.Dispose()
         }.GetNewClosure())
         $detailHost.Controls.Add($sw)
-        $swatchButtons[$key] = $sw
-        $ry += 24
+        $swatchButtons[$ckey] = $sw
+        $lblX = $sw.Right + $mm.Gap
+        $detailHost.Controls.Add((New-RamLabel -Text $kd.Title -X $lblX -Y $ry -Width ($dx + $colW2 - $lblX) -Height $rowH `
+                                               -Font $t.FontSmall -Color $t.Text -BackFill $t.Bg -Truncatable))
     }
 
-    $btnDetail = New-RamButton -Text 'Подробно  ▾' -Width 150 -Height 30 -Kind 'ghost' -OnClick ({
+    # Сколько окну расти при раскрытии: правка встаёт под кнопками левой
+    # колонки, а правая (превью) может и так быть ниже.
+    $grow = @{ By = 0 }
+    $btnDetail = New-RamButton -Text 'Подробно  ▾' -Width (Get-RamDialogButtonWidth -Text 'Свернуть  ▴') -Height $mm.RowHSm -Kind 'ghost' -OnClick ({
         $state.Detailed = -not $state.Detailed
         $detailHost.Visible = $state.Detailed
         Set-RamButtonText -Button $this -Text $(if ($state.Detailed) { 'Свернуть  ▴' } else { 'Подробно  ▾' })
+        $f = $this.FindForm()
+        if ($null -ne $f -and $grow.By -gt 0) {
+            $delta = if ($state.Detailed) { $grow.By } else { -$grow.By }
+            $f.ClientSize = New-Object System.Drawing.Size($f.ClientSize.Width, ($f.ClientSize.Height + $delta))
+        }
         if ($state.Detailed) { & $refreshSwatches }
     }.GetNewClosure())
-    # Правее пресетов, над detailHost (тот появляется ниже, y=300).
-    # Левее превью: оно начинается с X=430, и кнопка не должна его задевать.
-    $btnDetail.Location = New-Object System.Drawing.Point(232, 220)
-    $dlg.Controls.Add($btnDetail)
+    [void](Add-RamRow -Layout $lc -Items @($btnCustomAccent, $btnDetail))
+    $detailHost.Location = New-Object System.Drawing.Point($lc.X, $lc.Y)
+    $dlg.Controls.Add($detailHost)
+    $detailBottom = $lc.Y + $detailHost.Height + $lc.Gap
+
+    [void](Close-RamColumns -Layout $lay -Columns $cols)
+    $grow.By = [Math]::Max(0, $detailBottom - $lay.Y)
+    [void](Add-RamGap -Layout $lay -Height $mm.Gap)
 
     # --- низ: файл + сохранить/отмена
     # Имя программы забираем ДО замыкания: внутри него $script: не виден.
     $appName = $script:AppName
-    $btnToFile = New-RamButton -Text 'В файл...' -Width 130 -Height 34 -Kind 'ghost' -OnClick ({
+    $btnToFile = New-RamButton -Text 'В файл...' -Width 1 -Height $mm.RowH -Kind 'ghost' -OnClick ({
         $sfd = New-Object System.Windows.Forms.SaveFileDialog
         $sfd.Filter = 'Тема AltHub (*.althub-theme.json)|*.althub-theme.json'
         $sfd.FileName = ((($tbName.Tag.Text) -replace '[^\w\-]', '_') + '.althub-theme.json')
@@ -1742,10 +1555,8 @@ function Show-RamThemeConstructor {
         ($payload | ConvertTo-Json -Depth 6) | Set-Content -LiteralPath $sfd.FileName -Encoding UTF8
         Show-RamInfo "Тема сохранена в файл. Можешь отдать её другу — он откроет её кнопкой «Из файла...»."
     }.GetNewClosure())
-    $btnToFile.Location = New-Object System.Drawing.Point(28, 588)
-    $dlg.Controls.Add($btnToFile)
 
-    $btnFromFile = New-RamButton -Text 'Из файла...' -Width 130 -Height 34 -Kind 'ghost' -OnClick ({
+    $btnFromFile = New-RamButton -Text 'Из файла...' -Width 1 -Height $mm.RowH -Kind 'ghost' -OnClick ({
         $ofd = New-Object System.Windows.Forms.OpenFileDialog
         $ofd.Filter = 'Тема AltHub (*.althub-theme.json)|*.althub-theme.json|JSON (*.json)|*.json'
         if ($ofd.ShowDialog() -ne [System.Windows.Forms.DialogResult]::OK) { return }
@@ -1755,10 +1566,10 @@ function Show-RamThemeConstructor {
             if (-not ($th.PSObject.Properties.Name -contains 'Colors')) { throw 'в файле нет цветов темы' }
             $tbName.Tag.Text = [string]$th.Title
             $state.Manual = @{}
-            foreach ($k in @('Bg','Panel','Card','CardHover','CardSel','Border','Text','Muted','Accent','AccentHov','Ok','Warn','Danger','DangerHov','LogBack')) {
-                if ($th.Colors.PSObject.Properties.Name -contains $k) {
-                    $col = ConvertFrom-RamHex -Hex ([string]$th.Colors.$k)
-                    if ($null -ne $col) { $state.Manual[$k] = $col }
+            foreach ($ck in @('Bg','Panel','Card','CardHover','CardSel','Border','Text','Muted','Accent','AccentHov','Ok','Warn','Danger','DangerHov','LogBack')) {
+                if ($th.Colors.PSObject.Properties.Name -contains $ck) {
+                    $col = ConvertFrom-RamHex -Hex ([string]$th.Colors.$ck)
+                    if ($null -ne $col) { $state.Manual[$ck] = $col }
                 }
             }
             if ($state.Manual.ContainsKey('Accent')) { $state.Accent = $state.Manual['Accent'] }
@@ -1766,10 +1577,8 @@ function Show-RamThemeConstructor {
             if ($state.Detailed) { & $refreshSwatches }
         } catch { Show-RamError "Не получилось прочитать файл темы: $($_.Exception.Message)" }
     }.GetNewClosure())
-    $btnFromFile.Location = New-Object System.Drawing.Point(164, 588)
-    $dlg.Controls.Add($btnFromFile)
 
-    $btnSave = New-RamButton -Text 'Сохранить тему' -Width 180 -Height 34 -Kind 'primary' -OnClick ({
+    $btnSave = New-RamButton -Text 'Сохранить тему' -Width $mm.BtnMinW -Height $mm.RowH -Kind 'primary' -OnClick ({
         $title = ([string]$tbName.Tag.Text).Trim()
         if ([string]::IsNullOrWhiteSpace($title)) { Show-RamError 'Дай теме название.'; return }
 
@@ -1784,14 +1593,12 @@ function Show-RamThemeConstructor {
         $dlg.Tag = $key
         $dlg.Close()
     }.GetNewClosure())
-    $saveW2 = (Measure-RamControl -Control $btnSave).Width
-    $dlg.Controls.Add($btnSave)
-
-    $btnCancel = New-RamButton -Text 'Отмена' -Width 120 -Height 34 -OnClick { $this.FindForm().Close() }
-    $cancelW = (Measure-RamControl -Control $btnCancel).Width
-    $btnCancel.Location = New-Object System.Drawing.Point((880 - 28 - $cancelW), 588)
-    $btnSave.Location   = New-Object System.Drawing.Point((880 - 28 - $cancelW - 12 - $saveW2), 588)
-    $dlg.Controls.Add($btnCancel)
+    $btnCancel = New-RamButton -Text 'Отмена' -Width $mm.BtnMinW -Height $mm.RowH -OnClick { $this.FindForm().Close() }
+    [void](Add-RamButtonBar -Layout $lay -Primary $btnSave -Secondary @($btnCancel) -Extra @($btnToFile, $btnFromFile))
+    [void](Complete-RamDialogShell -Shell $shell)
+    # Кнопки низа держатся за нижний край: окно растёт при раскрытии правки.
+    foreach ($b in @($btnToFile, $btnFromFile)) { $b.Anchor = 'Left,Bottom' }
+    foreach ($b in @($btnSave, $btnCancel))    { $b.Anchor = 'Right,Bottom' }
 
     $dlg.Tag = $null
     if ($BuildOnly) { return $dlg }
@@ -1873,7 +1680,7 @@ function Show-RamSettingsDialog {
     }
 
     # ------------------------------------------------------------------ форма
-    $dlg = New-Object System.Windows.Forms.Form
+    $dlg = New-RamForm
     $dlg.Text            = 'Настройки'
     $dlg.FormBorderStyle = 'FixedDialog'
     $dlg.StartPosition   = 'CenterParent'
@@ -1995,6 +1802,9 @@ function Show-RamSettingsDialog {
     [void](& $addNote $pl 'Советуем 8-10. Меньше пяти Roblox не успевает подхватить предыдущее окно, и аккаунт может не войти.')
     [void](Add-RamGap -Layout $pl -Height $m.GapSm)
 
+    $cbLaunchMinimized = & $addCheck $pl 'Запускать окна Roblox свёрнутыми' ([bool]$s.LaunchMinimized) `
+        'Каждый новый клиент сразу уходит в панель задач и не выпрыгивает поверх браузера, игры или Discord. Показать нужное окно можно из карточки.'
+
     $localeItems = @(
         [pscustomobject]@{ Text = 'Русский'; Value = 'ru_ru' },
         [pscustomobject]@{ Text = 'English'; Value = 'en_us' }
@@ -2012,7 +1822,7 @@ function Show-RamSettingsDialog {
                  'Окно подписывается «Roblox — Имя». Так их видно в панели задач, и менеджер узнаёт свои клиенты после перезапуска. Советуем включить.'
     $cbRestart = & $addCheck $pl 'Поднимать аккаунт заново, если клиент вылетел' ([bool]$s.AutoRestart) `
                  'Если Roblox закрылся сам, менеджер запустит его снова — до трёх раз подряд. По умолчанию выключено: при проблемах со связью даёт лишние попытки входа.'
-    $cbCheck   = & $addCheck $pl 'Проверять входы при открытии менеджера' ([bool]$s.CheckOnStart) `
+        $cbCheck   = & $addCheck $pl 'Проверять входы при открытии менеджера' ([bool]$s.CheckOnStart) `
                  'На старте проверяет, живы ли сохранённые входы. Занимает несколько секунд, зато не узнаёшь о протухшей куке в момент запуска.'
 
     # -------------------------------------------------------------- 2. «Окна»
@@ -2048,6 +1858,12 @@ function Show-RamSettingsDialog {
     $cbTheme = New-RamCombo -X 0 -Y 0 -Width $pv.Width -Items (Get-RamThemeItems) -Value ([string]$s.Theme)
     $cbTheme.Name = 'ramThemeCombo'
     [void](Add-RamRow -Layout $pv -Items @(@{ Control = $cbTheme; Width = $pv.Width }))
+
+    [void](Add-RamGap -Layout $pv -Height $m.GapSm)
+    $cbMenuStyle = New-RamCombo -X 0 -Y 0 -Width $pv.Width -Items (Get-RamMenuStyleItems) -Value ([string]$s.MenuStyle)
+    $cbMenuStyle.Name = 'ramMenuStyleCombo'
+    [void](Add-RamRow -Layout $pv -Items @(@{ Control = $cbMenuStyle; Width = $pv.Width }))
+    [void](& $addNote $pv 'Вид меню и цветовая тема независимы. После сохранения окно перестроится, запущенные клиенты Roblox останутся работать.')
 
     # -Width 1 — «мерить по надписи». Без этого каждая берёт минимум по
     # умолчанию (150 px), и три кнопки в ряд просят 466 px при странице в 440.
@@ -2086,7 +1902,7 @@ function Show-RamSettingsDialog {
         Write-RamLog "Тема «$($picked.Title)» удалена." 'ok'
     }
     [void](Add-RamRow -Layout $pv -Items @($btnNewTheme, $btnEditTheme, $btnDelTheme) -Gap $m.Gap)
-    [void](& $addNote $pv 'Тема применится после перезапуска менеджера — цвета запоминаются в момент отрисовки окна. Запущенные клиенты Roblox при этом не закроются.')
+    [void](& $addNote $pv 'Тема применяется перестройкой окна без перезапуска процесса и без закрытия Roblox.')
 
     & $addHead $pv 'КАРТОЧКИ АККАУНТОВ'
     $cbCompact = & $addCheck $pv 'Компактные карточки' ([bool]$s.CompactCards) `
@@ -2359,6 +2175,7 @@ function Show-RamSettingsDialog {
         $cbRename.Tag.Checked  = [bool]$def.RenameWindows
         $cbRestart.Tag.Checked = [bool]$def.AutoRestart
         $cbCheck.Tag.Checked   = [bool]$def.CheckOnStart
+        $cbLaunchMinimized.Tag.Checked = [bool]$def.LaunchMinimized
         $cbTile.Tag.Checked    = [bool]$def.AutoTile
         $cbSavedW.Tag.Checked  = [bool]$def.UseSavedWindows
         $cbHotkey.Tag.Checked  = [bool]$def.HotkeySwitch
@@ -2367,7 +2184,7 @@ function Show-RamSettingsDialog {
         $cbConfirm.Tag.Checked = [bool]$def.ConfirmOnExit
         Set-RamComboItems -Combo $cbOnClose -Items $cbOnClose.Tag -Value ([string]$def.OnClose)
         $cbLogFile.Tag.Checked = [bool]$def.LogToFile
-        foreach ($c in @($cbRename,$cbRestart,$cbCheck,$cbTile,$cbSavedW,$cbHotkey,$cbCompact,$cbEmoji,$cbConfirm,$cbLogFile)) {
+        foreach ($c in @($cbRename,$cbRestart,$cbCheck,$cbLaunchMinimized,$cbTile,$cbSavedW,$cbHotkey,$cbCompact,$cbEmoji,$cbConfirm,$cbLogFile)) {
             $c.Invalidate()
         }
         Show-RamInfo 'Готово. Осталось нажать «Сохранить».'
@@ -2413,6 +2230,7 @@ function Show-RamSettingsDialog {
         $s.HotkeySwitch     = [bool]$cbHotkey.Tag.Checked
         $s.OnClose          = Get-RamComboValue $cbOnClose
         $s.CheckOnStart     = [bool]$cbCheck.Tag.Checked
+        $s.LaunchMinimized  = [bool]$cbLaunchMinimized.Tag.Checked
 
         # Приём из браузера включаем и выключаем СРАЗУ, не дожидаясь
         # перезапуска: иначе человек ставит галочку, жмёт клавишу — и ничего
@@ -2434,21 +2252,22 @@ function Show-RamSettingsDialog {
         }
 
         $oldTheme = $s.Theme
+        $oldMenuStyle = [string]$s.MenuStyle
         $themeKey = Get-RamComboValue $cbTheme
         $picked = Get-RamThemeList | Where-Object { $_.Key -eq $themeKey } | Select-Object -First 1
         if ($picked) { $s.Theme = $picked.Key }
+        $menuKey = Get-RamComboValue $cbMenuStyle
+        if ($menuKey -in @('classic','water','wide')) { $s.MenuStyle = $menuKey }
+        $s.SettingsSchemaVersion = 14
 
         Save-RamSettings -Settings $s
         Build-RamCards
         Write-RamLog 'Настройки сохранены.' 'ok'
 
-        if ($s.Theme -ne $oldTheme) {
+        if ($s.Theme -ne $oldTheme -or $s.MenuStyle -ne $oldMenuStyle) {
             $dlg.Dispose()
-            # Цвета запоминаются в момент создания кнопок и карточек, поэтому
-            # тема применяется только при новом окне.
-            if (Confirm-Ram "Тема «$($picked.Title)» сохранена.`n`nЧтобы она применилась, менеджер нужно перезапустить. Сделать это сейчас?`n`nЗапущенные окна Roblox не закроются.") {
-                Restart-AltHub
-            }
+            $script:RebuildUi = $true
+            $script:UI.Form.Close()
             return
         }
     }
@@ -2514,7 +2333,7 @@ function Show-RamExtensionGuide {
     }
     $pageW = [Math]::Max($w + $m.GapLg, [int][Math]::Round(560 * $m.Scale))
 
-    $dlg = New-Object System.Windows.Forms.Form
+    $dlg = New-RamForm
     $dlg.Text            = 'Расширение для входа из браузера'
     $dlg.FormBorderStyle = 'FixedDialog'
     $dlg.StartPosition   = 'CenterParent'
@@ -2629,7 +2448,7 @@ Edge или Chrome, которые у тебя уже стоят. Просто �
     }
     $pageW = [Math]::Max($w + $m.GapLg, [int][Math]::Round(560 * $m.Scale))
 
-    $dlg = New-Object System.Windows.Forms.Form
+    $dlg = New-RamForm
     $dlg.Text            = 'Скачать Chrome for Testing?'
     $dlg.FormBorderStyle = 'FixedDialog'
     $dlg.StartPosition   = 'CenterParent'
@@ -2701,7 +2520,7 @@ function Show-RamAddChooser {
 
     $ways = @(
         @{ Title = 'Окно браузера'
-           Note  = 'Открою настоящий Chrome, войдёшь руками. Лучший способ для твинков: пароль остаётся между тобой и Roblox, капчу, если вылезет, проходишь сам.'
+           Note  = 'Открою настоящий Chrome, войдёшь руками. Лучший способ для твинков: пароль остаётся между тобой и Roblox, капчу, если вылезет, проходишь сам. Профиль этого окна AltHub не чистит — Roblox со временем узнаёт устройство, и капча становится короче.'
            Key   = 'window' },
         @{ Title = 'Из приложения Roblox'
            Note  = 'Возьму тот вход, под которым ты уже сидишь в самом Roblox. Пароль не нужен вовсе — удобнее всего для основного аккаунта.'
@@ -2714,7 +2533,7 @@ function Show-RamAddChooser {
     # Ширина — от самой длинной пояснительной строки, а не назначена числом.
     $pageW = [int][Math]::Round(600 * $m.Scale)
 
-    $dlg = New-Object System.Windows.Forms.Form
+    $dlg = New-RamForm
     $dlg.Text            = 'Добавить аккаунты'
     $dlg.FormBorderStyle = 'FixedDialog'
     $dlg.StartPosition   = 'CenterParent'

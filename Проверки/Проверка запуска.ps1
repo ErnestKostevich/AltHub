@@ -4,7 +4,7 @@
  Проверка запуска.ps1 — проверяет то, что видит человек
 ================================================================================
  Запуск:
-   powershell -NoProfile -ExecutionPolicy Bypass -File "Проверка запуска.ps1"
+   powershell -NoProfile -ExecutionPolicy Bypass -File "Проверки\Проверка запуска.ps1"
 
  ЗАЧЕМ ОН НУЖЕН.
  Самопроверка.ps1 гоняет код и собирает окна «вхолостую», не показывая их.
@@ -26,8 +26,8 @@
 #>
 
 param(
-    # Папка со сборкой. По умолчанию — та, где лежит этот файл.
-    [string]$Path = $PSScriptRoot,
+    # Папка со сборкой. По умолчанию — на уровень выше папки «Проверки».
+    [string]$Path = (Split-Path -Parent $PSScriptRoot),
     # Не удалять временную копию после прогона (чтобы посмотреть журнал).
     [switch]$Keep
 )
@@ -211,6 +211,12 @@ $seed = [pscustomobject]@{
     TrayConfirmed    = $true
     TrayHintShown    = $true
     WindowFixApplied = $true
+    # Вид меню уже выбран — как у человека, который открывает программу не в
+    # первый раз. Без этого поля программа честно спрашивает «выбери меню»
+    # (так встречают обновившихся с 1.3), главное окно ждёт ответа, и стенд
+    # докладывал «окно так и не появилось» — хотя появилось окно вопроса.
+    MenuStyle             = 'wide'
+    SettingsSchemaVersion = 14
 }
 ConvertTo-Json -InputObject $seed -Depth 3 |
     Set-Content -LiteralPath (Join-Path $dataDir 'settings.json') -Encoding UTF8
@@ -239,6 +245,16 @@ Step 'Окно появляется после двойного клика по 
     Start-Process wscript.exe -ArgumentList $vbs
     $script:app = Wait-RamAppWindow -Before $before -Seconds 30
     if ($null -eq $script:app) {
+        # Назвать, что на экране ВМЕСТО главного окна: вопрос, ошибка или ничего.
+        $seen = @()
+        foreach ($p in (Get-RamOurProcesses -Before $before)) {
+            foreach ($w in (Get-RamWindowsOf -ProcessId $p.Id)) {
+                if ($w.Class -like 'WindowsForms*' -and $w.Title) {
+                    $seen += ('«{0}»{1}' -f $w.Title, $(if ($w.Visible) { '' } else { ' (скрыто)' }))
+                }
+            }
+        }
+        if ($seen.Count) { throw ('главного окна нет, вместо него: ' + ($seen -join ', ')) }
         throw 'окно AltHub так и не появилось — для человека это выглядит как «не запускается»'
     }
     "окно нашлось за отведённое время, процесс $($script:app.Proc.Id)"

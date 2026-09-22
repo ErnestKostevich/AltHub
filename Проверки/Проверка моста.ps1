@@ -23,7 +23,8 @@
 #>
 
 $ErrorActionPreference = 'Stop'
-$root = $PSScriptRoot
+# Скрипт лежит в папке «Проверки», программа — на уровень выше.
+$root = Split-Path -Parent $PSScriptRoot
 . (Join-Path $root 'AltHub.ps1') -NoAutoStart
 $script:Settings = Load-RamSettings
 
@@ -56,7 +57,7 @@ function Invoke-Local {
       некому крутить. Сокет даёт полный контроль: пишем запрос целиком,
       затем крутим разбор и читаем ответ.
     #>
-    param([string]$Path, [string]$Method = 'GET', [string]$Body = '')
+    param([string]$Path, [string]$Method = 'GET', [string]$Body = '', [string]$Origin = 'chrome-extension://althub-test')
 
     $port = Get-RamBridgePort
     if ($port -le 0) { throw 'мост не поднят' }
@@ -64,7 +65,7 @@ function Invoke-Local {
     $bodyBytes = [System.Text.Encoding]::UTF8.GetBytes($Body)
     $head = "$Method $Path HTTP/1.1`r`n" +
             "Host: 127.0.0.1:$port`r`n" +
-            "Origin: chrome-extension://althub-test`r`n" +
+            "Origin: $Origin`r`n" +
             "Connection: close`r`n"
     if ($Method -eq 'POST') {
         $head += "Content-Type: text/plain`r`n"
@@ -144,7 +145,8 @@ Check 'Расширение находит AltHub по /hello' {
     if ($port -le 0) { throw 'мост не поднялся' }
     # Именно так расширение и опознаёт нас: обходит порты и ждёт слово althub.
     $ans = Invoke-Local -Path '/hello'
-    if ($ans.Trim() -ne 'althub') { throw "на /hello ответили «$ans», ожидалось «althub»" }
+    if ($ans.Trim() -notmatch '^althub:(.+)$') { throw "на /hello ответили «$ans», ожидалось «althub:nonce»" }
+    $script:BridgeTestToken = $Matches[1]
     if (-not (Test-RamBridgeExtensionSeen)) { throw 'мост не заметил, что расширение поздоровалось' }
     "ответ: $($ans.Trim())"
 }
@@ -176,7 +178,7 @@ Check 'Горячая клавиша открывает именно эту ст
     # Не запускаем браузер по-настоящему — проверяем, что адрес собирается из
     # текущего порта, а не из чего-то вписанного числом.
     $src = Get-Content -LiteralPath (Join-Path $root 'modules\CookieBridge.ps1') -Raw
-    if ($src -notmatch '\$url\s*=\s*"http://127\.0\.0\.1:\$port/grab\?althub_grab=\$port"') {
+    if ($src -notmatch 'grab\?althub_grab=\$port&althub_token=') {
         throw 'адрес страницы-будильника собирается не из живого порта'
     }
     'адрес берётся из занятого порта'
@@ -186,7 +188,11 @@ Check 'Горячая клавиша открывает именно эту ст
 Check 'Кука доезжает до списка аккаунтов' {
     $before = @($script:Accounts).Count
     $fake = '_|WARNING:-DO-NOT-SHARE-THIS.--Sharing-this-will-allow-someone-to-log-in-as-you.|_' + ('X' * 400)
-    [void](Invoke-Local -Path '/cookie' -Method 'POST' -Body $fake)
+    if (-not $script:BridgeTestToken) {
+        $hello = Invoke-Local -Path '/hello'
+        if ($hello.Trim() -match '^althub:(.+)$') { $script:BridgeTestToken = $Matches[1] }
+    }
+    [void](Invoke-Local -Path ("/cookie?token=" + $script:BridgeTestToken) -Method 'POST' -Body $fake)
     Pump
 
     # Кука выдуманная, поэтому Roblox её не подтвердит — и аккаунт добавиться
@@ -205,6 +211,15 @@ Check 'Мост не падает от мусора и чужих запросо
     Pump
     if (-not (Test-RamBridgeRunning)) { throw 'мост умер от постороннего запроса' }
     'выдержал'
+}
+
+Check 'Мост отвергает веб-страницу и POST без nonce' {
+    $wrongOrigin = Invoke-Local -Path '/hello' -Origin 'https://evil.example'
+    if ($wrongOrigin.Trim() -ne 'forbidden') { throw 'обычная веб-страница получила доступ к /hello' }
+    $fake = '_|WARNING:-DO-NOT-SHARE-THIS.--test.|_' + ('X' * 100)
+    $noToken = Invoke-Local -Path '/cookie' -Method 'POST' -Body $fake
+    if ($noToken.Trim() -ne 'forbidden') { throw 'POST без одноразового nonce не отклонён' }
+    'Origin и nonce обязательны'
 }
 
 # -------------------------------------------------------- 5. клавиша живая ---
