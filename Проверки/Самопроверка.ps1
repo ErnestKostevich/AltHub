@@ -861,6 +861,9 @@ Check 'Графика не перетирается соседним запус�
     $keepUntil = $script:AwaitWindowUntil
     $keepReady = $script:AwaitSettingsReadyAt
     $keepLastLaunch = $script:LastLaunchAt
+    $keepSkipped = $script:ClientSettingsSkippedReason
+    $keepLocalAppData = $env:LOCALAPPDATA
+    $missingSettingsRoot = $null
     try {
         $main = New-RamAccount -Alias 'Основной' -Cookie 'x'
         $main.Graphics = '10'; $main.Volume = '80'
@@ -928,6 +931,17 @@ Check 'Графика не перетирается соседним запус�
         [xml]$probe = '<roblox><Item><token name="SavedQualityLevel">10</token><int name="GraphicsQualityLevel">21</int><bool name="MaxQualityEnabled">true</bool><int name="FramerateCap">60</int><float name="MasterVolume">0.8</float><bool name="Fullscreen">false</bool></Item></roblox>'
         $main.FramerateCap='60'; $main.Fullscreen='no'
         if (-not (Assert-RamClientSettingsXml -Xml $probe -Account $main)) { throw 'повторная проверка XML не сработала' }
+
+        # Регрессия 1.4: если GlobalBasicSettings_13.xml ещё не существовал,
+        # Apply бросал исключение, а очередь отменяла запуск Roblox целиком.
+        # Отсутствие файла должно пропустить только персональные настройки.
+        $missingSettingsRoot = Join-Path $env:TEMP ('althub-no-settings-' + [guid]::NewGuid().ToString('N'))
+        [void](New-Item -ItemType Directory -Path $missingSettingsRoot)
+        $env:LOCALAPPDATA = $missingSettingsRoot
+        $script:ClientSettingsSkippedReason = ''
+        $missingResult = @(Apply-RamAccountClientSettings -Account $main)
+        if ($missingResult.Count -ne 0) { throw 'при отсутствующем XML функция заявила, что настройки применены' }
+        if (-not $script:ClientSettingsSkippedReason) { throw 'при отсутствующем XML нет предупреждения о пропуске настроек' }
     } finally {
         $script:Instances       = $keepInst
         $script:LaunchQueue     = $keepQueue
@@ -936,8 +950,13 @@ Check 'Графика не перетирается соседним запус�
         $script:AwaitWindowUntil = $keepUntil
         $script:AwaitSettingsReadyAt = $keepReady
         $script:LastLaunchAt = $keepLastLaunch
+        $script:ClientSettingsSkippedReason = $keepSkipped
+        $env:LOCALAPPDATA = $keepLocalAppData
+        if ($missingSettingsRoot -and (Test-Path -LiteralPath $missingSettingsRoot)) {
+            Remove-Item -LiteralPath $missingSettingsRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
     }
-    'ждёт окно и защитную паузу, повторно читает XML, не висит по таймауту и на пропавшем клиенте'
+    'ждёт окно и защитную паузу, проверяет XML, а отсутствие файла не блокирует запуск Roblox'
 }
 
 Check 'Раскладка ждёт появления окон' {

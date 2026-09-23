@@ -33,14 +33,37 @@
 ================================================================================
 #>
 
-function Get-RamRobloxSettingsPath {
-    $candidates = @((Join-Path $env:LOCALAPPDATA 'Roblox\GlobalBasicSettings_13.xml'))
+function Get-RamRobloxSettingsCandidates {
+    <#
+      Roblox менял размещение файла между обычным установщиком и пакетной
+      версией. Возвращаем сначала канонические пути, затем реально найденные
+      точные файлы. Studio-файл сюда не попадает.
+    #>
+    $candidates = New-Object System.Collections.ArrayList
+    [void]$candidates.Add((Join-Path $env:LOCALAPPDATA 'Roblox\GlobalBasicSettings_13.xml'))
+
+    $normalRoot = Join-Path $env:LOCALAPPDATA 'Roblox'
+    if (Test-Path -LiteralPath $normalRoot) {
+        foreach ($file in Get-ChildItem -LiteralPath $normalRoot -File -Recurse -Filter 'GlobalBasicSettings_13.xml' -ErrorAction SilentlyContinue) {
+            [void]$candidates.Add($file.FullName)
+        }
+    }
+
     $packages = Join-Path $env:LOCALAPPDATA 'Packages'
     if (Test-Path -LiteralPath $packages) {
         foreach ($dir in Get-ChildItem -LiteralPath $packages -Directory -Filter '*ROBLOX*' -ErrorAction SilentlyContinue) {
-            $candidates += (Join-Path $dir.FullName 'LocalState\GlobalBasicSettings_13.xml')
+            [void]$candidates.Add((Join-Path $dir.FullName 'LocalState\GlobalBasicSettings_13.xml'))
+            foreach ($file in Get-ChildItem -LiteralPath $dir.FullName -File -Recurse -Filter 'GlobalBasicSettings_13.xml' -ErrorAction SilentlyContinue) {
+                [void]$candidates.Add($file.FullName)
+            }
         }
     }
+
+    return @($candidates | Select-Object -Unique)
+}
+
+function Get-RamRobloxSettingsPath {
+    $candidates = @(Get-RamRobloxSettingsCandidates)
     $existing = @($candidates | Where-Object { Test-Path -LiteralPath $_ } | ForEach-Object { Get-Item -LiteralPath $_ })
     if ($existing.Count -gt 0) { return ($existing | Sort-Object LastWriteTime -Descending | Select-Object -First 1).FullName }
     return $candidates[0]
@@ -274,11 +297,18 @@ function Apply-RamAccountClientSettings {
     #>
     param([Parameter(Mandatory)]$Account)
 
+    $script:ClientSettingsSkippedReason = ''
     if (-not (Test-RamAccountHasClientSettings -Account $Account)) { return @() }
 
     $path = Get-RamRobloxSettingsPath
     if (-not (Test-Path -LiteralPath $path)) {
-        throw 'Файл настроек Roblox не найден — запусти Roblox хотя бы раз обычным способом.'
+        # Отсутствие XML бывает на чистой установке и у некоторых вариантов
+        # пакетного клиента. Это не ошибка запуска самого Roblox. Первый клиент
+        # должен открыться и получить шанс создать файл; персональные параметры
+        # применим при следующем запуске. Настоящие ошибки чтения/записи ниже
+        # по-прежнему бросают исключение и не маскируются.
+        $script:ClientSettingsSkippedReason = 'Файл настроек Roblox пока не создан. Аккаунт запускается с обычными настройками; после появления XML AltHub применит персональные параметры при следующем запуске.'
+        return @()
     }
 
     [void](Backup-RamRobloxSettings)

@@ -1288,6 +1288,9 @@ function Invoke-RamNextLaunch {
             if ($applied.Count -gt 0) {
                 $script:SettingsTouched = $true
                 Write-RamLog "'$($a.Alias)': настройки клиента — $($applied -join ', ')" 'info'
+            } elseif ($script:ClientSettingsSkippedReason) {
+                Write-RamLog "'$($a.Alias)': $($script:ClientSettingsSkippedReason)" 'warn'
+                Set-RamStatus "'$($a.Alias)': Roblox запускается; персональные настройки применятся после создания XML."
             }
         } catch {
             $settingsError = $_.Exception.Message

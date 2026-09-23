@@ -164,6 +164,7 @@ $script:AwaitWindowUntil = [datetime]::MinValue
 $script:AwaitSettingsReadyAt = [datetime]::MinValue
 $script:LastWindowState  = 'Normal'   # см. обработчик Resize главного окна
 $script:SettingsTouched = $false   # трогали ли общий файл настроек Roblox
+$script:ClientSettingsSkippedReason = '' # персональные настройки пропущены, но запуск разрешён
 $script:LastLaunchAt    = [datetime]::MinValue
 $script:RestartCount   = @{}      # Id аккаунта -> сколько раз перезапускали
 $script:AccountsWriteBlocked = $false # защита от перезаписи после ошибки чтения
