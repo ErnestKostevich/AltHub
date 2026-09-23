@@ -1,6 +1,6 @@
 ﻿#requires -Version 5.1
 param(
-    [string]$Version = '1.4.1-rc1',
+    [string]$Version = '1.4.1',
     [string]$Output = ''
 )
 
