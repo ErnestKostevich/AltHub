@@ -1,11 +1,12 @@
 ﻿#requires -Version 5.1
 param(
-    [string]$Version = '1.4',
-    [string]$Output = (Join-Path (Split-Path -Parent $PSScriptRoot) 'AltHub-1.4.zip')
+    [string]$Version = '1.4.1-rc1',
+    [string]$Output = ''
 )
 
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
+if ([string]::IsNullOrWhiteSpace($Output)) { $Output = Join-Path $root ("AltHub-$Version.zip") }
 $stageRoot = Join-Path ([IO.Path]::GetTempPath()) ('althub-release-' + [guid]::NewGuid().ToString('N'))
 $packageName = "AltHub-$Version"
 $stage = Join-Path $stageRoot $packageName

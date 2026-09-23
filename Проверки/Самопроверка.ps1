@@ -932,16 +932,29 @@ Check 'Графика не перетирается соседним запус�
         $main.FramerateCap='60'; $main.Fullscreen='no'
         if (-not (Assert-RamClientSettingsXml -Xml $probe -Account $main)) { throw 'повторная проверка XML не сработала' }
 
-        # Регрессия 1.4: если GlobalBasicSettings_13.xml ещё не существовал,
-        # Apply бросал исключение, а очередь отменяла запуск Roblox целиком.
-        # Отсутствие файла должно пропустить только персональные настройки.
+        # На машине пользователя Roblox продолжал работать, но вообще не
+        # создавал GlobalBasicSettings_13.xml. Проверяем создание корректной
+        # минимальной структуры в отдельном пустом LOCALAPPDATA.
         $missingSettingsRoot = Join-Path $env:TEMP ('althub-no-settings-' + [guid]::NewGuid().ToString('N'))
         [void](New-Item -ItemType Directory -Path $missingSettingsRoot)
         $env:LOCALAPPDATA = $missingSettingsRoot
-        $script:ClientSettingsSkippedReason = ''
-        $missingResult = @(Apply-RamAccountClientSettings -Account $main)
-        if ($missingResult.Count -ne 0) { throw 'при отсутствующем XML функция заявила, что настройки применены' }
-        if (-not $script:ClientSettingsSkippedReason) { throw 'при отсутствующем XML нет предупреждения о пропуске настроек' }
+        $newPath = Get-RamRobloxSettingsPath
+        if (-not (Initialize-RamRobloxSettingsFile -Path $newPath)) { throw 'минимальный XML не создан' }
+        [xml]$createdXml = Get-Content -LiteralPath $newPath -Raw
+        if ($null -eq $createdXml.SelectSingleNode("/roblox/Item[@class='UserGameSettings']/Properties")) {
+            throw 'в новом XML нет UserGameSettings/Properties'
+        }
+        $originalHash = (Get-FileHash -LiteralPath $newPath -Algorithm SHA256).Hash
+        if (Initialize-RamRobloxSettingsFile -Path $newPath) { throw 'существующий XML ошибочно пересоздан' }
+        if ((Get-FileHash -LiteralPath $newPath -Algorithm SHA256).Hash -ne $originalHash) {
+            throw 'существующий XML изменён при повторной инициализации'
+        }
+        foreach ($name in (Get-RamExpectedClientSettings -Account $main).Keys) {
+            [void](Set-RamXmlValue -Xml $createdXml -Name $name -Value ([string](Get-RamExpectedClientSettings -Account $main)[$name]))
+        }
+        if (-not (Assert-RamClientSettingsXml -Xml $createdXml -Account $main)) {
+            throw 'настройки аккаунта не помещаются в новый XML'
+        }
     } finally {
         $script:Instances       = $keepInst
         $script:LaunchQueue     = $keepQueue
@@ -956,7 +969,7 @@ Check 'Графика не перетирается соседним запус�
             Remove-Item -LiteralPath $missingSettingsRoot -Recurse -Force -ErrorAction SilentlyContinue
         }
     }
-    'ждёт окно и защитную паузу, проверяет XML, а отсутствие файла не блокирует запуск Roblox'
+    'ждёт окно, проверяет XML и создаёт отсутствующий файл без перезаписи существующего'
 }
 
 Check 'Раскладка ждёт появления окон' {
@@ -2201,6 +2214,17 @@ Check 'В коде нет опасных конструкций и постор�
             Sort-Object -Unique
     if (-not $urls) { throw 'не найдено ни одного адреса — проверка не сработала' }
 
+    # Эти URI — идентификаторы XML-пространств имён в локальном файле
+    # настроек Roblox. Разрешаем их только в соответствующих xmlns-атрибутах,
+    # а не как новый сетевой адрес приложения.
+    $schemaHits = Select-String -Path $paths -Pattern 'https?://www\.w3\.org' -AllMatches
+    foreach ($hit in $schemaHits) {
+        if ($hit.Filename -ne 'RobloxSettings.ps1' -or
+            $hit.Line -notmatch 'xmlns:(xmime|xsi)="http://www\.w3\.org/') {
+            throw "www.w3.org найден вне локального XML-шаблона: $($hit.Filename):$($hit.LineNumber)"
+        }
+    }
+
     # ПОИМЁННЫЙ СПИСОК, А НЕ «ТОЛЬКО roblox.com».
     # Раньше здесь стояло короткое правило: всё, кроме roblox.com и rbxcdn.com,
     # считалось посторонним. Правило было честным ровно до тех пор, пока в
@@ -2215,6 +2239,7 @@ Check 'В коде нет опасных конструкций и постор�
         @{ Rx = '^googlechromelabs\.github\.io$'; Why = 'список сборок Chrome for Testing, только по кнопке согласия' },
         @{ Rx = '^storage\.googleapis\.com$'; Why = 'сам архив Chrome for Testing, только по кнопке согласия' },
         @{ Rx = '^developer\.microsoft\.com$'; Why = 'страница загрузки, открывается в браузере' }
+        @{ Rx = '^www\.w3\.org$'; Why = 'только пространство имён локального XML Roblox' }
     )
 
     $seen = @()

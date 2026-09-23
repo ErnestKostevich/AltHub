@@ -73,6 +73,66 @@ function Test-RamRobloxSettingsFile {
     Test-Path -LiteralPath (Get-RamRobloxSettingsPath)
 }
 
+function New-RamRobloxSettingsDocument {
+    <# Минимальный UserGameSettings в формате, который пишет Roblox Player.
+       Если у клиента файла ещё нет, отсутствующие свойства он берёт из своих
+       умолчаний. Никакие данные с чужого компьютера сюда не копируются. #>
+    $xml = New-Object xml
+    $xml.LoadXml(@'
+<roblox xmlns:xmime="http://www.w3.org/2005/05/xmlmime" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://www.roblox.com/roblox.xsd" version="4">
+  <External>null</External>
+  <External>nil</External>
+  <Item class="UserGameSettings" referent="RBX0">
+    <Properties>
+      <string name="Name">GameSettings</string>
+      <token name="SavedQualityLevel">0</token>
+      <int name="GraphicsQualityLevel">1</int>
+      <bool name="MaxQualityEnabled">false</bool>
+      <int name="FramerateCap">60</int>
+      <float name="MasterVolume">1</float>
+      <bool name="Fullscreen">false</bool>
+      <bool name="StartMaximized">false</bool>
+    </Properties>
+  </Item>
+  <SharedStrings />
+</roblox>
+'@)
+    $item = $xml.SelectSingleNode("/roblox/Item[@class='UserGameSettings']")
+    [void]$item.SetAttribute('referent', 'RBX' + [guid]::NewGuid().ToString('N').ToUpperInvariant())
+    return $xml
+}
+
+function Initialize-RamRobloxSettingsFile {
+    <# Создаёт ТОЛЬКО отсутствующий файл. CreateNew не затрёт файл, который
+       Roblox успел записать между проверкой и открытием потока. #>
+    param([Parameter(Mandatory)][string]$Path)
+    if (Test-Path -LiteralPath $Path) { return $false }
+
+    $dir = Split-Path -Parent $Path
+    if (-not (Test-Path -LiteralPath $dir)) {
+        [void](New-Item -ItemType Directory -Path $dir -Force)
+    }
+    $xml = New-RamRobloxSettingsDocument
+    $stream = $null
+    try {
+        $stream = [IO.File]::Open($Path, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
+        $xml.Save($stream)
+        return $true
+    } catch {
+        if ($null -eq $stream -and (Test-Path -LiteralPath $Path)) { return $false }
+        if ($null -ne $stream) {
+            $stream.Dispose()
+            $stream = $null
+            if (Test-Path -LiteralPath $Path) {
+                Remove-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue
+            }
+        }
+        throw
+    } finally {
+        if ($null -ne $stream) { $stream.Dispose() }
+    }
+}
+
 function Get-RamSettingsBackupPath {
     Join-Path (Get-RamDataDir) 'roblox-settings-backup.xml'
 }
@@ -302,13 +362,18 @@ function Apply-RamAccountClientSettings {
 
     $path = Get-RamRobloxSettingsPath
     if (-not (Test-Path -LiteralPath $path)) {
-        # Отсутствие XML бывает на чистой установке и у некоторых вариантов
-        # пакетного клиента. Это не ошибка запуска самого Roblox. Первый клиент
-        # должен открыться и получить шанс создать файл; персональные параметры
-        # применим при следующем запуске. Настоящие ошибки чтения/записи ниже
-        # по-прежнему бросают исключение и не маскируются.
-        $script:ClientSettingsSkippedReason = 'Файл настроек Roblox пока не создан. Аккаунт запускается с обычными настройками; после появления XML AltHub применит персональные параметры при следующем запуске.'
-        return @()
+        try {
+            [void](Initialize-RamRobloxSettingsFile -Path $path)
+        } catch {
+            # Файл настроек не является условием запуска самого клиента.
+            # Сообщаем точную причину и продолжаем с обычными настройками.
+            $script:ClientSettingsSkippedReason = "Не удалось создать файл настроек Roblox: $($_.Exception.Message)"
+            return @()
+        }
+        if (-not (Test-Path -LiteralPath $path)) {
+            $script:ClientSettingsSkippedReason = 'Файл настроек Roblox не появился после попытки создания.'
+            return @()
+        }
     }
 
     [void](Backup-RamRobloxSettings)

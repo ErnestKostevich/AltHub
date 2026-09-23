@@ -1287,7 +1287,7 @@ function Invoke-RamNextLaunch {
             $applied = Apply-RamAccountClientSettings -Account $a
             if ($applied.Count -gt 0) {
                 $script:SettingsTouched = $true
-                Write-RamLog "'$($a.Alias)': настройки клиента — $($applied -join ', ')" 'info'
+                Write-RamLog "'$($a.Alias)': параметры записаны в XML Roblox — $($applied -join ', ')" 'info'
             } elseif ($script:ClientSettingsSkippedReason) {
                 Write-RamLog "'$($a.Alias)': $($script:ClientSettingsSkippedReason)" 'warn'
                 Set-RamStatus "'$($a.Alias)': Roblox запускается; персональные настройки применятся после создания XML."
