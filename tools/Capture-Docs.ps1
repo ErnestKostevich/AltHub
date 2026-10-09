@@ -19,14 +19,19 @@ $stampPath = Join-Path $OutputDir 'screenshots-version.txt'
 function Save-RamDocsForm {
     param(
         [Parameter(Mandatory)]$Form,
-        [Parameter(Mandatory)][string]$Name
+        [Parameter(Mandatory)][string]$Name,
+        [switch]$Maximized,
+        [int]$ClientWidth=0,
+        [int]$ClientHeight=0
     )
     try {
         if ($script:UI.UpdateTimer) { $script:UI.UpdateTimer.Stop() }
         if ($script:UI.ScheduleTimer) { $script:UI.ScheduleTimer.Stop() }
         $Form.ShowInTaskbar = $false
         $Form.StartPosition = 'CenterScreen'
+        if($ClientWidth -gt 0){$Form.ClientSize=New-Object Drawing.Size($ClientWidth,$ClientHeight);Update-RamAfterResize -Force}
         $Form.Show()
+        if ($Maximized) { $Form.WindowState='Maximized'; [Windows.Forms.Application]::DoEvents(); Update-RamAfterResize -Force }
         [Windows.Forms.Application]::DoEvents()
         $Form.PerformLayout()
         $Form.Refresh()
@@ -125,6 +130,30 @@ foreach ($shot in @(
     Show-RamSection -Key 'profiles'
     Save-RamDocsForm -Form $scenarios -Name ($shot.File.Replace('.png','-scenarios.png'))
 }
+
+Write-Host 'Один аккаунт, статистика и полный экран:'
+$keepDocsAccounts=$script:Accounts
+$script:Accounts=@($a1)
+$script:Settings.Theme='light'
+Set-RamTheme -Name 'light' | Out-Null
+foreach($shot in @(
+    @{Key='wide';Section='accounts';File='dashboard-search.png';Full=$false},
+    @{Key='wide';Section='stats';File='dashboard-statistics.png';Full=$false},
+    @{Key='classic';Section='accounts';File='pulse-fullscreen.png';Full=$true},
+    @{Key='water';Section='accounts';File='water-fullscreen.png';Full=$true}
+)) {
+    $script:Settings.MenuStyle=$shot.Key;$script:Section='accounts'
+    $script:UI=@{};$script:Cards=@{}
+    $main=New-RamMainForm
+    Build-RamCards
+    Show-RamSection -Key $shot.Section
+    if($shot.Key -eq 'wide') {
+        Save-RamDocsForm -Form $main -Name $shot.File -ClientWidth (Get-RamScaled 710) -ClientHeight (Get-RamScaled 560)
+    } else { Save-RamDocsForm -Form $main -Name $shot.File -Maximized:$shot.Full }
+}
+$script:Accounts=$keepDocsAccounts
+$script:Settings.Theme='dark'
+Set-RamTheme -Name 'dark' | Out-Null
 
 Write-Host 'Диалоги:'
 $script:Section = 'accounts'

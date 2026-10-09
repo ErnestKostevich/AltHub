@@ -779,7 +779,14 @@ function Update-RamModernLayout {
         }
 
         $y = $mm.GapLg
-        $y = (Set-RamModernFlow -Left $sec.Left -Right $sec.Right -X $pad -Y $y -Width $lineW) + $mm.Gap + $mm.GapSm
+        $allActionsW = (@($sec.Left + $sec.Right) | Measure-Object -Property Width -Sum).Sum + $mm.Gap * (@($sec.Left + $sec.Right).Count - 1)
+        if ($key -eq 'accounts' -and $allActionsW -gt $lineW) {
+            Set-RamModernSearchWidth -Search $sec.Search -Width ([Math]::Max(1,$lineW-$sec.Left[0].Width-$mm.Gap))
+            $y = (Set-RamModernFlow -Left $sec.Left -X $pad -Y $y -Width $lineW) + $mm.Gap
+            $y = (Set-RamModernFlow -Left @($sec.Right[0],$sec.Right[1]) -Right @($sec.Right | Select-Object -Skip 2) -X $pad -Y $y -Width $lineW) + $mm.Gap + $mm.GapSm
+        } else {
+            $y = (Set-RamModernFlow -Left $sec.Left -Right $sec.Right -X $pad -Y $y -Width $lineW) + $mm.Gap + $mm.GapSm
+        }
 
         if ($null -ne $sec.Hint) {
             $hintH = (Measure-RamText -Text $sec.Hint.Text -Font $sec.Hint.Font -MaxWidth ([Math]::Max(1, $lineW - $mm.Gap))).Height + $mm.GapSm
@@ -1196,9 +1203,9 @@ function Get-RamModernAccountTileLayout {
     $t  = $Global:RamTheme
     $mm = Get-RamModernMetrics
     $k  = { param($n) [int][Math]::Round($n * $mm.Scale) }
-    $pad = $mm.TilePad
+    $pad = & $k 12
 
-    $avS   = if ($Compact) { & $k 36 } else { & $k 44 }
+    $avS   = if ($Compact) { & $k 32 } else { & $k 36 }
     $headH = [Math]::Max($avS, $mm.Title + $mm.Small)
     $avX   = $pad + $mm.Check + (& $k 10)
     $textX = $avX + $avS + (& $k 12)
@@ -1210,11 +1217,11 @@ function Get-RamModernAccountTileLayout {
     $nameW = [Math]::Max((& $k 40), $Width - $textX - $pad - $pillW - $mm.Gap)
     $subW  = [Math]::Max((& $k 40), $Width - $textX - $pad)
 
-    $y = $pad + $headH + (& $k 12)
+    $y = $pad + $headH + (& $k 6)
     $gameY = $y; $y += $mm.Body
     $metaY = $y
     if (-not $Compact) { $y += $mm.Small }
-    $y += (& $k 12)
+    $y += (& $k 8)
     $btnH = $t.M.RowHSm
     $btnY = $y
     $y += $btnH + $pad
@@ -1321,6 +1328,7 @@ function New-RamModernAccountTile {
     $card.Controls.Add($dot)
 
     $gameTxt = if ($a.GameName) { [string]$a.GameName } elseif ($a.PlaceId) { "ID $($a.PlaceId)" } else { 'просто Roblox, без игры' }
+    if ($L.Compact -and [int]$a.Robux -ge 0) { $gameTxt = "$($a.Robux) R$ · $gameTxt" }
     if ($a.LinkCode) { $gameTxt += '  ·  приватный сервер' }
     $lblGame = New-RamLabel -Text $gameTxt -X $L.Pad -Y $L.GameY -Width $L.LineW -Height $mm.Body `
                             -Color $(if ($a.PlaceId) { $t.Text } else { $t.Muted }) -Truncatable
@@ -1328,11 +1336,10 @@ function New-RamModernAccountTile {
 
     $lblMeta = $null
     if (-not $L.Compact) {
-        $metaParts = @()
+        $metaParts = @($(if ([int]$a.Robux -ge 0) { "$($a.Robux) R$" } else { 'Robux: —' }))
         $summary = Get-RamAccountSettingsSummary -Account $a
         if ($summary) { $metaParts += $summary }
         if (-not [string]::IsNullOrWhiteSpace($a.Note)) { $metaParts += [string]$a.Note }
-        if ([int]$a.Robux -ge 0)          { $metaParts += "$($a.Robux) R$" }
         if ([string]$a.Premium -eq 'yes') { $metaParts += 'Premium' }
         if ($metaParts.Count -eq 0) { $metaParts += 'настройки Roblox не меняются' }
         $lblMeta = New-RamLabel -Text ($metaParts -join '  ·  ') -X $L.Pad -Y $L.MetaY -Width $L.LineW -Height $mm.Small `
@@ -1638,18 +1645,27 @@ function Update-RamStatsPanelModern {
             @{ Cap = 'НАИГРАНО';  Val = (Format-RamDuration $totalSec); Color = $t.Text }
         )
         $kGrid = Get-RamModernGrid -Panel $h -MinWidth 180 -MaxColumns 4
+        # Четыре показателя складываем симметрично: 4, 2×2 или столбец.
+        if ($kGrid.Columns -eq 3) { $kGrid.Columns=2; $kGrid.Width=[int][Math]::Floor(($kGrid.Avail-$mm.Gap)/2) }
         $kH = $pad + $mm.Small + $mm.Big + $pad
-        $last = $null
+        $summary = New-Object System.Windows.Forms.Panel
+        $summary.Size = New-Object System.Drawing.Size($kGrid.Avail, ([int][Math]::Ceiling(4.0/$kGrid.Columns)*($kH+$mm.Gap)-$mm.Gap))
+        $summary.Margin = New-Object System.Windows.Forms.Padding(0,0,$mm.Gap,$mm.Gap)
+        $summary.BackColor = $t.Bg
+        $index = 0
         foreach ($kp in $kpis) {
             $tile = New-RamCard -Width $kGrid.Width -Height $kH -Radius $radius
             $tile.Margin = New-Object System.Windows.Forms.Padding(0, 0, $mm.Gap, $mm.Gap)
             $lw = [Math]::Max(1, $kGrid.Width - $pad * 2)
             $tile.Controls.Add((New-RamLabel -Text $kp.Cap -X $pad -Y $pad -Width $lw -Height $mm.Small -Font $t.FontSmall -Color $t.Muted -Truncatable))
             $tile.Controls.Add((New-RamLabel -Text $kp.Val -X $pad -Y ($pad + $mm.Small) -Width $lw -Height $mm.Big -Font $t.FontBig -Color $kp.Color -Truncatable))
-            $h.Controls.Add($tile)
-            $last = $tile
+            $kpX = ($index % $kGrid.Columns)*($kGrid.Width+$mm.Gap)
+            $kpY = [int][Math]::Floor($index/$kGrid.Columns)*($kH+$mm.Gap)
+            $tile.Location = New-Object System.Drawing.Point($kpX,$kpY)
+            $summary.Controls.Add($tile)
+            $index++
         }
-        if ($null -ne $last) { $h.SetFlowBreak($last, $true) }
+        $h.Controls.Add($summary)
 
         # --- по аккаунтам: имя с ником в строку, четыре числа в ряд или 2×2
         $grid = Get-RamModernGrid -Panel $h -MinWidth 320

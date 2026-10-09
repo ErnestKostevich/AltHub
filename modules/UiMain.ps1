@@ -644,9 +644,9 @@ function Build-RamCardsWater {
                 # каждый квадрат — половина этой высоты минус зазор между
                 # ними. Ширина квадрата равна этой же величине (это и есть
                 # icoW) — так гарантированно остаётся квадратом.
-                $icoW = [int](($cardH - $edgeGap * 2 - $icoGap) / 2)
+                $icoW = [Math]::Min((& $sk 28), [int](($cardH - $edgeGap * 2 - $icoGap) / 2))
                 $btnH = $icoW
-                $playH = $cardH - $edgeGap * 2
+                $playH = $icoW * 2 + $icoGap
                 # Капсула шире квадрата, но некритично — раньше ×1.5
                 # читалось как отдельная крупная деталь, выбивающаяся из
                 # образца, где она лишь немного шире соседних квадратов.
@@ -780,13 +780,10 @@ function Build-RamCardsWater {
                 $card.Controls.Add($lblNote)
             }
 
-            if ($compact) {
-                $card.Controls.Add((New-RamLabel -Text 'ИГРА' -X $gameX -Y (& $sk 14) -Width $gameW -Height (& $sk 16) -Font $t.FontSmall -Color $t.Muted))
-            }
-
             $gameTxt = if ($a.GameName) { $a.GameName }
                        elseif ($a.PlaceId) { "ID $($a.PlaceId)" }
                        else { 'просто Roblox' }
+            if ($compact -and [int]$a.Robux -ge 0) { $gameTxt = "$($a.Robux) R$ · $gameTxt" }
             if ($a.LinkCode) { $gameTxt += '  · приват' }
             $lblGame = New-RamLabel -Text $gameTxt -X $gameX -Y $gameY -Width $gameW -Height $hBody `
                                     -Color $(if ($a.PlaceId) { $t.Text } else { $t.Muted }) -Truncatable
@@ -804,8 +801,7 @@ function Build-RamCardsWater {
                                                     -Font $t.FontSmall -Color $t.Muted -Truncatable))
                 }
 
-                $facts = @()
-                if ([int]$a.Robux -ge 0)      { $facts += "$($a.Robux) R$" }
+                $facts = @($(if ([int]$a.Robux -ge 0) { "$($a.Robux) R$" } else { 'Robux: —' }))
                 if ([string]$a.Premium -eq 'yes') { $facts += 'Premium' }
                 if ($a.Created)               { $facts += "с $($a.Created)" }
                 if ($facts.Count -gt 0) {
@@ -868,7 +864,7 @@ function Build-RamCardsWater {
             # X-координатами (один источник истины для размеров — см.
             # комментарий там), здесь только позиционирование по Y.
             if ($narrowBtns) {
-                $btnTopY = $edgeGap
+                $btnTopY = [int](($cardH - $playH) / 2)
                 $playY = $btnTopY
                 $midY  = $btnTopY
                 $lowY  = $btnTopY + $btnH + $icoGap
@@ -886,9 +882,9 @@ function Build-RamCardsWater {
                 $playRowW = $icoW
                 $playRowH = $btnH
                 $playRadius = 7
-                $playY = $btnY
-                $midY  = $btnY
-                $lowY  = $btnY
+                $playY = [int](($cardH - $btnH) / 2)
+                $midY  = $playY
+                $lowY  = $playY
             }
 
 
@@ -2804,6 +2800,18 @@ function Get-RamCheckableWindows {
 }
 
 function Dispose-RamFormRuntime {
+    if ($null -ne $script:CookieCheckState) {
+        foreach ($job in @($script:CookieCheckState.Job,$script:CookieCheckState.InfoJob) | Where-Object { $null -ne $_ }) {
+            try { $job.Cts.Cancel() } catch { }
+            $parts = if ($job.PSObject.Properties.Name -contains 'Jobs') { @($job.Jobs) } else { @($job) }
+            foreach ($part in $parts) {
+                try { if ($part.Task.Status -eq [System.Threading.Tasks.TaskStatus]::RanToCompletion) { $part.Task.Result.Dispose() } } catch { }
+                try { $part.Req.Dispose() } catch { }
+            }
+            try { $job.Cts.Dispose() } catch { }
+        }
+        $script:CookieCheckState=$null
+    }
     foreach ($key in @('StartupTimer','SearchTimer','ResizeLiveTimer','CookieCheckTimer','LaunchTimer','UpdateTimer','ScheduleTimer','FreshFocusTimer')) {
         if ($script:UI.ContainsKey($key) -and $null -ne $script:UI[$key]) {
             try { $script:UI[$key].Stop(); $script:UI[$key].Dispose() } catch { }

@@ -696,6 +696,59 @@ function Complete-RamAuthCheckAsync {
     finally { try{$Job.Req.Dispose()}catch{}; try{$Job.Cts.Dispose()}catch{} }
 }
 
+function Start-RamAccountInfoAsync {
+    param([Parameter(Mandatory)][string]$Cookie, [Parameter(Mandatory)][int64]$UserId)
+    if ($UserId -le 0) { throw 'Нельзя запросить баланс без ID аккаунта.' }
+    $client = Get-RamHttpClient
+    $cts = New-Object System.Threading.CancellationTokenSource
+    $cts.CancelAfter([TimeSpan]::FromSeconds(15))
+    $jobs = @()
+    try {
+        foreach ($endpoint in @(
+            @{ Key='Robux'; Url="https://economy.roblox.com/v1/users/$UserId/currency"; Auth=$true },
+            @{ Key='Premium'; Url="https://premiumfeatures.roblox.com/v1/users/$UserId/validate-membership"; Auth=$true },
+            @{ Key='Created'; Url="https://users.roblox.com/v1/users/$UserId"; Auth=$false }
+        )) {
+            $req = New-Object System.Net.Http.HttpRequestMessage([System.Net.Http.HttpMethod]::new('GET'),$endpoint.Url)
+            if ($endpoint.Auth) { [void]$req.Headers.TryAddWithoutValidation('Cookie',".ROBLOSECURITY=$Cookie") }
+            [void]$req.Headers.TryAddWithoutValidation('Accept','application/json')
+            [void]$req.Headers.TryAddWithoutValidation('User-Agent','Roblox/WinInet')
+            $jobs += [pscustomobject]@{ Key=$endpoint.Key; Req=$req; Task=$client.SendAsync($req,$cts.Token) }
+        }
+        return [pscustomobject]@{ Task=[System.Threading.Tasks.Task]::WhenAll([System.Threading.Tasks.Task[]]@($jobs.Task)); Jobs=$jobs; Cts=$cts }
+    } catch {
+        $cts.Cancel()
+        if ($null -ne $req) { $req.Dispose() }
+        foreach ($job in $jobs) { $job.Req.Dispose() }
+        $cts.Dispose()
+        throw
+    }
+}
+
+function Complete-RamAccountInfoAsync {
+    param([Parameter(Mandatory)]$Job)
+    $info = [pscustomobject]@{ Robux=-1; Premium=''; Created='' }
+    try {
+        foreach ($part in $Job.Jobs) {
+            if ($part.Task.Status -ne [System.Threading.Tasks.TaskStatus]::RanToCompletion) { continue }
+            $resp = $part.Task.Result
+            try {
+                if ([int]$resp.StatusCode -ne 200) { continue }
+                $body = $resp.Content.ReadAsStringAsync().GetAwaiter().GetResult()
+                switch ($part.Key) {
+                    'Robux' { $o=$body | ConvertFrom-Json; if ($null -ne $o.robux -and [string]$o.robux -match '^\d{1,10}$') { $info.Robux=[int]$o.robux } }
+                    'Premium' { if ($body.Trim() -in @('true','false')) { $info.Premium=if ($body.Trim() -eq 'true') {'yes'} else {'no'} } }
+                    'Created' { $o=$body | ConvertFrom-Json; if ($o.created) { $info.Created=([datetime]$o.created).ToString('yyyy-MM-dd') } }
+                }
+            } catch { } finally { $resp.Dispose() }
+        }
+        return $info
+    } finally {
+        foreach ($part in $Job.Jobs) { $part.Req.Dispose() }
+        $Job.Cts.Dispose()
+    }
+}
+
 function Get-RamAvatarUrl {
     <# Адрес картинки аватарки. Публичный запрос, кука не нужна. #>
     param([Parameter(Mandatory)][int64]$UserId)

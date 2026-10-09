@@ -2133,7 +2133,7 @@ function Start-RamCookieCheckBatch {
     $queue = New-Object System.Collections.ArrayList
     foreach ($a in $Accounts) { [void]$queue.Add([pscustomobject]@{ Account=$a; Attempts=0 }) }
     $script:CookieCheckState = [pscustomobject]@{
-        Queue=$queue; Job=$null; Current=$null; Ok=0; Bad=0; Unknown=0
+        Queue=$queue; Job=$null; InfoJob=$null; Current=$null; Ok=0; Bad=0; Unknown=0
         Dead=(New-Object System.Collections.ArrayList)
         Total=$queue.Count; Quiet=[bool]$Quiet; NextAt=[datetime]::MinValue
     }
@@ -2150,6 +2150,20 @@ function Invoke-RamCookieCheckPump {
     $st = $script:CookieCheckState
     if ($null -eq $st) { return }
     if ((Get-Date) -lt $st.NextAt) { return }
+
+    if ($null -ne $st.InfoJob) {
+        if (-not $st.InfoJob.Task.IsCompleted) { return }
+        $info = Complete-RamAccountInfoAsync -Job $st.InfoJob
+        $st.InfoJob = $null
+        $a = $st.Current.Account
+        if ($info.Robux -ge 0) { $a.Robux=$info.Robux }
+        if ($info.Premium) { $a.Premium=$info.Premium }
+        if ($info.Created) { $a.Created=$info.Created }
+        $st.Current=$null
+        Set-RamStatus "Проверяю входы и баланс: $($st.Total-$st.Queue.Count) из $($st.Total)…"
+        $st.NextAt=(Get-Date).AddMilliseconds(350)
+        return
+    }
 
     if ($null -eq $st.Job -and $st.Queue.Count -gt 0) {
         $st.Current = $st.Queue[0]
@@ -2173,6 +2187,11 @@ function Invoke-RamCookieCheckPump {
         if ($result.State -eq 'valid') {
             $a.Username=$result.User.Name; $a.UserId=$result.User.Id
             $a.CookieOk='yes'; $a.CookieCheckedAt=(Get-Date).ToString('s'); $st.Ok++
+            try {
+                $st.InfoJob = Start-RamAccountInfoAsync -Cookie $a.Cookie -UserId $a.UserId
+                Set-RamStatus "Обновляю баланс «$($a.Alias)»…"
+                return
+            } catch { Write-RamLog "'$($a.Alias)': баланс пока не обновлён, прежнее значение сохранено." 'warn' }
         } elseif ($result.State -eq 'unauthorized') {
             $a.CookieOk='no'; $a.CookieCheckedAt=(Get-Date).ToString('s'); $st.Bad++
             [void]$st.Dead.Add($a)

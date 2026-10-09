@@ -175,7 +175,7 @@ function New-RamMainFormClassic {
     $side.Controls.Add($bSettings); $side.Controls.Add($bHelp)
     $ui.BSettings = $bSettings; $ui.BHelp = $bHelp
 
-    $author = New-RamLabel -Text $script:AppAuthor -X 0 -Y 0 -Width $navW -Height $pm.Small -Font $t.FontSmall -Color $t.Muted -Truncatable
+    $author = New-RamLabel -Text 'dev by Ernest Kostevich' -X 0 -Y 0 -Width $navW -Height $pm.Small -Font $t.FontSmall -Color $t.Muted -Truncatable
     $side.Controls.Add($author)
     $ui.Author = $author
 
@@ -529,8 +529,8 @@ function Get-RamPulseRowLayout {
     $pm = Get-RamPulseMetrics
     $k  = $pm.K
     $padX = & $k 16
-    $padY = & $k 12
-    $avS  = if ($Compact) { & $k 28 } else { & $k 40 }
+    $padY = & $k 18
+    $avS  = if ($Compact) { & $k 28 } else { & $k 48 }
     $chkS = & $k 20
     $textBlockH = if ($Compact) { $pm.Title } else { $pm.Title + $pm.Small }
     $H = [Math]::Max($avS, $textBlockH) + $padY * 2
@@ -706,17 +706,17 @@ function New-RamPulseRow {
 
     # --- колонка игры: игра, под ней настройки клиента, заметка и Robux
     $gameTxt = if ($a.GameName) { [string]$a.GameName } elseif ($a.PlaceId) { "ID $($a.PlaceId)" } else { 'просто Roblox' }
+    if ($L.Compact -and [int]$a.Robux -ge 0) { $gameTxt = "$($a.Robux) R$ · $gameTxt" }
     if ($a.LinkCode) { $gameTxt += '  ·  приват' }
     $lblGame = New-RamLabel -Text $gameTxt -X $L.GameX -Y $L.Line1Y -Width $L.GameW -Height $pm.Title `
                             -Color $(if ($a.PlaceId) { $t.Text } else { $t.Muted }) -Truncatable
     $card.Controls.Add($lblGame)
     $lblMeta = $null
     if (-not $L.Compact) {
-        $metaParts = @()
+        $metaParts = @($(if ([int]$a.Robux -ge 0) { "$($a.Robux) R$" } else { 'Robux: —' }))
         $summary = Get-RamAccountSettingsSummary -Account $a
         if ($summary) { $metaParts += $summary }
         if (-not [string]::IsNullOrWhiteSpace($a.Note)) { $metaParts += [string]$a.Note }
-        if ([int]$a.Robux -ge 0) { $metaParts += "$($a.Robux) R$" }
         if ($metaParts.Count -gt 0) {
             $lblMeta = New-RamLabel -Text ($metaParts -join '  ·  ') -X $L.GameX -Y $L.Line2Y -Width $L.GameW -Height $pm.Small `
                                     -Font $t.FontSmall -Color $t.Muted -Truncatable

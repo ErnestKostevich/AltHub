@@ -3139,6 +3139,68 @@ Check 'Очередь проходит сквозные сценарии без 
     '6 сценариев: FIFO, XML, ошибки, отмена/присмотр, атомарность и повторный вход таймера'
 }
 
+Check 'Поиск Dashboard, статистика и широкие строки Pulse держат свои места' {
+    $keepSettings=$script:Settings; $keepAccounts=$script:Accounts; $keepUI=$script:UI; $keepCards=$script:Cards
+    $keepScale=$Global:RamForceScale; $keepTheme=$Global:RamTheme.Key
+    try {
+        $Global:RamForceScale=1
+        $script:Settings=Get-RamDefaultSettings
+        $script:Settings.OnClose='exit'; $script:Settings.ConfirmOnExit=$false
+        $script:Accounts=@((New-RamAccount -Alias 'Ernest_kostevich'))
+        $script:Accounts[0].Username='fixture'; $script:Accounts[0].Robux=0
+        Set-RamTheme dark | Out-Null
+        foreach($style in @('wide','classic','water')) {
+            $script:Settings.MenuStyle=$style; $script:UI=@{}; $script:Cards=@{}
+            $form=New-RamMainForm
+            try {
+                foreach($size in @(@(710,560),@(850,620),@(1190,720),@(1920,1000))) {
+                    $form.ClientSize=New-Object Drawing.Size($size[0],$size[1])
+                    Update-RamShellLayout; Update-RamTopBarLayout; Update-RamAfterResize -Force
+                    $form.PerformLayout()
+                    Show-RamSection -Key 'accounts'
+                    $card=$script:Cards[$script:Accounts[0].Id].Card
+                    if($style -eq 'classic') {
+                        $available=Get-RamCardsAvailableWidth
+                        if((Get-RamMenuCardColumns -AvailableWidth $available) -ne 1 -or $card.Width -lt $available-2 -or $card.Height -lt 80){throw "Pulse: строка $($card.Width)×$($card.Height), доступно $available, окно $($form.ClientSize.Width)"}
+                    }
+                    if($style -eq 'wide') {
+                        $sec=$script:UI.Modern.Sections.accounts
+                        if($sec.Right[0].Top -gt $sec.Search.Top) {
+                            $right=$script:UI.Cards.Left+(Get-RamModernGrid -Panel $script:UI.Cards).Avail
+                            if([Math]::Abs($sec.Search.Right-$right) -gt 2 -or $sec.Search.Top -ne $sec.Left[0].Top){throw 'Поиск Dashboard висит отдельно от строки действий'}
+                        }
+                        Show-RamSection -Key 'stats'
+                        $hostPanel=$script:UI.StatsHost
+                        $summary=$hostPanel.Controls[0]
+                        if($summary.Controls.Count -ne 4){throw 'Сводка потеряла показатели'}
+                        if(@($summary.Controls | Group-Object Top | Where-Object Count -eq 3).Count){throw 'Сводка снова разложена 3+1'}
+                        $gap=$hostPanel.Controls[1].Top-$summary.Bottom
+                        if($gap -lt 0 -or $gap -gt $Global:RamTheme.M.Gap*2){throw "Под сводкой лишний промежуток: $gap"}
+                    }
+                    foreach($compact in @($false,$true)) {
+                        $script:Settings.CompactCards=$compact
+                        Build-RamCards
+                        $texts=@($script:Cards[$script:Accounts[0].Id].Card.Controls | Where-Object {$_ -is [Windows.Forms.Label]} | ForEach-Object Text)
+                        if(($texts -join ' ') -notmatch '0 R\$'){throw "$style скрывает нулевой баланс в компактном режиме $compact"}
+                    }
+                    $script:Settings.CompactCards=$false
+                }
+            } finally {Dispose-RamFormRuntime;$form.Dispose()}
+        }
+    } finally {
+        $script:Settings=$keepSettings;$script:Accounts=$keepAccounts;$script:UI=$keepUI;$script:Cards=$keepCards
+        $Global:RamForceScale=$keepScale;Set-RamTheme -Name $keepTheme | Out-Null
+    }
+    'четыре ширины, поиск на линии сетки, сводка без дыр, Pulse во всю ширину; 0 Robux виден во всех меню'
+}
+
+Check 'Фоновая проверка возвращает баланс без зависания и потери старых данных' {
+    $runner=Join-Path $PSScriptRoot 'Проверка баланса.ps1'
+    $output=@(& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $runner -NoPause 2>&1)
+    if($LASTEXITCODE -ne 0 -or @($output | Where-Object {[string]$_ -like 'PASS:*'}).Count -ne 4){throw ($output -join ' | ')}
+    '4 изолированных HTTP-сценария: ожидание, ноль, отказ API и закрытие меню'
+}
+
 Check 'README не врёт числом проверок' {
     # Число в README трижды разошлось с кодом и висело устаревшим, пока его
     # не заметил человек. Считаем проверки прямо из этого файла и требуем,
