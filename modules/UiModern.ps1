@@ -368,7 +368,7 @@ function New-RamMainFormModern {
 
     # --- стартовый размер: от вида меню и масштаба, но не больше экрана
     $formW = [int]([int]$menuStyle.BaseContent * $mm.Scale)
-    $formH = [int](720 * $mm.Scale)
+    $formH = [int](620 * $mm.Scale)
     $waW = 0; $waH = 0
     try {
         $wa = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea
@@ -525,9 +525,10 @@ function New-RamMainFormModern {
         foreach ($id in $script:Cards.Keys) { if (-not $script:Cards[$id].Check.Tag.Checked) { $any = $true } }
         Set-RamAllChecked $any
     }
-    $bSel = New-RamButton -Text 'С отмеченными  ▾' -Width 1 -Height $mm.BtnH -Kind 'ghost' `
+    $bSel = New-RamButton -Text 'Действия  ▾' -Width 1 -Height $mm.BtnH -Kind 'ghost' `
                           -Tooltip 'Игра, набор, метка, удаление — для отмеченных аккаунтов'
     $selMenu = New-RamContextMenu
+    $script:UI.ActionMenu = $selMenu
     [void](Add-RamMenuItem -Menu $selMenu -Text 'Назначить игру'      -OnClick { Invoke-RamAssignGame })
     [void](Add-RamMenuItem -Menu $selMenu -Text 'Собрать в набор'     -OnClick { Invoke-RamAssignGroup })
     [void](Add-RamMenuItem -Menu $selMenu -Text 'Поставить метку'     -OnClick { Invoke-RamAssignColor })
@@ -593,7 +594,7 @@ function New-RamMainFormModern {
 
     # ---------------------------------------------------------- профили -----
     $pProf = & $newSection 'profiles'
-    $bStarter = New-RamButton -Text 'Готовый профиль  ▾' -Width 1 -Height $mm.BtnH -Kind 'primary' `
+    $bStarter = New-RamButton -Text 'Готовый сценарий  ▾' -Width 1 -Height $mm.BtnH -Kind 'primary' `
                               -Tooltip 'Добавить готовый профиль с популярной игрой — работает сразу'
     $profMenu = New-RamContextMenu
     foreach ($sp in Get-RamStarterProfiles) {
@@ -603,9 +604,9 @@ function New-RamMainFormModern {
         })
     }
     $bStarter.Add_Click({ $profMenu.Show($this, (New-Object System.Drawing.Point(0, $this.Height))) }.GetNewClosure())
-    $bSaveProf = New-RamButton -Text 'Сохранить текущее как профиль' -Width 1 -Height $mm.BtnH -OnClick { Invoke-RamSaveProfile }
+    $bSaveProf = New-RamButton -Text 'Сохранить сценарий' -Width 1 -Height $mm.BtnH -OnClick { Invoke-RamSaveProfile }
     $script:UI.BtnAddProfile = $bSaveProf
-    $profHint = New-RamLabel -Text 'Профиль — это набор аккаунтов и игра. Одной кнопкой ставит игру всем и запускает.' `
+    $profHint = New-RamLabel -Text 'Сценарий запоминает игру и настройки каждого аккаунта и раскладку окон.' `
                              -X 0 -Y 0 -Width 10 -Height $mm.Small -Font $t.FontSmall -Color $t.Muted
     $profHost = New-RamScrollPanel -Width 100 -Height 100
     $profHost.FlowDirection = 'LeftToRight'
@@ -919,7 +920,7 @@ function Register-RamMainFormRuntime {
             }
             $e.Handled = $true; return
         }
-        if ($inText) { return }
+        if ($inText -or ($sender.ActiveControl -is [System.Windows.Forms.Button] -and $e.KeyCode -eq 'Return')) { return }
 
         switch ($e.KeyCode) {
             'F5'     { Build-RamCards; Update-RamStatsPanel; Write-RamLog 'Обновлено.' 'info'; $e.Handled = $true }
@@ -1342,10 +1343,10 @@ function New-RamModernAccountTile {
     # У мёртвого входа «Запустить» бесполезен: клиент выкинет на страницу входа.
     if ([string]$a.CookieOk -eq 'no') {
         $bPlay = New-RamButton -Text 'Войти' -Width $L.PlayW -Height $L.BtnH -Fixed -Kind 'danger' `
-                               -Tooltip 'Вход умер — войти в этот аккаунт ещё раз' -OnClick { Invoke-RamRelogin -Id $this.Tag.AccountId }
+                               -Tooltip 'Вход умер — войти в этот аккаунт ещё раз' -OnClick { Invoke-RamAccountPrimaryAction -Id ([string]$this.Tag.AccountId) }
     } else {
         $bPlay = New-RamButton -Text 'Запустить' -Width $L.PlayW -Height $L.BtnH -Fixed -Kind 'primary' `
-                               -Tooltip 'Запустить этот аккаунт свёрнутым' -OnClick { Add-RamToLaunchQueue -Accounts @((Get-RamAccountById -Id $this.Tag.AccountId)) }
+                               -Tooltip 'Запустить этот аккаунт свёрнутым' -OnClick { Invoke-RamAccountPrimaryAction -Id ([string]$this.Tag.AccountId) }
     }
     $bPlay.Tag | Add-Member -NotePropertyName AccountId -NotePropertyValue $a.Id -Force
     $bPlay.Location = New-Object System.Drawing.Point($L.PlayX, $L.BtnY)
@@ -1424,6 +1425,7 @@ function Update-RamCardStatesModern {
         $entry = $script:Cards[$a.Id]
         if ($null -eq $entry) { continue }
         $inst = $script:Instances[$a.Id]
+        Update-RamCardPrimaryButton -Account $a -Entry $entry
         $osClosing = ($null -ne $inst -and $inst.PSObject.Properties.Name -contains 'ClosingByOs' -and [bool]$inst.ClosingByOs)
         $caption = ''; $color = $t.Muted
         if (($null -ne $script:Stopping -and $script:Stopping.ContainsKey($a.Id)) -or $osClosing) {
@@ -1432,7 +1434,7 @@ function Update-RamCardStatesModern {
             if ($inst.Handle -ne [IntPtr]::Zero) { $caption = 'игра'; $color = $t.Ok }
             else { $caption = 'загрузка'; $color = $t.Warn }
         } elseif ($script:LaunchQueue -contains $a.Id) {
-            $caption = 'очередь'; $color = $t.Accent
+            $caption = if ($script:LaunchPaused) { 'пауза' } else { 'очередь' }; $color = $t.Accent
         } elseif ([string]$a.CookieOk -eq 'no') {
             $caption = 'вход'; $color = $t.Danger
         }
@@ -1581,19 +1583,15 @@ function Update-RamProfilesPanelModern {
         Clear-RamPanelControls -Panel $h
         $profiles = @(Get-RamProfiles)
         if ($profiles.Count -eq 0) {
-            [void](Add-RamModernNotice -Panel $h -Title 'Профилей пока нет' `
-                   -Text 'Отметь нужные аккаунты, задай им игру и нажми «Сохранить текущее как профиль». Дальше весь набор запускается одной кнопкой.')
+            [void](Add-RamModernNotice -Panel $h -Title 'Сценариев пока нет' `
+                   -Text 'Отметь нужные аккаунты, задай им игру и нажми «Сохранить сценарий». Дальше весь набор запускается одной кнопкой.')
             return
         }
         $grid = Get-RamModernGrid -Panel $h -MinWidth 300
         foreach ($pr in $profiles) {
-            $prIds = @()
-            if ($pr.PSObject.Properties.Name -contains 'Ids') { $prIds = @($pr.Ids | Where-Object { $_ }) }
-            $meta = if ($pr.Group) { "набор «$($pr.Group)»" } elseif ($prIds.Count) { "аккаунтов: $($prIds.Count)" } else { 'все аккаунты' }
-            if ($pr.GameName) { $meta += "  ·  $($pr.GameName)" } elseif ($pr.PlaceId) { $meta += "  ·  ID $($pr.PlaceId)" }
-            if ($pr.LinkCode) { $meta += '  ·  приватный сервер' }
+            $meta = Get-RamProfileSummary -Profile $pr
             $tile = New-RamModernActionTile -Width $grid.Width -Title ([string]$pr.Name) -Meta $meta -TagName 'Profile' -TagValue $pr `
-                -PrimaryText 'Запустить профиль' -PrimaryTooltip 'Поставить игру набору и запустить' -OnPrimary {
+                -PrimaryText 'Запустить' -PrimaryTooltip 'Запустить выбранные аккаунты с сохранёнными параметрами' -OnPrimary {
                     Invoke-RamRunProfile -Profile $this.Tag.Profile
                 } `
                 -SecondaryText 'Убрать' -OnSecondary {

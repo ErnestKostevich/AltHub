@@ -14,8 +14,9 @@
 
 function Copy-RamAccounts {
     <# Глубокая копия списка аккаунтов — снимок для отмены действия. #>
+    param([object[]]$Accounts = $script:Accounts)
     $copy = @()
-    foreach ($src in $script:Accounts) {
+    foreach ($src in $Accounts) {
         $dst = New-RamAccount
         foreach ($p in $dst.PSObject.Properties.Name) {
             if ($src.PSObject.Properties.Name -contains $p) { $dst.$p = $src.$p }
@@ -36,11 +37,12 @@ function Push-RamUndo {
       Храним 10 последних шагов: глубже в такой программе не отматывают,
       а каждый шаг — это копия всего списка.
     #>
-    param([Parameter(Mandatory)][string]$Label)
+    param([Parameter(Mandatory)][string]$Label, [switch]$IncludeLayout)
 
     [void]$script:UndoStack.Add([pscustomobject]@{
         Label    = $Label
         Accounts = Copy-RamAccounts
+        Layout = $(if ($IncludeLayout) { [pscustomobject]@{ TileMode=$script:Settings.TileMode; TileColumns=$script:Settings.TileColumns; AutoTile=$script:Settings.AutoTile; UseSavedWindows=$script:Settings.UseSavedWindows; MainAccountId=$script:Settings.MainAccountId } } else { $null })
         At       = Get-Date
     })
     while ($script:UndoStack.Count -gt 10) { $script:UndoStack.RemoveAt(0) }
@@ -57,6 +59,9 @@ function Invoke-RamUndo {
     $script:UndoStack.RemoveAt($script:UndoStack.Count - 1)
 
     $script:Accounts = @($last.Accounts)
+    if ($last.PSObject.Properties.Name -contains 'Layout' -and $null -ne $last.Layout) {
+        foreach ($field in @('TileMode','TileColumns','AutoTile','UseSavedWindows','MainAccountId')) { $script:Settings.$field = $last.Layout.$field }
+    }
     Save-RamState
     Build-RamCards
     Write-RamLog "Отменено: $($last.Label)." 'ok'
@@ -851,7 +856,8 @@ function Add-RamToLaunchQueue {
     #>
     param(
         [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$Accounts,
-        [switch]$Unattended
+        [switch]$Unattended,
+        [switch]$PassThru
     )
 
     if ($Accounts.Count -eq 0) {
@@ -860,13 +866,19 @@ function Add-RamToLaunchQueue {
         return
     }
 
-    # Пошла новая пачка — раскладка от предыдущей больше не актуальна,
-    # иначе она сработает посреди запуска следующих окон.
-    $script:PendingTileUntil = [datetime]::MinValue
+    $Accounts = @($Accounts | Where-Object {
+        $null -ne $_ -and -not $script:Instances.ContainsKey([string]$_.Id) -and
+        $script:LaunchQueue -notcontains [string]$_.Id -and
+        (-not $Unattended -or -not $script:LaunchSuppressedIds.ContainsKey([string]$_.Id))
+    })
+    if ($Accounts.Count -eq 0) {
+        if (-not $Unattended) { Set-RamStatus 'Новых аккаунтов для запуска нет: они уже работают или стоят в очереди.' }
+        return
+    }
 
     # Больше окон, чем вытягивает машина — предупреждаем один раз за запуск.
     # Не запрещаем: сколько тянет его компьютер, человек знает лучше нас.
-    $willRun = $Accounts.Count + @($script:Instances.Keys).Count
+    $willRun = $Accounts.Count + @($script:Instances.Keys).Count + $script:LaunchQueue.Count
     $canRun  = Get-RamRecommendedAccountCount
     if ($willRun -gt $canRun -and -not $script:WarnedAboutLoad -and $Unattended) {
         # Без человека не спрашиваем: сколько окон поднимать ночью, он решил сам,
@@ -979,6 +991,7 @@ function Add-RamToLaunchQueue {
     }
 
     $added = 0
+    $addedIds = New-Object Collections.ArrayList
     foreach ($a in $Accounts) {
         # Игра не задана — не беда: клиент откроется на главной под этим
         # аккаунтом, игру человек выберет сам.
@@ -988,6 +1001,11 @@ function Add-RamToLaunchQueue {
         }
         if ($script:LaunchQueue -contains $a.Id) { continue }
         [void]$script:LaunchQueue.Add($a.Id)
+        [void]$addedIds.Add([string]$a.Id)
+        if (-not $Unattended) { $script:LaunchSuppressedIds.Remove([string]$a.Id) }
+        $script:LaunchTries.Remove([string]$a.Id)
+        $script:LastLaunchFailures.Remove([string]$a.Id)
+        $script:LaunchFailed.Remove([string]$a.Id)
         $added++
     }
 
@@ -998,10 +1016,95 @@ function Add-RamToLaunchQueue {
         return
     }
 
+    $script:PendingTileUntil = [datetime]::MinValue
     Write-RamLog "В очередь добавлено: $added. Пауза между запусками — $($script:Settings.LaunchDelaySec) с." 'info'
-    $script:NextLaunchTime = Get-Date
+    if ($script:NextLaunchTime -lt (Get-Date)) { $script:NextLaunchTime = Get-Date }
     $script:UI.LaunchTimer.Start()
     Update-RamCardStates
+    if ($PassThru) { return @($addedIds) }
+}
+
+function Set-RamLaunchPaused {
+    param([bool]$Paused)
+    $script:LaunchPaused = $Paused
+    Update-RamCardStates
+    Set-RamStatus $(if ($Paused) { 'Очередь на паузе. Открытые окна Roblox продолжают работать.' } else { 'Очередь продолжена.' })
+}
+
+function Invoke-RamAccountPrimaryAction {
+    param([string]$Id)
+    $a = Get-RamAccountById -Id $Id
+    if ($null -eq $a) { return }
+    if ($script:Instances.ContainsKey($Id)) {
+        $handle = $script:Instances[$Id].Handle
+        if ($handle -ne [IntPtr]::Zero) { [void](Set-RamWindowForeground -Handle $handle) }
+        else { Set-RamStatus 'Окно Roblox ещё загружается.' }
+    } elseif ($script:LaunchQueue -contains $Id) { Show-RamLaunchCenter }
+    elseif ([string]$a.CookieOk -eq 'no') { Invoke-RamRelogin -Id $Id }
+    else { Add-RamToLaunchQueue -Accounts @($a) }
+}
+
+function Remove-RamQueuedAccount {
+    param([string]$Id)
+    if ($script:LaunchQueue -notcontains $Id) { Set-RamStatus 'Этот аккаунт уже вышел из очереди.'; return }
+    $script:LaunchSuppressedIds[$Id] = $true
+    $script:LaunchQueue.Remove($Id)
+    $script:LaunchTries.Remove($Id)
+    if ($script:LaunchQueue.Count -eq 0) { $script:LaunchPaused = $false }
+    Update-RamCardStates
+}
+
+function Stop-RamLaunchQueue {
+    $count = $script:LaunchQueue.Count
+    foreach ($id in @($script:LaunchQueue)) { $script:LaunchSuppressedIds[[string]$id] = $true }
+    $script:LaunchQueue.Clear()
+    $script:LaunchTries = @{}
+    $script:LaunchFailed = @{}
+    $script:LaunchPaused = $false
+    if ($script:UI.LaunchTimer) { $script:UI.LaunchTimer.Stop() }
+    # Ожидание чтения XML сохраняем для возможного следующего запуска.
+    Update-RamCardStates
+    Set-RamStatus "Отменено запусков: $count. Эти аккаунты не будут автоматически перезапускаться до ручного запуска или перезапуска AltHub."
+}
+
+function Invoke-RamRetryFailedLaunches {
+    $targets = @(Get-RamOrderedAccounts | Where-Object { $script:LastLaunchFailures.ContainsKey([string]$_.Id) })
+    if ($targets.Count -eq 0) { Set-RamStatus 'Неудавшихся запусков для повтора нет.'; return }
+    Set-RamStatus "Повторяю неудавшиеся запуски: $($targets.Count)."
+    Add-RamToLaunchQueue -Accounts $targets
+}
+
+function Get-RamLaunchSnapshot {
+    $positions = @{}
+    for ($i=0; $i -lt $script:LaunchQueue.Count; $i++) { $positions[[string]$script:LaunchQueue[$i]] = $i + 1 }
+    $processes = @{}
+    foreach ($p in @(Get-RamRobloxProcesses)) { $processes[[int]$p.Id] = $p }
+    $rows = @(); $memory = 0
+    foreach ($a in @(Get-RamOrderedAccounts)) {
+        $id = [string]$a.Id; $state = ''; $detail = ''; $ram = 0
+        if ($script:Instances.ContainsKey($id)) {
+            $inst = $script:Instances[$id]
+            $closing = (($null -ne $script:Stopping -and $script:Stopping.ContainsKey($id)) -or
+                ($inst.PSObject.Properties.Name -contains 'ClosingByOs' -and [bool]$inst.ClosingByOs))
+            $state = if ($closing) { 'Закрывается' } elseif ($inst.Handle -eq [IntPtr]::Zero) { 'Загрузка клиента' } else { 'Окно открыто' }
+            if ($processes.ContainsKey([int]$inst.ProcessId)) { $ram = [int]($processes[[int]$inst.ProcessId].WorkingSet64 / 1MB) }
+            $memory += $ram
+        } elseif ($positions.ContainsKey($id)) {
+            $state = $(if ($script:LaunchPaused) { 'Пауза' } else { 'В очереди' }) + " · №$($positions[$id])"
+        } elseif ($script:LastLaunchFailures.ContainsKey($id)) {
+            $state = 'Не запустился'
+            $detail = Protect-RamMessage -Message ([string]$script:LastLaunchFailures[$id])
+        } else { continue }
+        $rows += [pscustomobject]@{ Id=$id; Name=[string]$a.Alias; State=$state; Detail=$detail; MemoryMb=$ram
+            Game=$(if ($a.GameName) { [string]$a.GameName } elseif ($a.PlaceId) { "ID $($a.PlaceId)" } else { 'Roblox без игры' })
+            Settings=(Get-RamAccountSettingsSummary -Account $a) }
+    }
+    $wait = [int][Math]::Max(0.0, ($script:NextLaunchTime - (Get-Date)).TotalSeconds)
+    $different = (-not [string]::IsNullOrEmpty($script:AwaitWindowFor) -and $script:Instances.ContainsKey([string]$script:AwaitWindowFor) -and (Test-RamNextSettingsDiffer))
+    if ($different) { $wait = [Math]::Max($wait, [int][Math]::Max(0.0, ($script:AwaitSettingsReadyAt - (Get-Date)).TotalSeconds)) }
+    $waitingForWindow = ($different -and $script:Instances.ContainsKey([string]$script:AwaitWindowFor) -and $script:Instances[$script:AwaitWindowFor].Handle -eq [IntPtr]::Zero)
+    return [pscustomobject]@{ Rows=$rows; MemoryMb=$memory; Queued=$script:LaunchQueue.Count
+        Running=$script:Instances.Count; Failed=@($rows | Where-Object { $_.State -eq 'Не запустился' }).Count; Paused=$script:LaunchPaused; WaitSeconds=$wait; WaitingForWindow=$waitingForWindow }
 }
 
 function Restore-RamOwnClientSettings {
@@ -1028,6 +1131,12 @@ function Restore-RamOwnClientSettings {
     }
 }
 
+function Test-RamNextSettingsDiffer {
+    if ($script:LaunchQueue.Count -eq 0) { return $false }
+    $next = Get-RamAccountById -Id ([string]$script:LaunchQueue[0])
+    return ($null -ne $next -and (Get-RamClientSettingsKey -Account $next) -ne $script:AwaitSettingsKey)
+}
+
 function Test-RamSettingsFileFree {
     <#
       Можно ли уже переписывать общий файл настроек Roblox.
@@ -1052,11 +1161,12 @@ function Test-RamSettingsFileFree {
       Ждём ТОЛЬКО когда настройки следующего аккаунта отличаются — иначе пять
       одинаковых твинков запускались бы втрое дольше без всякой пользы.
     #>
-    if ([string]::IsNullOrEmpty($script:AwaitWindowFor)) { return $true }
+    if ([string]::IsNullOrEmpty($script:AwaitWindowFor) -or -not (Test-RamNextSettingsDiffer)) { return $true }
 
     $inst = $script:Instances[$script:AwaitWindowFor]
     if ($null -eq $inst) {
         $script:AwaitWindowFor = ''
+        $script:AwaitSettingsKey = ''
         $script:AwaitSettingsReadyAt = [datetime]::MinValue
         return $true
     }
@@ -1067,6 +1177,7 @@ function Test-RamSettingsFileFree {
     if ($inst.Handle -ne [IntPtr]::Zero) {
         if ((Get-Date) -lt $script:AwaitSettingsReadyAt) { return $false }
         $script:AwaitWindowFor = ''
+        $script:AwaitSettingsKey = ''
         $script:AwaitSettingsReadyAt = [datetime]::MinValue
         return $true
     }
@@ -1076,6 +1187,7 @@ function Test-RamSettingsFileFree {
         $who  = if ($null -ne $prev) { $prev.Alias } else { 'предыдущий' }
         Write-RamLog "'$who': окно не появилось вовремя. Запускаю следующего — настройки графики могли не успеть примениться." 'warn'
         $script:AwaitWindowFor = ''
+        $script:AwaitSettingsKey = ''
         $script:AwaitSettingsReadyAt = [datetime]::MinValue
         return $true
     }
@@ -1090,16 +1202,8 @@ function Set-RamSettingsWait {
     #>
     param([Parameter(Mandatory)]$Launched)
 
-    $script:AwaitWindowFor = ''
-    $script:AwaitSettingsReadyAt = [datetime]::MinValue
-    if ($script:LaunchQueue.Count -eq 0) { return }
-
-    $next = Get-RamAccountById -Id $script:LaunchQueue[0]
-    if ($null -eq $next) { return }
-
-    if ((Get-RamClientSettingsKey -Account $next) -eq (Get-RamClientSettingsKey -Account $Launched)) { return }
-
     $script:AwaitWindowFor   = $Launched.Id
+    $script:AwaitSettingsKey = Get-RamClientSettingsKey -Account $Launched
     $script:AwaitWindowUntil = (Get-Date).AddSeconds(60)
     # Появление окна ещё не гарантирует, что медленная машина уже дочитала
     # GlobalBasicSettings. Даём клиенту минимум 15 секунд от старта перед
@@ -1127,7 +1231,8 @@ function Show-RamLaunchReport {
     # Программа свёрнута в часы (обычно — запуск по расписанию): модальное окно
     # ждало бы человека до утра. Причины — в журнал и нижнюю строку.
     $formVisible = ($script:UI.ContainsKey('Form') -and $null -ne $script:UI.Form -and $script:UI.Form.Visible)
-    if (-not $formVisible) {
+    $centerVisible = ($script:UI.ContainsKey('LaunchCenter') -and $null -ne $script:UI.LaunchCenter -and -not $script:UI.LaunchCenter.IsDisposed -and $script:UI.LaunchCenter.Visible)
+    if (-not $formVisible -or $centerVisible) {
         foreach ($l in $lines) { Write-RamLog ("Не запустился " + $l.TrimStart('•', ' ')) 'warn' }
         Set-RamStatus "Запустились не все: $($lines.Count) — причины в журнале."
         return
@@ -1242,10 +1347,15 @@ function Restore-RamAdoptRunningClients {
 }
 
 function Invoke-RamNextLaunch {
+    if ($script:LaunchTickActive) { return }
+    $script:LaunchTickActive = $true
+    try {
+    if ($script:LaunchPaused -and $script:LaunchQueue.Count -gt 0) { return }
     if ($script:LaunchQueue.Count -eq 0) {
         $script:UI.LaunchTimer.Stop()
         $script:LaunchTries = @{}
         Show-RamLaunchReport
+        if ($script:LaunchQueue.Count -gt 0) { return }
 
         # Раскладываем НЕ сразу. Клиент Roblox создаёт окно на несколько
         # секунд позже, чем стартует процесс, поэтому раскладка сразу после
@@ -1328,8 +1438,6 @@ function Invoke-RamNextLaunch {
         # Запуск сорвался, а настройки графики мы в общий файл уже записали.
         # Оставлять их нельзя: откроешь Roblox вручную — и получишь графику
         # твина вместо своей.
-        $script:AwaitWindowFor = ''
-        $script:AwaitSettingsReadyAt = [datetime]::MinValue
         Restore-RamOwnClientSettings -Reason 'запуск не состоялся'
 
         # «Слишком часто» — это не отказ, а просьба подождать. Возвращаем
@@ -1368,11 +1476,13 @@ function Invoke-RamNextLaunch {
             Write-RamLog "'$($a.Alias)': попробую ещё раз в конце очереди." 'warn'
         } else {
             $script:LaunchFailed[$a.Id] = $msg
+            $script:LastLaunchFailures[[string]$a.Id] = $msg
         }
     }
 
     $script:NextLaunchTime = (Get-Date).AddSeconds([int]$script:Settings.LaunchDelaySec)
     Update-RamCardStates
+    } finally { $script:LaunchTickActive = $false }
 }
 
 function Invoke-RamPendingTile {
@@ -1412,13 +1522,25 @@ function Invoke-RamPendingTile {
     Invoke-RamTileWindows -Quiet
 }
 
+function Get-RamLayoutAccounts {
+    param([string]$Mode)
+    $accounts = @(Get-RamOrderedAccounts)
+    if ($Mode -eq 'main' -and $script:Settings.MainAccountId) {
+        return @($accounts | Sort-Object { [string]$_.Id -ne [string]$script:Settings.MainAccountId }, { [int]$_.Order })
+    }
+    return $accounts
+}
+
 function Invoke-RamTileWindows {
     # -Quiet — зов автоматики после запуска окон (из таймера): там модальное
     # сообщение некому закрыть. Все пути человека отвечают словами.
     param([string]$Mode = '', [switch]$Quiet)
 
+    $tileMode = if ($Mode) { $Mode } else { [string]$script:Settings.TileMode }
+    if (@('grid','cascade','columns','rows','main') -notcontains $tileMode) { $tileMode = 'grid' }
+
     $live = @()
-    foreach ($a in $script:Accounts) {
+    foreach ($a in @(Get-RamLayoutAccounts -Mode $tileMode)) {
         $inst = $script:Instances[$a.Id]
         if ($null -eq $inst) { continue }
         if ($inst.Handle -eq [IntPtr]::Zero) {
@@ -1444,11 +1566,9 @@ function Invoke-RamTileWindows {
         return
     }
 
-    $mode = if ($Mode) { $Mode } else { [string]$script:Settings.TileMode }
     # 'main' обязан быть в списке: его ставит «Быстрая настройка», и без него
     # выбор молча подменялся сеткой — в журнале каждый раз было «сеткой»,
     # хотя выбрано «основной крупно».
-    if (@('grid','cascade','columns','rows','main') -notcontains $mode) { $mode = 'grid' }
 
     # Если у аккаунта запомнено своё место — ставим туда, а раскладку
     # считаем только для остальных.
@@ -1473,7 +1593,7 @@ function Invoke-RamTileWindows {
     }
 
     $layout = Get-RamTileLayout -Count $live.Count -Columns $script:Settings.TileColumns `
-                                -Margin $script:Settings.TileMargin -Mode $mode
+                                -Margin $script:Settings.TileMargin -Mode $tileMode
     for ($i = 0; $i -lt $live.Count; $i++) {
         $c = $layout[$i]
         [void](Set-RamWindowBounds -Handle $live[$i].Handle -X $c.X -Y $c.Y -Width $c.Width -Height $c.Height)
@@ -1481,7 +1601,7 @@ function Invoke-RamTileWindows {
 
     $names = @{ grid = 'сеткой'; cascade = 'каскадом'; columns = 'колонками'; rows = 'строками'
                 main = 'основной крупно' }
-    Write-RamLog "Окна разложены $($names[$mode]): $($live.Count) шт." 'ok'
+    Write-RamLog "Окна разложены $($names[$tileMode]): $($live.Count) шт." 'ok'
 }
 
 function Update-RamInstances {
@@ -2233,6 +2353,64 @@ function Get-RamProfiles {
     return @($script:Settings.Profiles | Where-Object { $null -ne $_ -and $_.Name })
 }
 
+function New-RamLaunchProfile {
+    param([string]$Name, [object[]]$Accounts)
+    $snapshots = @()
+    foreach ($a in $Accounts) {
+        $snapshots += [pscustomobject]@{ Id=[string]$a.Id; PlaceId=[string]$a.PlaceId; GameName=[string]$a.GameName
+            JobId=[string]$a.JobId; LinkCode=[string]$a.LinkCode; Graphics=[string]$a.Graphics
+            FramerateCap=[string]$a.FramerateCap; Volume=[string]$a.Volume; Fullscreen=[string]$a.Fullscreen }
+    }
+    return [pscustomobject]@{ Name=$Name.Trim(); Group=''; Ids=@($Accounts | ForEach-Object { [string]$_.Id })
+        PlaceId=''; GameName=''; LinkCode=''; LaunchSettings=$snapshots
+        TileMode=[string]$script:Settings.TileMode; TileColumns=[int]$script:Settings.TileColumns
+        AutoTile=[bool]$script:Settings.AutoTile; UseSavedWindows=[bool]$script:Settings.UseSavedWindows
+        MainAccountId=$(if (@($Accounts.Id) -contains [string]$script:Settings.MainAccountId) { [string]$script:Settings.MainAccountId } else { [string]$Accounts[0].Id }) }
+}
+
+function ConvertTo-RamProfileTargets {
+    param($Profile, [object[]]$Accounts)
+    $copies = @(Copy-RamAccounts -Accounts $Accounts)
+    if ($Profile.PSObject.Properties.Name -contains 'LaunchSettings') {
+        $rules = @{ PlaceId='^\d{0,20}$'; JobId='^(|[0-9a-fA-F-]{36})$'; LinkCode='^[A-Za-z0-9_-]{0,200}$'
+                    Graphics='^(|auto|[1-9]|10)$'; FramerateCap='^(|\d{1,4})$'; Volume='^(|100|[1-9]?\d)$'; Fullscreen='^(|yes|no)$' }
+        $seen = @{}
+        foreach ($saved in @($Profile.LaunchSettings)) {
+            if ($null -eq $saved -or -not $saved.Id -or $seen.ContainsKey([string]$saved.Id)) { throw 'В сценарии повторён или отсутствует ID аккаунта.' }
+            $seen[[string]$saved.Id] = $true
+            foreach ($field in $rules.Keys) {
+                if ($saved.PSObject.Properties.Name -notcontains $field -or [string]$saved.$field -notmatch $rules[$field]) {
+                    throw "В сценарии недопустимое значение $field. Пересохрани сценарий."
+                }
+            }
+            $a = $copies | Where-Object { [string]$_.Id -eq [string]$saved.Id } | Select-Object -First 1
+            if ($null -eq $a) { continue }
+            foreach ($field in @('PlaceId','GameName','JobId','LinkCode','Graphics','FramerateCap','Volume','Fullscreen')) { $a.$field = [string]$saved.$field }
+        }
+        foreach ($a in $copies) { if (-not $seen.ContainsKey([string]$a.Id)) { throw 'В сценарии нет настроек одного из выбранных аккаунтов.' } }
+    } elseif ($Profile.PlaceId) {
+        if ([string]$Profile.PlaceId -notmatch '^\d{1,20}$' -or [string]$Profile.LinkCode -notmatch '^[A-Za-z0-9_-]{0,200}$') { throw 'В профиле неверная ссылка на игру.' }
+        foreach ($a in $copies) {
+            $a.PlaceId=[string]$Profile.PlaceId; $a.LinkCode=[string]$Profile.LinkCode
+            if ($Profile.GameName) { $a.GameName=[string]$Profile.GameName }
+        }
+    }
+    return @($copies)
+}
+
+function Get-RamProfileSummary {
+    param($Profile)
+    if ($Profile.PSObject.Properties.Name -contains 'LaunchSettings') {
+        $layout = switch ([string]$Profile.TileMode) { 'grid' {'сетка'} 'main' {'основа крупно'} 'cascade' {'каскад'} 'columns' {'колонки'} 'rows' {'строки'} default {'раскладка'} }
+        return "Аккаунтов: $(@($Profile.Ids).Count)  ·  $layout"
+    }
+    $ids = @(); if ($Profile.PSObject.Properties.Name -contains 'Ids') { $ids = @($Profile.Ids) }
+    $text = if ($Profile.Group) { "набор «$($Profile.Group)»" } elseif ($ids.Count) { "аккаунтов: $($ids.Count)" } else { 'все аккаунты' }
+    if ($Profile.GameName) { $text += "  ·  $($Profile.GameName)" } elseif ($Profile.PlaceId) { $text += "  ·  ID $($Profile.PlaceId)" }
+    if ($Profile.LinkCode) { $text += '  ·  приватный сервер' }
+    return $text
+}
+
 function Invoke-RamRunProfile {
     <#
       Профиль — сохранённая связка «набор + игра». Одной кнопкой ставит игру
@@ -2263,18 +2441,38 @@ function Invoke-RamRunProfile {
         return
     }
 
-    if (-not [string]::IsNullOrWhiteSpace([string]$Profile.PlaceId)) {
-        foreach ($a in $targets) {
-            $a.PlaceId  = [string]$Profile.PlaceId
-            if ([string]$Profile.GameName) { $a.GameName = [string]$Profile.GameName }
-            $a.LinkCode = [string]$Profile.LinkCode
-        }
-        Save-RamState
-        Build-RamCards
+    if ($script:LaunchQueue.Count -gt 0) {
+        Show-RamInfo 'Сначала заверши или отмени текущую очередь в центре запуска, затем запускай другой сценарий.'
+        return
     }
+    $targets = @($targets | Where-Object { -not $script:Instances.ContainsKey([string]$_.Id) })
+    if ($targets.Count -eq 0) { Set-RamStatus 'Все аккаунты сценария уже работают.'; return }
+    try {
+        if ($Profile.PSObject.Properties.Name -contains 'TileMode' -and [string]$Profile.TileMode -notin @('grid','cascade','columns','rows','main')) { throw 'В сценарии неизвестная раскладка окон.' }
+        foreach ($field in @('AutoTile','UseSavedWindows')) {
+            if ($Profile.PSObject.Properties.Name -contains $field -and $Profile.$field -isnot [bool]) { throw "В сценарии неверное значение $field." }
+        }
+        if ($Profile.PSObject.Properties.Name -contains 'TileColumns' -and ([string]$Profile.TileColumns -notmatch '^\d{1,2}$' -or [int]$Profile.TileColumns -gt 20)) { throw 'В сценарии неверное число колонок.' }
+        if ($Profile.PSObject.Properties.Name -contains 'MainAccountId' -and
+            (@($Profile.Ids) -notcontains [string]$Profile.MainAccountId -or $null -eq (Get-RamAccountById -Id ([string]$Profile.MainAccountId)))) { throw 'Основной аккаунт сценария не найден. Пересохрани сценарий.' }
+        $prepared = @(ConvertTo-RamProfileTargets -Profile $Profile -Accounts $targets)
+    } catch { Show-RamError $_.Exception.Message; return }
+    $queuedIds = @(Add-RamToLaunchQueue -Accounts $prepared -PassThru)
+    if ($queuedIds.Count -eq 0) { return }
+    $targets = @($targets | Where-Object { $queuedIds -contains [string]$_.Id })
+    $plan = @{}
+    foreach ($copy in $prepared) { $plan[[string]$copy.Id] = $copy }
+    Push-RamUndo -Label "настройки сценария «$($Profile.Name)»" -IncludeLayout
+    foreach ($target in $targets) {
+        foreach ($field in @('PlaceId','GameName','JobId','LinkCode','Graphics','FramerateCap','Volume','Fullscreen')) { $target.$field = $plan[[string]$target.Id].$field }
+    }
+    foreach ($field in @('TileMode','TileColumns','AutoTile','UseSavedWindows','MainAccountId')) {
+        if ($Profile.PSObject.Properties.Name -contains $field) { $script:Settings.$field = $Profile.$field }
+    }
+    Save-RamState
+    Build-RamCards
 
     Write-RamLog "Профиль «$($Profile.Name)»: запускаю $($targets.Count) аккаунтов." 'ok'
-    Add-RamToLaunchQueue -Accounts $targets
 }
 
 function Invoke-RamSaveProfile {
@@ -2282,27 +2480,11 @@ function Invoke-RamSaveProfile {
     $targets = @(Get-RamActionTargets -What 'сохранение в профиль')
     if ($targets.Count -eq 0) { return }
 
-    $name = Show-RamInputDialog -Title 'Новый профиль запуска' `
-              -Prompt 'Название профиля — например «Фарм в Elemental Dungeons». Профиль запомнит набор и игру отмеченных аккаунтов и будет запускать их одной кнопкой.'
+    $name = Show-RamInputDialog -Title 'Новый сценарий запуска' `
+              -Prompt 'Сценарий запомнит выбранные аккаунты, игру и настройки каждого, а также раскладку окон. Например «Основа + твинки». Запуск — одной кнопкой.'
     if ([string]::IsNullOrWhiteSpace($name)) { return }
 
-    $first = $targets[0]
-
-    # Набор запоминаем только если он у ВСЕХ отмеченных один и тот же.
-    # Иначе — сохраняем поимённый список: раньше в этом случае в профиль
-    # уходил пустой набор, а пустой набор означает «все аккаунты», и профиль
-    # поднимал в том числе те, которые не отмечали.
-    $groups = @($targets | ForEach-Object { [string]$_.Group } | Sort-Object -Unique)
-    $sharedGroup = if ($groups.Count -eq 1 -and $groups[0]) { $groups[0] } else { '' }
-
-    $entry = [pscustomobject]@{
-        Name     = $name.Trim()
-        Group    = $sharedGroup
-        Ids      = @($targets | ForEach-Object { [string]$_.Id })
-        PlaceId  = [string]$first.PlaceId
-        GameName = [string]$first.GameName
-        LinkCode = [string]$first.LinkCode
-    }
+    $entry = New-RamLaunchProfile -Name $name -Accounts $targets
 
     $rest = @(Get-RamProfiles | Where-Object { $_.Name -ne $entry.Name })
     $script:Settings.Profiles = @(@($entry) + $rest | Select-Object -First 20)
@@ -2312,7 +2494,7 @@ function Invoke-RamSaveProfile {
     # Раздел «Профили» человек в этот момент обычно не видит — он на
     # «Аккаунтах». Без ответа кнопка выглядела не сработавшей.
     Show-RamMessage -Kind 'ok' -Message ("Профиль «$($entry.Name)» сохранён." + [Environment]::NewLine +
-                                         [Environment]::NewLine + "Аккаунтов в нём: $($targets.Count). Запускать — в разделе «Профили».")
+                                         [Environment]::NewLine + "Аккаунтов в нём: $($targets.Count). Свои настройки сохранены для каждого. Запускать — в разделе «Сценарии».")
 }
 
 function Invoke-RamWatchCheck {

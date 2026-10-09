@@ -12,6 +12,114 @@
 
 # ------------------------------------------------------ тёмные диалоги ------
 
+function Update-RamLaunchCenter {
+    param($Form)
+    if ($null -eq $Form -or $Form.IsDisposed) { return }
+    $ui = $Form.Tag; $t = $Global:RamTheme
+    $snap = Get-RamLaunchSnapshot
+    $summary = "Открыто: $($snap.Running)  ·  В очереди: $($snap.Queued)  ·  Ошибок: $($snap.Failed)"
+    if ($snap.MemoryMb -gt 0) { $summary += '  ·  Память процессов: {0:N1} ГБ' -f ($snap.MemoryMb / 1024.0) }
+    $ui.Summary.Text = $summary
+    $ui.Hint.Text = if ($snap.Paused) { 'Пауза очереди. Уже открытые окна продолжают работать.' }
+                   elseif ($snap.WaitingForWindow) { 'Ждём окно предыдущего клиента, чтобы сохранить его индивидуальные настройки.' }
+                   elseif ($snap.Queued) { "Следующий запуск через $($snap.WaitSeconds) с; при разных настройках ждём готовности предыдущего окна." }
+                   else { 'Запускай сценарий или отмеченные аккаунты. Здесь виден ход запуска и результат.' }
+    Set-RamButtonText -Button $ui.Pause -Text $(if ($snap.Paused) { 'Продолжить' } else { 'Пауза' })
+    Set-RamButtonEnabled -Button $ui.Pause -Enabled ($snap.Queued -gt 0)
+    Set-RamButtonEnabled -Button $ui.Cancel -Enabled ($snap.Queued -gt 0)
+    Set-RamButtonEnabled -Button $ui.Retry -Enabled ($snap.Failed -gt 0)
+    $width = Get-RamListWidth -Panel $ui.Host
+    $key = ($snap.Rows.Id -join '|') + ":$width"
+    if ($key -ne $ui.Key) {
+        $scroll = Enter-RamListRebuild -Panel $ui.Host
+        try {
+            Clear-RamPanelControls -Panel $ui.Host
+            $ui.Rows = @{}
+            if ($snap.Rows.Count -eq 0) {
+                $ui.Host.Controls.Add((New-RamNoticeCard -Width $width -Title 'Сеанс ещё не начат' -Text 'Запусти аккаунты из списка или выбери сохранённый сценарий. Пауза и отмена действуют только на очередь.'))
+            }
+            foreach ($row in $snap.Rows) {
+                $action = New-RamButton -Text 'Действия' -Height $t.M.RowHSm -Kind 'ghost' -OnClick {
+                    $menu = New-RamCardMenu -AccountId ([string]$this.Tag.AccountId)
+                    if ($null -ne $menu) {
+                        $menu.Add_Closed({ $this.Dispose() })
+                        $menu.Show($this, (New-Object Drawing.Point(0, $this.Height)))
+                    }
+                }
+                $action.Tag | Add-Member -NotePropertyName AccountId -NotePropertyValue $row.Id -Force
+                $card = New-RamRowCard -Width $width -Title '' -Meta '' -Buttons @($action)
+                $labels = @($card.Controls | Where-Object { $_ -is [Windows.Forms.Label] })
+                $ui.Rows[$row.Id] = @{ Title=$labels[0]; Meta=$labels[1] }
+                $ui.Host.Controls.Add($card)
+            }
+            $ui.Key = $key
+        } finally { Exit-RamListRebuild -Panel $ui.Host -ScrollY $scroll }
+    }
+    foreach ($row in $snap.Rows) {
+        $labels = $ui.Rows[$row.Id]
+        $labels.Title.Text = "$($row.Name)  ·  $($row.State)"
+        $labels.Title.ForeColor = if ($row.Detail) { $t.Danger } else { $t.Text }
+        $parts = @($row.Game)
+        if ($row.Settings) { $parts += $row.Settings }
+        if ($row.MemoryMb) { $parts += "$($row.MemoryMb) МБ RAM" }
+        if ($row.Detail) { $parts += $row.Detail }
+        $labels.Meta.Text = $parts -join '  ·  '
+        $ui.Tips.SetToolTip($labels.Title, $labels.Title.Text)
+        $ui.Tips.SetToolTip($labels.Meta, $labels.Meta.Text)
+    }
+}
+
+function Show-RamLaunchCenter {
+    param([switch]$BuildOnly)
+    if ($Global:RamNoDialogs -and -not $BuildOnly) { return }
+    if (-not $BuildOnly -and $script:UI.ContainsKey('LaunchCenter') -and $null -ne $script:UI.LaunchCenter -and -not $script:UI.LaunchCenter.IsDisposed) {
+        $script:UI.LaunchCenter.Activate()
+        return
+    }
+    $t = $Global:RamTheme; $m = $t.M
+    $shell = New-RamDialogShell -WindowText 'Центр запуска' -Caption 'Центр запуска' -Width ([int](720 * $m.Scale))
+    $dlg = $shell.Form; $lay = $shell.Layout
+    $summary = Add-RamTextBlock -Layout $lay -Text '' -SingleLine -Font $t.FontTitle
+    $hint = Add-RamTextBlock -Layout $lay -Text 'Очередь запусков, состояние окон и потребление памяти.' -Lines 2 -Font $t.FontSmall -Color $t.Muted
+    $pause = New-RamButton -Text 'Продолжить' -Height $m.RowH -Kind 'primary' -OnClick {
+        Set-RamLaunchPaused -Paused (-not $script:LaunchPaused)
+        Update-RamLaunchCenter -Form $this.FindForm()
+    }
+    $cancel = New-RamButton -Text 'Отменить очередь' -Height $m.RowH -OnClick {
+        Stop-RamLaunchQueue
+        Update-RamLaunchCenter -Form $this.FindForm()
+    }
+    $retry = New-RamButton -Text 'Повторить ошибки' -Height $m.RowH -OnClick {
+        Invoke-RamRetryFailedLaunches
+        Update-RamLaunchCenter -Form $this.FindForm()
+    }
+    [void](Add-RamRow -Layout $lay -Items @($pause,$cancel,$retry))
+    $rows = @(Get-RamLaunchSnapshot).Rows.Count
+    $rowH = (Get-RamTextRowH $t.FontTitle) + (Get-RamTextRowH $t.FontSmall) + [int](24 * $m.Scale) + 8
+    $listH = [int][Math]::Min(350 * $m.Scale, [Math]::Max(100 * $m.Scale, $rows * $rowH))
+    $hostPanel = New-RamScrollPanel -Width $lay.Width -Height $listH
+    [void](Add-RamRow -Layout $lay -Height $hostPanel.Height -Items @(@{ Control=$hostPanel; Width=$lay.Width }))
+    $close = New-RamButton -Text 'Закрыть' -Height $m.RowH -OnClick { $this.FindForm().Close() }
+    [void](Add-RamButtonBar -Layout $lay -Primary $close)
+    $tips = New-Object Windows.Forms.ToolTip
+    $dlg.Tag = @{ Summary=$summary; Hint=$hint; Pause=$pause; Cancel=$cancel; Retry=$retry
+                  Host=$hostPanel; Rows=@{}; Key=''; Tips=$tips }
+    [void](Complete-RamDialogShell -Shell $shell)
+    $timer = New-Object Windows.Forms.Timer
+    $timer.Interval = 1000; $timer.Tag = $dlg
+    $timer.Add_Tick({
+        $owner = $this.Tag
+        Invoke-RamSafe -What 'центр запуска' -Body { Update-RamLaunchCenter -Form $owner }.GetNewClosure()
+    })
+    $dlg.Tag.Timer = $timer
+    $dlg.Add_Disposed({ $this.Tag.Timer.Stop(); $this.Tag.Timer.Dispose(); $this.Tag.Tips.Dispose() })
+    Update-RamLaunchCenter -Form $dlg
+    if ($BuildOnly) { return $dlg }
+    $script:UI.LaunchCenter = $dlg
+    $timer.Start()
+    try { [void]$dlg.ShowDialog($script:UI.Form) } finally { $script:UI.LaunchCenter=$null; $dlg.Dispose() }
+}
+
 function Get-RamDialogButtonWidth {
     <# Ширина кнопки диалога под её надпись. Отдельно, чтобы ширину окна и
        ширину самих кнопок считало одно и то же место. #>

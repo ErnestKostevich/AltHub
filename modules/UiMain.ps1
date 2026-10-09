@@ -210,7 +210,7 @@ function Update-RamTopBarLayout {
     # а вместе с ней и на под-категории («Все», «Основной», «Твины» —
     # $groupBar внутри $pAcc, который стоит на Y=0 относительно неё) и на
     # список карточек. То же самое верно и для «Популярные из Roblox» на
-    # «Играх» и «Готовые профили» на «Профилях» — их собственный перенос
+    # «Играх» и «Готовые сценарии» на «Профилях» — их собственный перенос
     # ниже соответствующего порога должен так же спускать панель раздела
     # вслед за собой.
     #
@@ -906,11 +906,11 @@ function Build-RamCardsWater {
                 # пользователя).
                 $bPlay = New-RamButton -Text '↻' -Width $playRowW -Height $playRowH -Fixed -Kind 'danger' -Radius $playRadius `
                                        -Tooltip 'Войти в этот аккаунт заново — вход умер' -OnClick {
-                    Invoke-RamRelogin -Id $this.Tag.AccountId
+                    Invoke-RamAccountPrimaryAction -Id ([string]$this.Tag.AccountId)
                 }
             } else {
                 $bPlay = New-RamButton -Text '' -Icon 'play' -IconOnly -Width $playRowW -Height $playRowH -Fixed -Kind 'primary' -Radius $playRadius -Tooltip 'Запустить этот аккаунт' -OnClick {
-                    Add-RamToLaunchQueue -Accounts @((Get-RamAccountById -Id $this.Tag.AccountId))
+                    Invoke-RamAccountPrimaryAction -Id ([string]$this.Tag.AccountId)
                 }
             }
             $bPlay.Tag | Add-Member -NotePropertyName AccountId -NotePropertyValue $a.Id -Force
@@ -1174,6 +1174,7 @@ function Update-RamCardStatesWater {
         if ($null -eq $entry) { continue }
 
         $inst = $script:Instances[$a.Id]
+        Update-RamCardPrimaryButton -Account $a -Entry $entry
         # Флаг ClosingByOs (см. Update-RamInstances в Accounts.ps1) — окно
         # закрыли крестиком/Alt+F4, минуя кнопку «■» в AltHub. Раньше это
         # ничем не отличалось от «клиент только запускается» (в обоих
@@ -1198,7 +1199,7 @@ function Update-RamCardStatesWater {
                 Set-RamStatusDot -Dot $entry.Dot -Caption 'загрузка...' -Color $t.Warn -Avatar $entry.Avatar
             }
         } elseif ($script:LaunchQueue -contains $a.Id) {
-            Set-RamStatusDot -Dot $entry.Dot -Caption 'в очереди' -Color $t.Accent -Avatar $entry.Avatar
+            Set-RamStatusDot -Dot $entry.Dot -Caption $(if ($script:LaunchPaused) { 'пауза' } else { 'в очереди' }) -Color $t.Accent -Avatar $entry.Avatar
         } else {
             # Мёртвый вход виден сразу, а не только по кнопке ↻: красная
             # подпись и красная рамка аватарки.
@@ -1621,6 +1622,9 @@ function Build-RamCardMenuItems {
 
     [void](Add-RamMenuItem -Menu $m -Text $acc.Alias -Disabled)
     [void](Add-RamMenuItem -Menu $m -Separator)
+    if ($script:LaunchQueue -contains $id) {
+        [void](Add-RamMenuItem -Menu $m -Text 'Убрать из очереди' -Tag $id -OnClick { Remove-RamQueuedAccount -Id ([string]$this.Tag) })
+    }
 
     [void](Add-RamMenuItem -Menu $m -Text '▶  Запустить' -Tag $id -OnClick {
         Add-RamToLaunchQueue -Accounts @((Get-RamAccountById -Id ([string]$this.Tag)))
@@ -1940,11 +1944,12 @@ function Show-RamQuickSetup {
         finally { $script:UI.Form.Cursor = [System.Windows.Forms.Cursors]::Default }
     }
 
-    Push-RamUndo -Label 'быстрая настройка'
+    Push-RamUndo -Label 'быстрая настройка' -IncludeLayout
     $main   = Get-RamAccountById -Id $mainId
     $twinks = @($script:Accounts | Where-Object { $_.Id -ne $mainId })
 
     if ($null -eq $main) { Show-RamError 'Основной аккаунт не найден.'; return }
+    $script:Settings.MainAccountId = [string]$main.Id
 
     # --- основной
     $main.Group        = 'Основной'
@@ -2065,7 +2070,7 @@ function Get-RamSections {
     @(
         [pscustomobject]@{ Key = 'accounts'; Text = 'Аккаунты';   Icon = 'user' },
         [pscustomobject]@{ Key = 'games';    Text = 'Игры';       Icon = 'gamepad' },
-        [pscustomobject]@{ Key = 'profiles'; Text = 'Профили';    Icon = 'profile' },
+        [pscustomobject]@{ Key = 'profiles'; Text = 'Сценарии';   Icon = 'profile' },
         [pscustomobject]@{ Key = 'stats';    Text = 'Статистика'; Icon = 'chart' },
         [pscustomobject]@{ Key = 'log';      Text = 'Журнал';     Icon = 'history' }
     )
@@ -2145,7 +2150,7 @@ function Show-RamSection {
     # над карточками аккаунтов — видна только на разделе «Аккаунты», на
     # всех остальных («Игры», «Профили», «Статистика», «Журнал») просто
     # прячется, оставляя под собой пустое место. «Популярные из Roblox» и
-    # «Готовые профили» — не здесь, а в шапке страницы, рядом с поиском
+    # «Готовые сценарии» — не здесь, а в шапке страницы, рядом с поиском
     # (см. $bGamesPopular/$bProfiles в Update-RamTopBarLayout и в сборке
     # верхней строки).
     if ($script:UI.ContainsKey('NavGroupAcc')) {
@@ -2632,7 +2637,7 @@ function Update-RamGamesPanelWater {
 
 function Get-RamStarterProfiles {
     <#
-      Готовые профили запуска для старта. Все — на «все аккаунты» (набор пустой),
+      Готовые сценарии запуска для старта. Все — на «все аккаунты» (набор пустой),
       поэтому работают у любого сразу, без настройки наборов. Игры — известные
       и стабильные по placeId, так что ссылки не протухают.
 
@@ -2680,12 +2685,12 @@ function Update-RamProfilesPanelWater {
         Clear-RamPanelControls -Panel $h
         $profiles = @(Get-RamProfiles)
         if ($profiles.Count -eq 0) {
-            $h.Controls.Add((New-RamNoticeCard -Width $W -Title 'Профилей пока нет' `
+            $h.Controls.Add((New-RamNoticeCard -Width $W -Title 'Сценариев пока нет' `
                 -Text 'Отметь нужные аккаунты в разделе «Аккаунты», задай им игру, потом сохрани текущее как профиль. Дальше весь набор запускается одной кнопкой.'))
             return
         }
         foreach ($pr in $profiles) {
-            $bRun = New-RamButton -Text '' -Icon 'play' -IconOnly -Width $t.M.RowH -Height $t.M.RowH -Fixed -Kind 'primary' -Tooltip 'Запустить профиль' -OnClick {
+            $bRun = New-RamButton -Text '' -Icon 'play' -IconOnly -Width $t.M.RowH -Height $t.M.RowH -Fixed -Kind 'primary' -Tooltip 'Запустить сценарий' -OnClick {
                 Invoke-RamRunProfile -Profile $this.Tag.Profile
             }
             $bDel = New-RamButton -Text '' -Icon 'trash' -IconOnly -Width $t.M.RowH -Height $t.M.RowH -Fixed -Tooltip 'Убрать' -OnClick {
@@ -2697,14 +2702,7 @@ function Update-RamProfilesPanelWater {
             }
             $bRun.Tag | Add-Member -NotePropertyName Profile -NotePropertyValue $pr -Force
             $bDel.Tag | Add-Member -NotePropertyName Profile -NotePropertyValue $pr -Force
-            $prIds = @()
-            if ($pr.PSObject.Properties.Name -contains 'Ids') { $prIds = @($pr.Ids | Where-Object { $_ }) }
-            $meta = if ($pr.Group)          { "набор «$($pr.Group)»" }
-                    elseif ($prIds.Count)   { "аккаунтов: $($prIds.Count)" }
-                    else                    { 'все аккаунты' }
-            if ($pr.GameName) { $meta += "   ·   $($pr.GameName)" }
-            elseif ($pr.PlaceId) { $meta += "   ·   ID $($pr.PlaceId)" }
-            if ($pr.LinkCode) { $meta += '   ·   приватный сервер' }
+            $meta = Get-RamProfileSummary -Profile $pr
             $h.Controls.Add((New-RamRowCard -Width $W -Title ([string]$pr.Name) -Meta $meta -Buttons @($bRun, $bDel)))
         }
     } finally {
@@ -2776,6 +2774,7 @@ function Get-RamCheckableWindows {
         @{ Name = 'мастер';        Build = { Show-RamAddWizard -BuildOnly } }
         @{ Name = 'аккаунт';       Build = { Show-RamAccountDialog -Account $script:Accounts[0] -BuildOnly } }
         @{ Name = 'настройки';     Build = { Show-RamSettingsDialog -BuildOnly } }
+        @{ Name = 'центр запуска'; Build = { Show-RamLaunchCenter -BuildOnly } }
         @{ Name = 'конструктор';   Build = { Show-RamThemeConstructor -BuildOnly } }
         @{ Name = 'пачкой';        Build = { Show-RamBatchAddDialog -BuildOnly } }
         @{ Name = 'из браузера';   Build = { Show-RamBrowserGuide -BuildOnly } }
@@ -2874,8 +2873,8 @@ function New-RamMainFormWater {
     $nameH0 = (Measure-RamText -Text 'Ay' -Font $t.FontBig).Height + 4
     $verH0  = (Measure-RamText -Text 'Ay' -Font $t.FontSmall).Height + 2
     $authH0 = (Measure-RamText -Text 'Ay' -Font $t.FontSmall).Height + 2
-    $navH0  = Get-RamScaled 42
-    $navGap0 = Get-RamScaled 6
+    $navH0  = [Math]::Max((Get-RamScaled 38), ((Measure-RamText -Text 'Ау' -Font $t.FontBody).Height + (Get-RamScaled 12)))
+    $navGap0 = Get-RamScaled 4
     $sideTopH = (Get-RamScaled 20) + $nameH0 + $verH0 + (Get-RamScaled 2) + $authH0 + (Get-RamScaled 34)
     $sideRowsCount = (Get-RamSections).Count + 1 + 4  # разделы + фаст-настройка + запустить/закрыть/окна/входы
     $sideBottomCount = 2                              # настройки/справка
@@ -3006,8 +3005,8 @@ function New-RamMainFormWater {
     # высоту привязали к масштабу, шаг остался прежним, и на 125% кнопки
     # наехали друг на друга на 4 пикселя. Число в одном месте всегда рано
     # или поздно разъезжается с числом в другом.
-    $navH  = Get-RamScaled 42
-    $navGap = Get-RamScaled 6
+    $navH  = $navH0
+    $navGap = $navGap0
     $y = Get-RamScaled 84
 
     foreach ($sec in Get-RamSections) {
@@ -3032,7 +3031,7 @@ function New-RamMainFormWater {
         # оверлей тем же способом: «＋ Своя игра» переехала сюда из шапки
         # страницы, где она вместе с «Популярные из Roblox» была одной из
         # причин наезда на карточки при узком окне. «Профили» получили
-        # его следом: «Сохранить текущее как профиль» была отдельной
+        # его следом: «Сохранить сценарий» была отдельной
         # кнопкой в шапке страницы — теперь это «Создать профиль» здесь.
         if ($isAcc -or $isGames -or $isProf) {
             $addOverlayW = $navH - (Get-RamScaled 8)
@@ -3271,9 +3270,10 @@ function New-RamMainFormWater {
     #
     # Смысл группировки тот же, что у кнопки: все четыре действия работают
     # над ОТМЕЧЕННЫМИ аккаунтами, и в меню это наконец написано словами.
-    $bSel = New-RamButton -Text 'С отмеченными  ▾' -Width (& $bw 190) -Height $topBtnH `
+    $bSel = New-RamButton -Text 'Действия  ▾' -Width (& $bw 190) -Height $topBtnH `
                           -Tooltip 'Игра, набор, метка, удаление — для отмеченных аккаунтов'
     $selMenu = New-RamContextMenu
+    $script:UI.ActionMenu = $selMenu
     [void](Add-RamMenuItem -Menu $selMenu -Text 'Назначить игру'      -OnClick { Invoke-RamAssignGame })
     [void](Add-RamMenuItem -Menu $selMenu -Text 'Собрать в набор'     -OnClick { Invoke-RamAssignGroup })
     [void](Add-RamMenuItem -Menu $selMenu -Text 'Поставить метку'     -OnClick { Invoke-RamAssignColor })
@@ -3300,13 +3300,13 @@ function New-RamMainFormWater {
     $bGamesPopular.Visible  = ($script:Section -eq 'games')
     $form.Controls.Add($bGamesPopular)
 
-    # «Готовые профили» — та же схема, что «Популярные из Roblox» выше:
+    # «Готовые сценарии» — та же схема, что «Популярные из Roblox» выше:
     # раньше была кнопкой «＋ Готовый профиль ▾» в шапке страницы «Профили»
-    # (там же соседствовала со «Сохранить текущее как профиль», которая
+    # (там же соседствовала со «Сохранить сценарий», которая
     # переехала на оверлей «+» кнопки «Профили» в боковом меню). Те же
     # пропорции ($topBtnH, ширина через $bw), тот же Y — центр совпадает с
     # центром поля поиска. Видна только на «Профилях».
-    $bProfiles = New-RamButton -Text '  Готовые профили  ▾' -Icon 'profile' -Width (& $bw 210) -Height $topBtnH -Kind 'primary' `
+    $bProfiles = New-RamButton -Text '  Готовые сценарии  ▾' -Icon 'profile' -Width (& $bw 210) -Height $topBtnH -Kind 'primary' `
                                -Tooltip 'Добавить готовый профиль с популярной игрой — работает сразу'
     $profMenu = New-RamContextMenu
     foreach ($sp in Get-RamStarterProfiles) {
@@ -3557,7 +3557,7 @@ function New-RamMainFormWater {
     $form.Controls.Add($pProf)
     $script:UI.Panels['profiles'] = $pProf
 
-    # Шапка страницы теперь пустая: «Готовые профили» переехала в верхнюю
+    # Шапка страницы теперь пустая: «Готовые сценарии» переехала в верхнюю
     # строку рядом с поиском (тем же приёмом, что «Популярные из Roblox» на
     # «Играх» — см. $bProfiles в сборке верхней строки), а «Сохранить
     # текущее как профиль» стала оверлеем «+» на самой кнопке «Профили» в
@@ -3695,7 +3695,7 @@ function New-RamMainFormWater {
             }
             $e.Handled = $true; return
         }
-        if ($inText) { return }
+        if ($inText -or ($sender.ActiveControl -is [System.Windows.Forms.Button] -and $e.KeyCode -eq 'Return')) { return }
 
         switch ($e.KeyCode) {
             'F5'     { Build-RamCards; Update-RamStatsPanel; Write-RamLog 'Обновлено.' 'info'; $e.Handled = $true }
@@ -3959,15 +3959,53 @@ function Get-RamActiveMenuLayout {
     return [string](Get-RamMenuStyle).Layout
 }
 
+function Update-RamCardPrimaryButton {
+    param($Account, $Entry)
+    $id = [string]$Account.Id; $button = $Entry.Play
+    if ($null -eq $button) { return }
+    $inst = $script:Instances[$id]
+    $closing = (($null -ne $script:Stopping -and $script:Stopping.ContainsKey($id)) -or
+        ($null -ne $inst -and $inst.PSObject.Properties.Name -contains 'ClosingByOs' -and [bool]$inst.ClosingByOs))
+    $mode = if ($closing) { 'closing' } elseif ($null -ne $inst) { if ($inst.Handle -eq [IntPtr]::Zero) { 'loading' } else { 'show' } }
+            elseif ($script:LaunchQueue -contains $id) { if ($script:LaunchPaused) { 'paused' } else { 'queued' } }
+            elseif ([string]$Account.CookieOk -eq 'no') { 'dead' } else { 'start' }
+    if ($button.Tag.PSObject.Properties.Name -contains 'PrimaryMode' -and $button.Tag.PrimaryMode -eq $mode) { return }
+    $button.Tag | Add-Member -NotePropertyName PrimaryMode -NotePropertyValue $mode -Force
+    $caption = switch ($mode) { 'show' {'Показать'} 'closing' {'Выход'} 'loading' {'Загрузка'} 'paused' {'Пауза'} 'queued' {'Очередь'} 'dead' {'Войти'} default {'Запустить'} }
+    $tip = switch ($mode) { 'show' {'Показать окно этого аккаунта'} 'closing' {'Окно закрывается'} 'loading' {'Roblox создаёт окно'} 'paused' {'Очередь на паузе: открыть центр запуска'} 'queued' {'Открыть центр запуска'} 'dead' {'Войти в аккаунт заново'} default {'Запустить этот аккаунт'} }
+    $layout = Get-RamActiveMenuLayout
+    if ($layout -eq 'water') {
+        $button.Tag.Icon = switch ($mode) { 'show' {'windows'} 'closing' {'stop'} 'loading' {'history'} 'paused' {'history'} 'queued' {'history'} 'dead' {''} default {'play'} }
+        $button.Tag.IconOnly = ($mode -ne 'dead')
+        Set-RamButtonText -Button $button -Text $(if ($mode -eq 'dead') {'↻'} else {''}) -KeepWidth
+    } else {
+        if ($layout -eq 'classic') { $caption = switch ($mode) { 'show' {'Окно'} 'loading' {'Ждёт'} 'queued' {'Ждёт'} 'start' {'Пуск'} default {$caption} } }
+        Set-RamButtonText -Button $button -Text $caption -KeepWidth
+    }
+    Set-RamButtonKind -Button $button -Kind $(if ($mode -eq 'dead') {'danger'} elseif ($mode -eq 'start') {'primary'} elseif ($mode -eq 'show') {'normal'} else {'ghost'})
+    Set-RamButtonEnabled -Button $button -Enabled ($mode -notin @('loading','closing'))
+    Set-RamButtonEnabled -Button $Entry.Stop -Enabled ($null -ne $inst -and -not $closing)
+    if ($button.Tag.PSObject.Properties.Name -contains 'ToolTipOwner') { $button.Tag.ToolTipOwner.SetToolTip($button,$tip) }
+    $button.AccessibleName = $tip
+}
+
 function New-RamMainForm {
     <# Окно строится по НАСТРОЙКЕ — это и есть момент, когда вид меню меняется. #>
     $style = Get-RamMenuStyle
     $script:UI.MenuStyleKey = [string]$style.Key
-    switch ([string]$style.Layout) {
-        'classic' { return (New-RamMainFormClassic) }
-        'modern'  { return (New-RamMainFormModern) }
-        default   { return (New-RamMainFormWater) }
+    $form = switch ([string]$style.Layout) {
+        'classic' { New-RamMainFormClassic }
+        'modern'  { New-RamMainFormModern }
+        default   { New-RamMainFormWater }
     }
+    [void](Add-RamMenuItem -Menu $script:UI.ActionMenu -Separator)
+    [void](Add-RamMenuItem -Menu $script:UI.ActionMenu -Text 'Центр запуска  ·  Ctrl+L' -OnClick { Show-RamLaunchCenter })
+    $form.Add_KeyDown({ param($sender,$e)
+        if ($e.Control -and $e.KeyCode -eq 'L') { $e.Handled=$true; $e.SuppressKeyPress=$true; Show-RamLaunchCenter }
+    })
+    $menus = @($script:UI.ActionMenu)
+    $form.Add_Disposed({ foreach ($menu in $menus) { $menu.Dispose() } }.GetNewClosure())
+    return $form
 }
 
 function Invoke-RamLayoutVariant {
@@ -4194,12 +4232,12 @@ function Update-RamProfilesPanelClassic {
         Clear-RamPanelControls -Panel $h
         $profiles = @(Get-RamProfiles)
         if ($profiles.Count -eq 0) {
-            $h.Controls.Add((New-RamNoticeCard -Width $W -Title 'Профилей пока нет' `
+            $h.Controls.Add((New-RamNoticeCard -Width $W -Title 'Сценариев пока нет' `
                 -Text 'Отметь нужные аккаунты в разделе «Аккаунты», задай им игру, потом сохрани текущее как профиль. Дальше весь набор запускается одной кнопкой.'))
             return
         }
         foreach ($pr in $profiles) {
-            $bRun = New-RamButton -Text 'Запустить профиль' -Width 1 -Height $t.M.RowHSm -Kind 'primary' -OnClick {
+            $bRun = New-RamButton -Text 'Запустить' -Width 1 -Height $t.M.RowHSm -Kind 'primary' -OnClick {
                 Invoke-RamRunProfile -Profile $this.Tag.Profile
             }
             $bDel = New-RamButton -Text 'Убрать' -Width 1 -Height $t.M.RowHSm -OnClick {
@@ -4211,14 +4249,7 @@ function Update-RamProfilesPanelClassic {
             }
             $bRun.Tag | Add-Member -NotePropertyName Profile -NotePropertyValue $pr -Force
             $bDel.Tag | Add-Member -NotePropertyName Profile -NotePropertyValue $pr -Force
-            $prIds = @()
-            if ($pr.PSObject.Properties.Name -contains 'Ids') { $prIds = @($pr.Ids | Where-Object { $_ }) }
-            $meta = if ($pr.Group)          { "набор «$($pr.Group)»" }
-                    elseif ($prIds.Count)   { "аккаунтов: $($prIds.Count)" }
-                    else                    { 'все аккаунты' }
-            if ($pr.GameName) { $meta += "   ·   $($pr.GameName)" }
-            elseif ($pr.PlaceId) { $meta += "   ·   ID $($pr.PlaceId)" }
-            if ($pr.LinkCode) { $meta += '   ·   приватный сервер' }
+            $meta = Get-RamProfileSummary -Profile $pr
             $h.Controls.Add((New-RamRowCard -Width $W -Title ([string]$pr.Name) -Meta $meta -Buttons @($bRun, $bDel)))
         }
     } finally {

@@ -1,6 +1,6 @@
 ﻿#requires -Version 5.1
 param(
-    [string]$Version = '1.4.1',
+    [string]$Version = '1.5.0-rc1',
     [string]$Output = ''
 )
 
@@ -39,13 +39,22 @@ try {
         [void][Management.Automation.Language.Parser]::ParseFile($file.FullName,[ref]$tokens,[ref]$errors)
         if ($errors.Count) { throw "$($file.FullName):$($errors[0].Extent.StartLineNumber): $($errors[0].Message)" }
     }
+    $byteEncoding = [Text.Encoding]::GetEncoding(28591)
+    foreach ($file in Get-ChildItem -LiteralPath $stage -Filter '*.cmd' -Recurse -File) {
+        $content = $byteEncoding.GetString([IO.File]::ReadAllBytes($file.FullName)) -replace "(?<!`r)`n", "`r`n"
+        [IO.File]::WriteAllBytes($file.FullName,$byteEncoding.GetBytes($content))
+    }
 
     $forbidden = @('data','link','.bak','accounts.dat','Cookies','History','Login Data')
     foreach ($entry in Get-ChildItem -LiteralPath $stage -Recurse -Force) {
         if ($forbidden -contains $entry.Name) { throw "В релиз попал запрещённый путь: $($entry.FullName)" }
     }
-    foreach ($required in @('extension\icon16.png','extension\icon48.png','extension\icon128.png','modules\UiModern.ps1','modules\menus\Classic.ps1','docs\settings.png')) {
+    foreach ($required in @('extension\icon16.png','extension\icon48.png','extension\icon128.png','modules\UiModern.ps1','modules\menus\Classic.ps1','docs\settings.png','docs\launch-center.png','Проверки\Проверка очереди.ps1')) {
         if (-not (Test-Path -LiteralPath (Join-Path $stage $required))) { throw "В staging нет $required" }
+    }
+    $stamp = Join-Path $stage 'docs\screenshots-version.txt'
+    if (-not (Test-Path -LiteralPath $stamp) -or [IO.File]::ReadAllText($stamp).Trim() -ne $Version) {
+        throw 'Скриншоты не соответствуют версии. Сначала выполни tools\Capture-Docs.ps1.'
     }
 
     Add-Type -AssemblyName System.IO.Compression.FileSystem
@@ -54,7 +63,7 @@ try {
 
     $zip = [IO.Compression.ZipFile]::OpenRead($Output)
     try {
-        $names = @($zip.Entries | ForEach-Object FullName)
+        $names = @($zip.Entries | ForEach-Object { $_.FullName.Replace('\','/') })
         if ($names | Where-Object { $_ -match '(^|/)(data|link|\.bak)/|accounts\.dat|Network/Cookies|Login Data' }) {
             throw 'Финальный архив содержит пользовательские данные.'
         }
@@ -62,5 +71,9 @@ try {
         "Файлов: $($zip.Entries.Count); размер: $([Math]::Round((Get-Item $Output).Length / 1KB)) КБ"
     } finally { $zip.Dispose() }
 } finally {
-    if (Test-Path -LiteralPath $stageRoot) { Remove-Item -LiteralPath $stageRoot -Recurse -Force -ErrorAction SilentlyContinue }
+    $resolvedStage = [IO.Path]::GetFullPath($stageRoot)
+    $tempRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath())
+    if ($resolvedStage.StartsWith($tempRoot,[StringComparison]::OrdinalIgnoreCase) -and (Split-Path -Leaf $resolvedStage) -match '^althub-release-[0-9a-f]{32}$' -and (Test-Path -LiteralPath $resolvedStage)) {
+        Remove-Item -LiteralPath $resolvedStage -Recurse -Force -ErrorAction SilentlyContinue
+    }
 }

@@ -75,7 +75,7 @@ function New-RamMainFormClassic {
 
     # --- стартовый размер
     $formW = $sideW + [int]([int]$menuStyle.BaseContent * $pm.Scale) + $pm.Pad * 2
-    $formH = [int](720 * $pm.Scale)
+    $formH = [int](620 * $pm.Scale)
     $waW = 0; $waH = 0
     try {
         $wa = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea
@@ -232,8 +232,9 @@ function New-RamMainFormClassic {
         foreach ($id in $script:Cards.Keys) { if (-not $script:Cards[$id].Check.Tag.Checked) { $any = $true } }
         Set-RamAllChecked $any
     }
-    $bSel = New-RamButton -Text 'С отмеченными  ▾' -Width 1 -Height $pm.BtnH -Tooltip 'Игра, набор, метка, удаление — для отмеченных аккаунтов'
+    $bSel = New-RamButton -Text 'Действия  ▾' -Width 1 -Height $pm.BtnH -Tooltip 'Игра, набор, метка, удаление — для отмеченных аккаунтов'
     $selMenu = New-RamContextMenu
+    $script:UI.ActionMenu = $selMenu
     [void](Add-RamMenuItem -Menu $selMenu -Text 'Назначить игру'      -OnClick { Invoke-RamAssignGame })
     [void](Add-RamMenuItem -Menu $selMenu -Text 'Собрать в набор'     -OnClick { Invoke-RamAssignGroup })
     [void](Add-RamMenuItem -Menu $selMenu -Text 'Поставить метку'     -OnClick { Invoke-RamAssignColor })
@@ -306,8 +307,8 @@ function New-RamMainFormClassic {
 
     # ---------------------------------------------------------- профили -----
     $pProf = & $newSection 'profiles'
-    $pTitle = & $newTitle 'Профили запуска'
-    $bStarter = New-RamButton -Text 'Готовый профиль  ▾' -Width 1 -Height $pm.BtnH -Kind 'primary' `
+    $pTitle = & $newTitle 'Сценарии запуска'
+    $bStarter = New-RamButton -Text 'Готовый сценарий  ▾' -Width 1 -Height $pm.BtnH -Kind 'primary' `
                               -Tooltip 'Добавить готовый профиль с популярной игрой — работает сразу'
     $profMenu = New-RamContextMenu
     foreach ($sp in Get-RamStarterProfiles) {
@@ -317,9 +318,9 @@ function New-RamMainFormClassic {
         })
     }
     $bStarter.Add_Click({ $profMenu.Show($this, (New-Object System.Drawing.Point(0, $this.Height))) }.GetNewClosure())
-    $bSaveProf = New-RamButton -Text 'Сохранить текущее как профиль' -Width 1 -Height $pm.BtnH -OnClick { Invoke-RamSaveProfile }
+    $bSaveProf = New-RamButton -Text 'Сохранить сценарий' -Width 1 -Height $pm.BtnH -OnClick { Invoke-RamSaveProfile }
     $script:UI.BtnAddProfile = $bSaveProf
-    $pHint = New-RamLabel -Text 'Связка «набор аккаунтов + игра». Одной кнопкой ставит игру всем и запускает.' `
+    $pHint = New-RamLabel -Text 'Аккаунты, свои игры и настройки, раскладка окон — одним действием.' `
                           -X 0 -Y 0 -Width 10 -Height $pm.Small -Font $t.FontSmall -Color $t.Muted
     $profHost = New-RamScrollPanel -Width 100 -Height 100
     foreach ($c in @($pTitle, $bStarter, $bSaveProf, $pHint, $profHost)) { $pProf.Controls.Add($c) }
@@ -538,7 +539,7 @@ function Get-RamPulseRowLayout {
     $btnH = if ($Compact) { & $k 26 } else { $pm.RowBtnH }
     $labels = if ($Compact) { @('Пуск', 'Вход', 'Изм.', 'Стоп') } else { @('Пуск', 'Войти', 'Правка', 'Закрыть') }
     $btnW = 0
-    foreach ($l in $labels) { $bw = Get-RamModernTextWidth -Text $l; if ($bw -gt $btnW) { $btnW = $bw } }
+    foreach ($l in @($labels) + @('Пауза','Окно','Ждёт')) { $bw = Get-RamModernTextWidth -Text $l; if ($bw -gt $btnW) { $btnW = $bw } }
     $btnGap = $pm.GapSm + (& $k 2)
     $btnsW = $btnW * 3 + $btnGap * 2
     $btnX = $Width - $padX - $btnsW
@@ -680,6 +681,7 @@ function New-RamPulseRow {
         $groupW = [Math]::Min([int]($L.NameW * 0.45), (Measure-RamText -Text ([string]$a.Group) -Font $t.FontSmall).Width + $pm.GapSm)
     }
     $aliasNeed = (Measure-RamText -Text ([string]$a.Alias) -Font $t.FontTitle).Width + $pm.GapSm
+    if ($showGroup -and ($aliasNeed + $groupW + $pm.GapSm) -gt $L.NameW) { $showGroup=$false; $groupW=0 }
     $aliasW = [Math]::Max(1, [Math]::Min($aliasNeed, $L.NameW - $(if ($showGroup) { $groupW + $pm.GapSm } else { 0 })))
     $lblName = New-RamLabel -Text $a.Alias -X $L.TextX -Y $L.Line1Y -Width $aliasW -Height $pm.Title -Font $t.FontTitle -Truncatable
     $card.Controls.Add($lblName)
@@ -694,8 +696,8 @@ function New-RamPulseRow {
     $lblSub = $null
     if (-not $L.Compact) {
         $subParts = @()
-        if ([string]$a.CookieOk -eq 'no') { $subParts += 'вход мёртв' }
         if ($a.Username) { $subParts += "@$($a.Username)" } else { $subParts += 'вход не проверен' }
+        if (-not $showGroup -and $a.Group) { $subParts += [string]$a.Group }
         if ([int64]$a.UserId -gt 0) { $subParts += "ID $($a.UserId)" }
         $lblSub = New-RamLabel -Text ($subParts -join '  ·  ') -X $L.TextX -Y $L.Line2Y -Width $L.NameW -Height $pm.Small -Font $t.FontSmall `
                                -Color $(if ([string]$a.CookieOk -eq 'no') { $t.Danger } else { $t.Muted }) -Truncatable
@@ -726,10 +728,10 @@ function New-RamPulseRow {
     $x = $L.BtnX
     if ([string]$a.CookieOk -eq 'no') {
         $bPlay = New-RamButton -Text $L.Labels[1] -Width $L.BtnW -Height $L.BtnH -Fixed -Kind 'danger' `
-                               -Tooltip 'Войти в этот аккаунт заново — вход умер' -OnClick { Invoke-RamRelogin -Id $this.Tag.AccountId }
+                               -Tooltip 'Войти в этот аккаунт заново — вход умер' -OnClick { Invoke-RamAccountPrimaryAction -Id ([string]$this.Tag.AccountId) }
     } else {
         $bPlay = New-RamButton -Text $L.Labels[0] -Width $L.BtnW -Height $L.BtnH -Fixed -Kind 'primary' `
-                               -Tooltip 'Запустить этот аккаунт свёрнутым' -OnClick { Add-RamToLaunchQueue -Accounts @((Get-RamAccountById -Id $this.Tag.AccountId)) }
+                               -Tooltip 'Запустить этот аккаунт свёрнутым' -OnClick { Invoke-RamAccountPrimaryAction -Id ([string]$this.Tag.AccountId) }
     }
     $bPlay.Tag | Add-Member -NotePropertyName AccountId -NotePropertyValue $a.Id -Force
     $bPlay.Location = New-Object System.Drawing.Point($x, $L.BtnY)
@@ -772,7 +774,10 @@ function Update-RamCardStatesClassic {
         $entry = $script:Cards[$a.Id]
         if ($null -eq $entry) { continue }
         $inst = $script:Instances[$a.Id]
-        if ($null -ne $inst) {
+        Update-RamCardPrimaryButton -Account $a -Entry $entry
+        if ($entry.Play.Tag.PrimaryMode -eq 'closing') {
+            Set-RamAvatarBorderColor -Box $entry.Avatar -Color $t.Danger
+        } elseif ($null -ne $inst) {
             if ($inst.Handle -ne [IntPtr]::Zero) { Set-RamAvatarBorderColor -Box $entry.Avatar -Color $t.Ok }
             else { Set-RamAvatarBorderColor -Box $entry.Avatar -Color $t.Warn }
         } elseif ($script:LaunchQueue -contains $a.Id) {

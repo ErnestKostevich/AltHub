@@ -860,6 +860,7 @@ Check 'Графика не перетирается соседним запус�
     $keepFor   = $script:AwaitWindowFor
     $keepUntil = $script:AwaitWindowUntil
     $keepReady = $script:AwaitSettingsReadyAt
+    $keepKey = $script:AwaitSettingsKey
     $keepLastLaunch = $script:LastLaunchAt
     $keepSkipped = $script:ClientSettingsSkippedReason
     $keepLocalAppData = $env:LOCALAPPDATA
@@ -907,12 +908,16 @@ Check 'Графика не перетирается соседним запус�
         $script:Instances[$alt.Id] = [pscustomobject]@{ ProcessId = 999998; Handle = [IntPtr]::Zero; Started = (Get-Date) }
         $script:LaunchQueue.Clear(); [void]$script:LaunchQueue.Add($alt2.Id)
         Set-RamSettingsWait -Launched $alt
-        if ($script:AwaitWindowFor -ne '') { throw 'ждёт окна там, где настройки совпадают' }
+        if (-not (Test-RamSettingsFileFree)) { throw 'задерживает одинаковые настройки' }
 
-        # Очередь пуста — ждать тоже нечего.
+        # Последний клиент пачки тоже защищён от новой, позднее добавленной очереди.
         $script:LaunchQueue.Clear()
         Set-RamSettingsWait -Launched $main
-        if ($script:AwaitWindowFor -ne '') { throw 'ждёт окна с пустой очередью' }
+        if ($script:AwaitWindowFor -ne $main.Id) { throw 'защита последнего клиента потерялась после конца пачки' }
+        $main.Graphics='1'; $main.Volume='0'; $main.FramerateCap='30'
+        [void]$script:LaunchQueue.Add($alt.Id)
+        if (Test-RamSettingsFileFree) { throw 'поздняя очередь или редактирование аккаунта сбросили защиту его первоначальных настроек' }
+        $main.Graphics='10'; $main.Volume='80'; $main.FramerateCap=''
 
         # Окно так и не появилось — по истечении срока очередь идёт дальше.
         $script:LaunchQueue.Clear(); [void]$script:LaunchQueue.Add($alt.Id)
@@ -962,6 +967,7 @@ Check 'Графика не перетирается соседним запус�
         $script:AwaitWindowFor  = $keepFor
         $script:AwaitWindowUntil = $keepUntil
         $script:AwaitSettingsReadyAt = $keepReady
+        $script:AwaitSettingsKey = $keepKey
         $script:LastLaunchAt = $keepLastLaunch
         $script:ClientSettingsSkippedReason = $keepSkipped
         $env:LOCALAPPDATA = $keepLocalAppData
@@ -2939,6 +2945,55 @@ Check 'Три вида меню собираются и не наезжают' {
     'Pulse, H₂O Original и Dashboard собираются без наложений; H₂O использует две колонки только на большой ширине, значки остаются только у H₂O'
 }
 
+Check 'Кнопки работают с клавиатуры без массового запуска по ошибке' {
+    $flags=[Reflection.BindingFlags]'Instance,NonPublic'
+    $probe=@{Clicks=0}
+    $button=New-RamButton -Text 'Проба' -Tooltip 'Пробная кнопка' -Icon '★' -OnClick { $this.Tag.Probe.Clicks++ }
+    $button.Tag | Add-Member -NotePropertyName Probe -NotePropertyValue $probe
+    $formProbe=New-Object Windows.Forms.Form
+    $formProbe.ShowInTaskbar=$false; $formProbe.StartPosition='Manual'; $formProbe.Location=New-Object Drawing.Point(-4000,-4000)
+    $formProbe.Controls.Add($button)
+    $ownFont=$button.Tag.IconFont
+    try {
+        $formProbe.Show(); [Windows.Forms.Application]::DoEvents(); [void]$button.Focus()
+        if ($button -isnot [Windows.Forms.Button] -or -not $button.TabStop -or $button.AccessibilityObject.Role -ne 'PushButton') { throw 'нет нативных клавиатуры или роли кнопки' }
+        if ($button.AccessibilityObject.Name -ne 'Пробная кнопка') { throw 'нет доступного имени кнопки' }
+        [void]$button.GetType().GetMethod('ProcessDialogKey',$flags).Invoke($button,@([Windows.Forms.Keys]::Return))
+        $down=New-Object Windows.Forms.KeyEventArgs([Windows.Forms.Keys]::Space)
+        $up=New-Object Windows.Forms.KeyEventArgs([Windows.Forms.Keys]::Space)
+        [void]$button.GetType().GetMethod('OnKeyDown',$flags).Invoke($button,@($down.PSObject.BaseObject))
+        [void]$button.GetType().GetMethod('OnKeyUp',$flags).Invoke($button,@($up.PSObject.BaseObject))
+        if ($probe.Clicks -ne 2 -or $button.Tag.IsDown) { throw 'Enter/Space не работают или состояние нажатия не снялось' }
+        $right=New-Object Windows.Forms.MouseEventArgs([Windows.Forms.MouseButtons]::Right,1,10,10,0)
+        [void]$button.GetType().GetMethod('OnMouseDown',$flags).Invoke($button,@($right.PSObject.BaseObject))
+        [void]$button.GetType().GetMethod('OnMouseUp',$flags).Invoke($button,@($right.PSObject.BaseObject))
+        if ($probe.Clicks -ne 2) { throw 'правый клик выполнил действие кнопки' }
+        Set-RamButtonEnabled -Button $button -Enabled $false
+        $button.PerformClick()
+        if ($probe.Clicks -ne 2) { throw 'выключенная кнопка выполнила действие' }
+    } finally { $formProbe.Dispose() }
+    $released=$false; try { [void]$ownFont.GetHeight() } catch { $released=$true }
+    if (-not $released -or $Global:RamTheme.FontBody.GetHeight() -le 0) { throw 'владелец шрифта не соблюдён' }
+
+    $keepUI=$script:UI; $keepCards=$script:Cards; $keepAccounts=$script:Accounts; $keepSettings=$script:Settings
+    try {
+        $script:Accounts=@(); $script:Settings=Get-RamDefaultSettings; $script:Settings.OnClose='exit'
+        foreach ($style in @(Get-RamMenuStyleList)) {
+            $script:Settings.MenuStyle=$style.Key; $script:UI=@{}; $script:Cards=@{}
+            $form=New-RamMainForm
+            try {
+                $native=New-RamButton -Text 'Проверка фокуса'
+                $form.Controls.Add($native); $form.ShowInTaskbar=$false; $form.Show()
+                [Windows.Forms.Application]::DoEvents(); [void]$native.Focus()
+                $keyEvent=New-Object Windows.Forms.KeyEventArgs([Windows.Forms.Keys]::Return)
+                [void]$form.GetType().GetMethod('OnKeyDown',$flags).Invoke($form,@($keyEvent.PSObject.BaseObject))
+                if ($keyEvent.Handled) { throw "$($style.Title): Enter на кнопке перехвачен массовым запуском" }
+            } finally { Dispose-RamFormRuntime; $form.Dispose() }
+        }
+    } finally { $script:UI=$keepUI; $script:Cards=$keepCards; $script:Accounts=$keepAccounts; $script:Settings=$keepSettings }
+    'Enter, Space, правый клик, доступные имена и ресурсы проверены; Enter не запускает всех вместо выбранной кнопки'
+}
+
 Check 'Пропорции трёх меню остаются компактными' {
     $keepSettings = $script:Settings
     $keepAccounts = $script:Accounts
@@ -2999,6 +3054,91 @@ Check 'Пропорции трёх меню остаются компактны�
     'стартовые окна компактны, боковые панели не шире 27%, действия карточек выровнены'
 }
 
+Check 'Центр запуска управляет только очередью и сохраняет причины ошибок' {
+    $keepQueue=$script:LaunchQueue; $keepPaused=$script:LaunchPaused; $keepInst=$script:Instances
+    $keepAcc=$script:Accounts; $keepFailures=$script:LastLaunchFailures; $keepFor=$script:AwaitWindowFor
+    $keepTries=$script:LaunchTries; $keepReport=$script:LaunchFailed
+    $keepUI=$script:UI; $keepCards=$script:Cards; $keepStyle=$script:Settings.MenuStyle
+    try {
+        $a=New-RamAccount -Alias 'Работает'; $b=New-RamAccount -Alias 'Очередь'; $c=New-RamAccount -Alias 'Ошибка'
+        $script:Accounts=@($a,$b,$c); $script:Instances=@{}
+        $script:Instances[$a.Id]=[pscustomobject]@{ProcessId=999999;Handle=[IntPtr]::new(123)}
+        $script:LaunchQueue=New-Object Collections.ArrayList; [void]$script:LaunchQueue.Add($b.Id)
+        $script:LastLaunchFailures=@{}; $script:LastLaunchFailures[$c.Id]='_|WARNING-FAKE-COOKIE'
+        $script:AwaitWindowFor=$a.Id
+        Set-RamLaunchPaused -Paused $true
+        Invoke-RamNextLaunch
+        if($script:LaunchQueue.Count -ne 1){throw 'пауза не остановила запуск'}
+        $snapshot=Get-RamLaunchSnapshot
+        if($snapshot.Rows.Count -ne 3 -or -not $snapshot.Paused){throw 'снимок сеанса неполон'}
+        if(($snapshot.Rows | Where-Object Id -eq $c.Id).Detail -match 'FAKE-COOKIE'){throw 'ошибка раскрывает токен'}
+        Remove-RamQueuedAccount -Id $b.Id
+        if($script:LaunchQueue.Count){throw 'аккаунт не убран из очереди'}
+        [void]$script:LaunchQueue.Add($b.Id)
+        Stop-RamLaunchQueue
+        if($script:LaunchQueue.Count -or $script:LaunchPaused){throw 'очередь не отменена'}
+        if($script:Instances.Count -ne 1 -or $script:AwaitWindowFor -ne $a.Id){throw 'отмена задела рабочее окно или защитную паузу XML'}
+        if($script:LastLaunchFailures.Count -ne 1){throw 'история ошибок потерялась'}
+        $center=Show-RamLaunchCenter -BuildOnly
+        try{if($center.Tag.Rows.Count -ne 2){throw 'центр не показывает рабочий аккаунт и ошибку'}}finally{$center.Dispose()}
+        [void]$script:LaunchQueue.Add($b.Id); $script:LaunchPaused=$true
+        foreach($style in @(Get-RamMenuStyleList)) {
+            $script:Settings.MenuStyle=$style.Key; $script:UI=@{}; $script:Cards=@{}
+            $form=New-RamMainForm
+            try {
+                Build-RamCards
+                if($script:Cards[$a.Id].Play.Tag.PrimaryMode -ne 'show' -or $script:Cards[$b.Id].Play.Tag.PrimaryMode -ne 'paused'){throw "$($style.Title): кнопки не отражают состояние сеанса"}
+                if(-not $script:Cards[$a.Id].Stop.Enabled -or $script:Cards[$b.Id].Stop.Enabled){throw "$($style.Title): закрытие доступно для незапущенного аккаунта"}
+            } finally { Dispose-RamFormRuntime; $form.Dispose() }
+        }
+    } finally {
+        $script:LaunchQueue=$keepQueue; $script:LaunchPaused=$keepPaused; $script:Instances=$keepInst
+        $script:Accounts=$keepAcc; $script:LastLaunchFailures=$keepFailures; $script:AwaitWindowFor=$keepFor
+        $script:LaunchTries=$keepTries; $script:LaunchFailed=$keepReport
+        $script:UI=$keepUI; $script:Cards=$keepCards; $script:Settings.MenuStyle=$keepStyle
+    }
+    'пауза, отмена и снимок сеанса не закрывают рабочие окна; токены скрыты'
+}
+
+Check 'Сценарий хранит разные игры и настройки без кук и частичных изменений' {
+    $a=New-RamAccount -Alias 'Основа' -Cookie 'SECRETCOOKIE' -PlaceId '111'
+    $b=New-RamAccount -Alias 'Твинк' -Cookie 'SECRETCOOKIE' -PlaceId '222'
+    $a.Graphics='10'; $a.Volume='100'; $b.Graphics='1'; $b.Volume='0'
+    $profile=New-RamLaunchProfile -Name 'Двое' -Accounts @($a,$b)
+    $settingsCopy=Get-RamDefaultSettings; $settingsCopy.Profiles=@($profile)
+    $json=$settingsCopy | ConvertTo-Json -Depth 4
+    if($json -match 'SECRETCOOKIE|BrowserTrackerId'){throw 'сценарий содержит данные входа'}
+    $a.Graphics='5'; $b.PlaceId='333'
+    $loaded=($json | ConvertFrom-Json).Profiles[0]
+    $restored=@(ConvertTo-RamProfileTargets -Profile $loaded -Accounts @($a,$b))
+    if($restored[0].Graphics -ne '10' -or $restored[1].Graphics -ne '1' -or $restored[1].PlaceId -ne '222'){throw 'настройки разных аккаунтов смешались'}
+    if($a.Graphics -ne '5' -or $b.PlaceId -ne '333'){throw 'проверка изменила исходные аккаунты'}
+    $loaded.LaunchSettings[1].Volume='999'; $rejected=$false
+    try{[void](ConvertTo-RamProfileTargets -Profile $loaded -Accounts @($a,$b))}catch{$rejected=$true}
+    if(-not $rejected -or $a.Graphics -ne '5'){throw 'некорректный сценарий изменил данные'}
+    $legacy=[pscustomobject]@{PlaceId='444';GameName='Старая игра';LinkCode=''}
+    $old=@(ConvertTo-RamProfileTargets -Profile $legacy -Accounts @($a,$b))
+    if($old[0].PlaceId -ne '444' -or $old[1].PlaceId -ne '444'){throw 'старый профиль больше не работает'}
+    $keepAcc=$script:Accounts; $keepMain=$script:Settings.MainAccountId
+    try {
+        $script:Accounts=@($b,$a); $b.Order=10; $a.Order=20
+        $script:Settings.MainAccountId=$a.Id
+        $layoutAccounts=@(Get-RamLayoutAccounts -Mode 'main')
+        if($layoutAccounts[0].Id -ne $a.Id){throw 'крупное окно получил твинк вместо основы'}
+        if($loaded.MainAccountId -ne $a.Id){throw 'основа не сохранилась в сценарии'}
+    } finally { $script:Accounts=$keepAcc; $script:Settings.MainAccountId=$keepMain }
+    'снимок и JSON сохраняют индивидуальные значения; плохой импорт отклонён до изменений'
+}
+
+Check 'Очередь проходит сквозные сценарии без подключения к Roblox' {
+    $runner=Join-Path $PSScriptRoot 'Проверка очереди.ps1'
+    $output=@(& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $runner -NoPause 2>&1)
+    if ($LASTEXITCODE -ne 0) { throw ($output -join ' | ') }
+    $passedScenarios=@($output | Where-Object { [string]$_ -like 'PASS:*' }).Count
+    if ($passedScenarios -ne 6) { throw "сквозных сценариев: $passedScenarios вместо 6" }
+    '6 сценариев: FIFO, XML, ошибки, отмена/присмотр, атомарность и повторный вход таймера'
+}
+
 Check 'README не врёт числом проверок' {
     # Число в README трижды разошлось с кодом и висело устаревшим, пока его
     # не заметил человек. Считаем проверки прямо из этого файла и требуем,
@@ -3011,7 +3151,7 @@ Check 'README не врёт числом проверок' {
     if (-not (Test-Path $readme)) { throw 'README.md рядом нет' }
     $txt = Get-Content -LiteralPath $readme -Raw
 
-    $said = [regex]::Matches($txt, '(\d+)\s+проверок')
+    $said = [regex]::Matches($txt, '(\d+)\s+провер(?:ок|ки)')
     if ($said.Count -eq 0) { throw 'в README нет ни одного числа проверок — проверка не сработала' }
     foreach ($m in $said) {
         $n = [int]$m.Groups[1].Value

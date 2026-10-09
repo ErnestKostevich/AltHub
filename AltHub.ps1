@@ -4,7 +4,7 @@
  AltHub — менеджер аккаунтов Roblox
 ================================================================================
  Автор: Эрнест Костевич (Ernest Kostevich)
- Версия: 1.4.1
+ Версия: 1.5.0-rc1
  Лицензия: MIT — см. файл LICENSE рядом. Можно свободно передавать друзьям,
  менять под себя и распространять дальше, сохраняя это указание авторства.
 
@@ -160,8 +160,13 @@ $script:WarnedAboutLoad  = $false                                 # предуп
 $script:AwaitWindowFor   = ''                                      # см. Test-RamSettingsFileFree
 $script:LaunchTries      = @{}     # Id -> сколько раз пробовали запустить
 $script:LaunchFailed     = @{}     # Id -> почему не вышло (для отчёта в конце)
+$script:LastLaunchFailures = @{}
+$script:LaunchPaused = $false
+$script:LaunchSuppressedIds = @{}
+$script:LaunchTickActive = $false
 $script:AwaitWindowUntil = [datetime]::MinValue
 $script:AwaitSettingsReadyAt = [datetime]::MinValue
+$script:AwaitSettingsKey = ''
 $script:LastWindowState  = 'Normal'   # см. обработчик Resize главного окна
 $script:SettingsTouched = $false   # трогали ли общий файл настроек Roblox
 $script:ClientSettingsSkippedReason = '' # персональные настройки пропущены, но запуск разрешён
@@ -187,24 +192,27 @@ $script:ReadOnly = [bool]$NoAutoStart
 $Global:RamNoDialogs = [bool]$NoAutoStart
 
 $script:AppName    = 'AltHub'
-$script:AppVersion = '1.4.1'
+$script:AppVersion = '1.5.0-rc1'
 $script:AppAuthor  = 'Эрнест Костевич'
 
 function Get-RamAvatarDir { Join-Path (Get-RamDataDir) 'avatars' }
 
 # ------------------------------------------------------------- утилиты ------
 
+function Protect-RamMessage {
+    param([string]$Message)
+    $safe = $Message -replace '_\|WARNING[^\s]*', '<кука скрыта>'
+    $safe = $safe -replace '[A-Za-z0-9_\-]{200,}', '<длинный токен скрыт>'
+    $safe = $safe -replace '(?i)("?password"?\s*[:=]\s*)"[^"]*"', '$1"<пароль скрыт>"'
+    return ($safe -replace '(?i)(password\s*[:=]\s*)\S+', '$1<пароль скрыт>')
+}
+
 function Write-RamLog {
     <# Пишем в окно журнала. Секреты в журнал не попадают: кука, длинные токены
        и пароль вырезаются ДО вывода — и на экран, и в файл. #>
     param([string]$Message, [string]$Level = 'info')
 
-    $safe = $Message -replace '_\|WARNING[^\s]*', '<кука скрыта>'
-    $safe = $safe    -replace '[A-Za-z0-9_\-]{200,}', '<длинный токен скрыт>'
-    # Вход по паролю из программы убран (Roblox закрыл его проверкой
-    # proofofwork), но вырезку оставляем: мало ли что попадёт в текст ошибки.
-    $safe = $safe -replace '(?i)("?password"?\s*[:=]\s*)"[^"]*"', '$1"<пароль скрыт>"'
-    $safe = $safe -replace '(?i)(password\s*[:=]\s*)\S+', '$1<пароль скрыт>'
+    $safe = Protect-RamMessage -Message $Message
     # Журнал моноширинный, подстановки шрифта в нём нет — смайлики из
     # названий игр вырезаем, иначе будут квадратики.
     $safe = Remove-RamEmoji -Text $safe   # журнал моноширинный, смайликам там не место
@@ -436,8 +444,8 @@ function Update-RamStatusLine {
 
     if ($running -gt 0) { $parts += "в игре: $running" }
     if ($queued  -gt 0) {
-        $left = [int][Math]::Max(0, ($script:NextLaunchTime - (Get-Date)).TotalSeconds)
-        $parts += "в очереди: $queued, следующий через $left с"
+        $left = [int][Math]::Max(0.0, ($script:NextLaunchTime - (Get-Date)).TotalSeconds)
+        $parts += $(if ($script:LaunchPaused) { "пауза: $queued в очереди" } else { "в очереди: $queued, следующий через $left с" })
     }
     if ($dead -gt 0) {
         $parts += $(if ($dead -eq 1) { 'мёртвый вход: 1' } else { "мёртвых входов: $dead" })

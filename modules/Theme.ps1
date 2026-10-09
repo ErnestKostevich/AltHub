@@ -955,7 +955,7 @@ function Draw-RamGlyph {
 
 function New-RamButton {
     <#
-      Кнопка на основе Panel: рисуем сами, чтобы получить тёмный фон,
+      Кнопка с нативными клавиатурой и доступностью: рисуем сами тёмный фон,
       скруглённые углы и нормальное наведение мышью.
 
       Kind: primary | normal | danger | ghost
@@ -1016,7 +1016,9 @@ function New-RamButton {
     $iconSlotW = 0
     $iconFont = $null
     if ($Icon) {
-        $iconFont = New-Object System.Drawing.Font($t.FontBody.FontFamily, [single]($t.FontBody.Size * $IconScale), $t.FontBody.Style, $t.FontBody.Unit)
+        if (-not (Test-RamGlyph -Name $Icon)) {
+            $iconFont = New-Object System.Drawing.Font($t.FontBody.FontFamily, [single]($t.FontBody.Size * $IconScale), $t.FontBody.Style, $t.FontBody.Unit)
+        }
         $scaleForIcon = 1
         if ($null -ne $t.M) { $scaleForIcon = $t.M.Scale }
         $iconSlotW = [int][Math]::Round(28 * $scaleForIcon)
@@ -1025,7 +1027,15 @@ function New-RamButton {
     if ($Fixed) { $wantW = $Width } else { $wantW = [Math]::Max($Width, $need) }
     $colors = Get-RamButtonColors -Kind $Kind
 
-    $btn = New-Object System.Windows.Forms.Panel
+    $btn = New-Object System.Windows.Forms.Button
+    $btn.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
+    $btn.FlatAppearance.BorderSize = 0
+    $btn.FlatAppearance.MouseOverBackColor = [System.Drawing.Color]::Transparent
+    $btn.FlatAppearance.MouseDownBackColor = [System.Drawing.Color]::Transparent
+    $btn.UseVisualStyleBackColor = $false
+    $btn.AccessibleRole = [System.Windows.Forms.AccessibleRole]::PushButton
+    $btn.AccessibleName = if ($Tooltip) { $Tooltip } else { $Text }
+    $btn.Font = $t.FontBody
     $btn.Size      = New-Object System.Drawing.Size($wantW, $Height)
     $btn.BackColor = [System.Drawing.Color]::Transparent
     $btn.Cursor    = [System.Windows.Forms.Cursors]::Hand
@@ -1080,6 +1090,10 @@ function New-RamButton {
         $path.Dispose()
 
         $fore = if ($st.Enabled) { $st.Fore } else { $Global:RamTheme.Muted }
+        if ($s.Focused -and $st.Enabled) {
+            $focusRect = New-Object System.Drawing.Rectangle(4,4,([Math]::Max(1,$s.Width-9)),([Math]::Max(1,$s.Height-9)))
+            [System.Windows.Forms.ControlPaint]::DrawFocusRectangle($g,$focusRect,$Global:RamTheme.Accent,$Global:RamTheme.Bg)
+        }
 
         if ($st.ActiveBar) {
             $sc = $Global:RamTheme.M.Scale
@@ -1162,6 +1176,10 @@ function New-RamButton {
     $btn.Add_MouseLeave({ $this.Tag.IsHover = $false; $this.Tag.IsDown = $false; $this.Invalidate() })
     $btn.Add_MouseDown( { $this.Tag.IsDown  = $true;  $this.Invalidate() })
     $btn.Add_MouseUp(   { $this.Tag.IsDown  = $false; $this.Invalidate() })
+    $btn.Add_KeyDown({ if ($_.KeyCode -eq 'Space') { $this.Tag.IsDown=$true; $this.Invalidate() } })
+    $btn.Add_KeyUp({ if ($_.KeyCode -eq 'Space') { $this.Tag.IsDown=$false; $this.Invalidate() } })
+    $btn.Add_GotFocus({ $this.Invalidate() })
+    $btn.Add_LostFocus({ $this.Tag.IsDown=$false; $this.Invalidate() })
 
     # Договор с раскладчиком: он спрашивает Natural, чтобы отвести место,
     # и Fixed, чтобы понять, можно ли резать многоточием.
@@ -1171,6 +1189,7 @@ function New-RamButton {
     $btn.Tag | Add-Member -NotePropertyName Natural -NotePropertyValue (New-Object System.Drawing.Size($wantW, $Height)) -Force
 
     if ($null -ne $OnClick) { $btn.Add_Click($OnClick) }
+    $btn.Add_Disposed({ if ($null -ne $this.Tag.IconFont) { $this.Tag.IconFont.Dispose() } })
 
     if ($Tooltip) {
         $tt = New-Object System.Windows.Forms.ToolTip
@@ -1240,6 +1259,7 @@ function Set-RamButtonText {
     param($Button, [string]$Text, [switch]$KeepWidth)
     if ($null -eq $Button -or $null -eq $Button.Tag) { return }
     $Button.Tag.Caption = $Text
+    if ($Text) { $Button.AccessibleName = $Text }
 
     $t    = $Global:RamTheme
     $pad  = if ($null -ne $t.M) { $t.M.BtnPadX } else { 26 }

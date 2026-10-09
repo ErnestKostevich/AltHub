@@ -406,6 +406,7 @@ function Get-RamDefaultSettings {
         CustomThemes    = @()    # свои темы: @{ Key; Title; Colors=@{Bg;...} }
         Games           = @()    # сохранённые игры: @{ Title; PlaceId; LinkCode }
         TileMode        = 'grid' # grid | cascade | columns | rows | main
+        MainAccountId   = ''
         Section         = 'accounts'  # какой раздел бокового меню открыть
         CompactCards    = $false      # ужатые карточки
         UseSavedWindows = $true       # ставить окна на запомненные места
