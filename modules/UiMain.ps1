@@ -363,12 +363,15 @@ function Get-RamGroups {
 }
 
 function Get-RamOrderedAccounts {
-    <# Порядок в списке задаётся полем Order — оно меняется перетаскиванием. #>
+    # Старые дубли делали обмен одинаковых Order пустым действием; нулевые — новые, в конце.
     $i = 0
-    foreach ($a in $script:Accounts) {
-        if ([int]$a.Order -eq 0) { $a.Order = ++$i * 10 }
-    }
-    return @($script:Accounts | Sort-Object { [int]$_.Order })
+    $ranked = @(foreach ($a in $script:Accounts) {
+        [pscustomobject]@{ Account=$a; Rank=$(if ([int]$a.Order -gt 0) { [long]$a.Order } else { [long]::MaxValue }); Index=$i++ }
+    })
+    $ordered = @($ranked | Sort-Object Rank,Index | ForEach-Object Account)
+    $step = 0
+    foreach ($a in $ordered) { $a.Order=($step += 10) }
+    return $ordered
 }
 
 function Set-RamAccountOrder {
@@ -965,182 +968,9 @@ function Build-RamCardsWater {
             $bStop.Location = New-Object System.Drawing.Point($stopX, $lowY)
             $card.Controls.Add($bStop)
 
-            # --- клик по пустому месту переключает отметку
-            $toggle = {
-                if ($script:DragMoved) { return }   # это было перетаскивание, а не клик
-                $c = $this
-                while ($null -ne $c -and $null -eq $c.Tag.AccountId) { $c = $c.Parent }
-                if ($null -eq $c) { return }
-                $entry = $script:Cards[$c.Tag.AccountId]
-                if ($null -eq $entry) { return }
-                $entry.Check.Tag.Checked = -not $entry.Check.Tag.Checked
-                if ($entry.Check.Tag.Checked) { $script:CheckedIds[[string]$c.Tag.AccountId] = $true }
-                else { [void]$script:CheckedIds.Remove([string]$c.Tag.AccountId) }
-                $entry.Check.Invalidate()
-                Update-RamStatusLine
-            }
-
-            # --- перетаскивание карточки меняет порядок
-            $dragDown = {
-                param($s, $e)
-                if ($e.Button -ne [System.Windows.Forms.MouseButtons]::Left) { return }
-                $c = $s
-                while ($null -ne $c -and $null -eq $c.Tag.AccountId) { $c = $c.Parent }
-                if ($null -eq $c) { return }
-                $script:DragId     = $c.Tag.AccountId
-                $script:DragMoved  = $false
-                $script:DragStart  = [System.Windows.Forms.Cursor]::Position
-                $script:DragOverId = ''
-                $script:DragOverLine = $null
-
-                # Подсветка сразу по нажатию, ещё до сдвига мыши — чтобы захват
-                # ощущался мгновенным, а не только после порога. Обычному клику
-                # (переключение отметки) это не мешает: $toggle смотрит на
-                # DragMoved, а не на подсветку.
-                $c.Tag.Selected = $true
-                Sync-RamCardLabelFill -Card $c
-                $c.Invalidate()
-            }
-            $dragMove = {
-                param($s, $e)
-                if ([string]::IsNullOrEmpty($script:DragId)) { return }
-
-                # Порог снижен с 12 до 6 пикселей: раньше карточку надо было
-                # заметно протащить, и при обычном неуверенном движении мыши
-                # перетаскивание выглядело неработающим.
-                if (-not $script:DragMoved -and
-                    (([Math]::Abs([System.Windows.Forms.Cursor]::Position.X - $script:DragStart.X) + [Math]::Abs([System.Windows.Forms.Cursor]::Position.Y - $script:DragStart.Y)) -gt [System.Windows.Forms.SystemInformation]::DragSize.Width)) {
-                    $script:DragMoved = $true
-                    $script:UI.Cards.Cursor = [System.Windows.Forms.Cursors]::SizeAll
-                }
-                if (-not $script:DragMoved) { return }
-
-                # Ищем карточку под курсором и рисуем черту у её верхнего или
-                # нижнего края — туда карточка встанет, если отпустить сейчас.
-                $host2 = $script:UI.Cards
-                $pt = $host2.PointToClient([System.Windows.Forms.Cursor]::Position)
-                $overId = ''
-                $wantLine = $null
-                foreach ($ctl in $host2.Controls) {
-                    if ([string]::IsNullOrEmpty($ctl.Tag.AccountId)) { continue }
-                    # Попадание по ПРЯМОУГОЛЬНИКУ карточки, а не только по высоте:
-                    # в широком меню карточки стоят в несколько колонок, и проверка
-                    # одной Y выбирала карточку из чужой колонки. Подсветка у цели
-                    # одна — «с этой карточкой поменяемся местами».
-                    if ($ctl.Bounds.Contains($pt)) {
-                        $overId   = $ctl.Tag.AccountId
-                        $wantLine = 'swap'
-                        break
-                    }
-                }
-                if ($overId -eq $script:DragId) { $overId = ''; $wantLine = $null }
-
-                # Перерисовываем ТОЛЬКО когда черта действительно должна
-                # переехать. Сравниваем и карточку, и край: иначе при переходе
-                # из верхней половины карточки в нижнюю черта осталась бы
-                # сверху, а перерисовка на каждое движение мыши даёт мерцание.
-                $curCard  = if ($script:DragOverId -and $script:Cards.ContainsKey($script:DragOverId)) {
-                    $script:Cards[$script:DragOverId].Card
-                } else { $null }
-                $curLine  = if ($null -ne $curCard) { $curCard.Tag.DropLine } else { $null }
-                if ($overId -ne $script:DragOverId -or $wantLine -ne $curLine) {
-                    if ($null -ne $curCard) {
-                        $curCard.Tag.DropLine = $null
-                        # Фон карточки-цели подсвечивается не только сам по
-                        # себе (Add_Paint), но и синхронизируется с фоном
-                        # текстовых подписей поверх него (см.
-                        # Sync-RamCardLabelFill) — без этого при снятии
-                        # подсветки фон карточки возвращался бы к обычному,
-                        # а фон текста так и оставался бы подсвеченным.
-                        Sync-RamCardLabelFill -Card $curCard
-                        $curCard.Invalidate()
-                    }
-                    $script:DragOverId = $overId
-                    $script:DragOverLine = $wantLine
-                    if ($overId -and $script:Cards.ContainsKey($overId)) {
-                        $newCard = $script:Cards[$overId].Card
-                        $newCard.Tag.DropLine = $wantLine
-                        Sync-RamCardLabelFill -Card $newCard
-                        $newCard.Invalidate()
-                    }
-                }
-            }
-            $dragUp = {
-                param($s, $e)
-                if ([string]::IsNullOrEmpty($script:DragId)) { return }
-                $id = $script:DragId
-                $script:DragId = ''
-                $script:UI.Cards.Cursor = [System.Windows.Forms.Cursors]::Default
-
-                # Цель обмена — запоминаем ДО того, как ниже обнулим
-                # $script:DragOverId для снятия подсветки. Раньше здесь была
-                # ошибка: строка "$script:DragOverId = ''" шла до того места,
-                # где эта же переменная читалась для самого свопа — то есть
-                # к моменту вызова Swap-RamAccountOrder цель уже была
-                # стёрта, и перетаскивание визуально работало (подсветка
-                # честно ходила за курсором), а фактический обмен карточек
-                # никогда не срабатывал.
-                $targetId = $script:DragOverId
-
-                # Снимаем и подсветку схваченной карточки, и подсветку
-                # карточки-цели. Обе могут указывать на карточки, которых
-                # уже нет после Build-RamCards, поэтому проверяем наличие
-                # в словаре.
-                if ($script:Cards.ContainsKey($id)) {
-                    $script:Cards[$id].Card.Tag.Selected = $false
-                    Sync-RamCardLabelFill -Card $script:Cards[$id].Card
-                    $script:Cards[$id].Card.Invalidate()
-                }
-                if ($targetId -and $script:Cards.ContainsKey($targetId)) {
-                    $overCard = $script:Cards[$targetId].Card
-                    $overCard.Tag.DropLine = $null
-                    Sync-RamCardLabelFill -Card $overCard
-                    $overCard.Invalidate()
-                }
-                $script:DragOverId = ''
-
-                if (-not $script:DragMoved) { return }
-
-                # ПРОСТОЙ ОБМЕН МЕСТАМИ — РОВНО С ТОЙ КАРТОЧКОЙ, НА КОТОРУЮ
-                # НАВЕЛИ, БЕЗ СДВИГА ОСТАЛЬНЫХ.
-                #
-                # Раньше здесь вычислялся индекс вставки (сперва грубо по
-                # Y-координате, потом — по позиции карточки-цели в списке
-                # без перетаскиваемого элемента) и звался Set-RamAccountOrder
-                # — «встать на позицию N», что сдвигает всё между старым и
-                # новым местом. Для карточки, которую тащат ЧЕРЕЗ несколько
-                # других (например, «1» мимо «2» на «3»), это давало не
-                # обмен «1» и «3» местами, а «вытащить 1 и вставить в
-                # конец» — список 1,2,3 превращался в 2,3,1 вместо ожидаемых
-                # 3,2,1. Человек навёл на «3» и ожидал поменяться местами
-                # именно с «3», а не «переехать в конец списка, задев 2 по
-                # дороге» — половина карточки (before/after), на которую
-                # смотрел старый код, тут вообще ни при чём: наводишь на
-                # карточку — меняешься с ней местами, независимо от того, в
-                # верхнюю или нижнюю её половину попал курсор.
-                # Вернуть можно Ctrl+Z — как и любую другую перестановку.
-                if ($targetId -and $targetId -ne $id) { Push-RamUndo -Label 'обмен карточек местами' }
-                if ($targetId -and (Swap-RamAccountOrder -Id $id -WithId $targetId)) {
-                    Save-RamState
-                    Build-RamCards
-                }
-            }
-
-            $clickable = @($card, $lblName, $lblSub, $lblGame, $av)
-            if ($null -ne $lblGroup) { $clickable += $lblGroup }
-            foreach ($ctl in $clickable) {
-                $ctl.Add_MouseDown($dragDown)
-                $ctl.Add_MouseMove($dragMove)
-                $ctl.Add_MouseUp($dragUp)
-                $ctl.Add_Click($toggle)
-            }
-            if ($null -ne $lblNote) { $lblNote.Add_Click($toggle) }
-
-            # Правый клик по карточке — меню действий ровно для неё.
-            $menu = New-RamCardMenu -AccountId $a.Id
-            foreach ($ctl in $clickable) { $ctl.ContextMenuStrip = $menu }
-            if ($null -ne $lblNote) { $lblNote.ContextMenuStrip = $menu }
-            $dot.ContextMenuStrip = $menu
+            Add-RamModernCardMouse -Card $card -AccountId $a.Id -Controls @($card.Controls | Where-Object {
+                $_ -ne $chk -and $_ -ne $bPlay -and $_ -ne $bEdit -and $_ -ne $bStop
+            })
 
             $script:Cards[$a.Id] = @{
                 Card = $card; Check = $chk; Avatar = $av

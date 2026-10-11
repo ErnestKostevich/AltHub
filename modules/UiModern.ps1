@@ -1078,6 +1078,36 @@ function Invoke-RamCardStop {
     }
 }
 
+function Get-RamCardAtScreenPoint {
+    param([System.Drawing.Point]$Point, [string]$ExceptId = '')
+    if (-not $script:UI.ContainsKey('Cards') -or $null -eq $script:UI.Cards -or $script:UI.Cards.IsDisposed) { return '' }
+    $hostPanel=$script:UI.Cards
+    $localPoint=$hostPanel.PointToClient($Point)
+    if (-not $hostPanel.ClientRectangle.Contains($localPoint)) { return '' }
+    foreach ($card in $hostPanel.Controls) {
+        $id=[string]$card.Tag.AccountId
+        if ($id -and $id -ne $ExceptId -and $card.Bounds.Contains($localPoint)) { return $id }
+    }
+    return ''
+}
+
+function Reset-RamCardDrag {
+    $ids=@($script:DragId,$script:DragOverId)
+    $script:DragId='';$script:DragOverId='';$script:DragControl=$null
+    foreach ($id in $ids) {
+        if ($id -and $script:Cards.ContainsKey($id)) {
+            $card=$script:Cards[$id].Card
+            if ($card.IsDisposed) { continue }
+            $card.Tag.Selected=$false;$card.Tag.DropLine=$null
+            Sync-RamCardLabelFill -Card $card
+            $card.Invalidate()
+        }
+    }
+    if ($script:UI.ContainsKey('Cards') -and $null -ne $script:UI.Cards -and -not $script:UI.Cards.IsDisposed) {
+        $script:UI.Cards.Cursor=[System.Windows.Forms.Cursors]::Default
+    }
+}
+
 function Add-RamModernCardMouse {
     <#
       Клик по пустому месту плитки — отметка, перетаскивание — обмен местами
@@ -1106,14 +1136,16 @@ function Add-RamModernCardMouse {
         while ($null -ne $c -and $null -eq $c.Tag.AccountId) { $c = $c.Parent }
         if ($null -eq $c) { return }
         $script:DragId     = $c.Tag.AccountId
+        $script:DragControl = $s
         $script:DragMoved  = $false
-        $script:DragStart  = [System.Windows.Forms.Cursor]::Position
+        $script:DragStart  = $s.PointToScreen($e.Location)
         $script:DragOverId = ''
     }
     $dragMove = {
         param($s, $e)
         if ([string]::IsNullOrEmpty($script:DragId)) { return }
-        $pos = [System.Windows.Forms.Cursor]::Position
+        if ($e.Button -ne [System.Windows.Forms.MouseButtons]::Left) { Reset-RamCardDrag; return }
+        $pos = $s.PointToScreen($e.Location)
         if (-not $script:DragMoved -and
             (([Math]::Abs($pos.X - $script:DragStart.X) + [Math]::Abs($pos.Y - $script:DragStart.Y)) -gt [System.Windows.Forms.SystemInformation]::DragSize.Width)) {
             $script:DragMoved = $true
@@ -1126,13 +1158,7 @@ function Add-RamModernCardMouse {
             }
         }
         if (-not $script:DragMoved) { return }
-        $pt = $script:UI.Cards.PointToClient($pos)
-        $overId = ''
-        foreach ($ctl in $script:UI.Cards.Controls) {
-            if ([string]::IsNullOrEmpty($ctl.Tag.AccountId)) { continue }
-            if ($ctl.Bounds.Contains($pt)) { $overId = $ctl.Tag.AccountId; break }
-        }
-        if ($overId -eq $script:DragId) { $overId = '' }
+        $overId = Get-RamCardAtScreenPoint -Point $pos -ExceptId $script:DragId
         if ($overId -ne $script:DragOverId) {
             if ($script:DragOverId -and $script:Cards.ContainsKey($script:DragOverId)) {
                 $prev = $script:Cards[$script:DragOverId].Card
@@ -1152,23 +1178,11 @@ function Add-RamModernCardMouse {
     $dragUp = {
         param($s, $e)
         if ([string]::IsNullOrEmpty($script:DragId)) { return }
+        if ($e.Button -ne [System.Windows.Forms.MouseButtons]::Left) { return }
         $id = $script:DragId
-        $script:DragId = ''
-        $script:UI.Cards.Cursor = [System.Windows.Forms.Cursors]::Default
-        # Цель запоминаем ДО того, как снимем подсветку.
-        $targetId = $script:DragOverId
-        if ($script:Cards.ContainsKey($id)) {
-            $script:Cards[$id].Card.Tag.Selected = $false
-            Sync-RamCardLabelFill -Card $script:Cards[$id].Card
-            $script:Cards[$id].Card.Invalidate()
-        }
-        if ($targetId -and $script:Cards.ContainsKey($targetId)) {
-            $oc = $script:Cards[$targetId].Card
-            $oc.Tag.DropLine = $null
-            Sync-RamCardLabelFill -Card $oc
-            $oc.Invalidate()
-        }
-        $script:DragOverId = ''
+        # При отпускании цель могла смениться без последнего MouseMove.
+        $targetId = Get-RamCardAtScreenPoint -Point ($s.PointToScreen($e.Location)) -ExceptId $id
+        Reset-RamCardDrag
         if (-not $script:DragMoved) { return }
         if ($targetId -and $targetId -ne $id) { Push-RamUndo -Label 'обмен карточек местами' }
         if ($targetId -and (Swap-RamAccountOrder -Id $id -WithId $targetId)) {
@@ -1182,6 +1196,12 @@ function Add-RamModernCardMouse {
         $ctl.Add_MouseDown($dragDown)
         $ctl.Add_MouseMove($dragMove)
         $ctl.Add_MouseUp($dragUp)
+        $ctl.Add_MouseCaptureChanged({
+            if ($script:DragId -and $script:DragControl -eq $this -and -not $this.Capture) {
+                $script:DragMoved=$true
+                Reset-RamCardDrag
+            }
+        })
         $ctl.Add_Click($toggle)
         $ctl.ContextMenuStrip = $menu
     }

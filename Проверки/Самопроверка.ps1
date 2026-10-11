@@ -3201,6 +3201,13 @@ Check 'Фоновая проверка возвращает баланс без 
     '4 изолированных HTTP-сценария: ожидание, ноль, отказ API и закрытие меню'
 }
 
+Check 'Перетаскивание чинит старый порядок и совпадает с Ctrl+цифра' {
+    $runner=Join-Path $PSScriptRoot 'Проверка порядка.ps1'
+    $output=@(& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $runner -NoPause 2>&1)
+    if($LASTEXITCODE -ne 0 -or @($output | Where-Object {[string]$_ -like 'PASS:*'}).Count -ne 9){throw ($output -join ' | ')}
+    '9 сценариев: дубли, новые аккаунты, фильтр, 40 карточек, Undo, шифрование, Ctrl+1…9 и мышь во всех меню'
+}
+
 Check 'README не врёт числом проверок' {
     # Число в README трижды разошлось с кодом и висело устаревшим, пока его
     # не заметил человек. Считаем проверки прямо из этого файла и требуем,

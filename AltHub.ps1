@@ -148,6 +148,7 @@ $script:PlayerPath     = ''
 $script:Filter         = ''       # текст поиска по аккаунтам
 $script:GroupFilter    = ''       # выбранный набор, пусто = все
 $script:DragId         = ''       # что тащим мышью
+$script:DragControl    = $null    # элемент, удерживающий мышь до отпускания
 $script:DragStart      = 0
 $script:DragMoved      = $false
 $script:Section        = 'accounts'

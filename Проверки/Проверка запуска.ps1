@@ -120,8 +120,7 @@ function Wait-RamAppWindow {
     param([int[]]$Before, [int]$Seconds = 25)
     $until = (Get-Date).AddSeconds($Seconds)
     while ((Get-Date) -lt $until) {
-        foreach ($p in @(Get-Process -Name powershell -ErrorAction SilentlyContinue)) {
-            if ($Before -contains $p.Id) { continue }
+        foreach ($p in (Get-RamOurProcesses -Before $Before)) {
             $w = Get-RamAppWindow -ProcessId $p.Id
             if ($null -ne $w -and $w.Visible) {
                 return [pscustomobject]@{ Proc = $p; Win = $w }
@@ -134,8 +133,12 @@ function Wait-RamAppWindow {
 
 function Get-RamOurProcesses {
     param([int[]]$Before)
-    return @(Get-Process -Name powershell -ErrorAction SilentlyContinue |
-             Where-Object { $Before -notcontains $_.Id })
+    # Чужие AltHub/PowerShell и окна параллельных стендов не относятся к этому прогону.
+    $entryPath=Join-Path $script:work 'AltHub.ps1'
+    return @(Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" -ErrorAction SilentlyContinue |
+        Where-Object { $Before -notcontains $_.ProcessId -and $_.CommandLine -and
+            $_.CommandLine.IndexOf($entryPath,[StringComparison]::OrdinalIgnoreCase) -ge 0 } |
+        ForEach-Object { Get-Process -Id $_.ProcessId -ErrorAction SilentlyContinue })
 }
 
 function Stop-RamAll {
@@ -295,7 +298,7 @@ Step 'Второй запуск возвращает окно, а не откр�
     Start-Sleep -Seconds 14
 
     $windows = 0
-    foreach ($p in @(Get-Process -Name powershell -ErrorAction SilentlyContinue)) {
+    foreach ($p in (Get-RamOurProcesses -Before $before)) {
         if ($null -ne (Get-RamAppWindow -ProcessId $p.Id)) { $windows++ }
     }
     if ($windows -gt 1) {
