@@ -248,7 +248,7 @@ function New-RamRateLimitError {
     param([int]$Seconds = 8, [string]$Message = '')
 
     if ([string]::IsNullOrWhiteSpace($Message)) {
-        $Message = "Roblox просит сбавить темп. Повторю через $Seconds с."
+        $Message = (Get-RamText -Text 'Roblox просит сбавить темп. Повторю через {0} с.' -Arguments @([string]($Seconds)))
     }
     $ex = New-Object System.Exception($Message)
     $ex.Data['RamRetryAfter'] = $Seconds
@@ -444,18 +444,18 @@ function Test-RamAuthenticatedUser {
     } catch {
         return [pscustomobject]@{
             State='transient'; User=$null; StatusCode=0; RetryAfterSeconds=0
-            Message="Связь с Roblox недоступна: $($_.Exception.Message)"
+            Message=(Get-RamText -Text 'Связь с Roblox недоступна: {0}' -Arguments @([string]((Get-RamErrorText -Text ($($_.Exception.Message))))))
         }
     }
     if ($r.Status -eq 401) {
-        return [pscustomobject]@{ State='unauthorized'; User=$null; StatusCode=401; RetryAfterSeconds=0; Message='Кука недействительна или протухла.' }
+        return [pscustomobject]@{ State='unauthorized'; User=$null; StatusCode=401; RetryAfterSeconds=0; Message=(Get-RamText -Text 'Кука недействительна или протухла.') }
     }
     if ($r.Status -eq 429) {
         $wait = Get-RamRetryAfterSeconds -Response $r
-        return [pscustomobject]@{ State='rate_limited'; User=$null; StatusCode=429; RetryAfterSeconds=$wait; Message="Roblox просит сбавить темп. Повтори через $wait с." }
+        return [pscustomobject]@{ State='rate_limited'; User=$null; StatusCode=429; RetryAfterSeconds=$wait; Message=(Get-RamText -Text 'Roblox просит сбавить темп. Повтори через {0} с.' -Arguments @([string]($wait))) }
     }
     if ($r.Status -ne 200) {
-        return [pscustomobject]@{ State='transient'; User=$null; StatusCode=$r.Status; RetryAfterSeconds=0; Message="Roblox временно не ответил на проверку входа (HTTP $($r.Status))." }
+        return [pscustomobject]@{ State='transient'; User=$null; StatusCode=$r.Status; RetryAfterSeconds=0; Message=(Get-RamText -Text 'Roblox временно не ответил на проверку входа (HTTP {0}).' -Arguments @([string]($($r.Status)))) }
     }
 
     try {
@@ -465,9 +465,9 @@ function Test-RamAuthenticatedUser {
             Name        = [string]$o.name
             DisplayName = [string]$o.displayName
         }
-        return [pscustomobject]@{ State='valid'; User=$user; StatusCode=200; RetryAfterSeconds=0; Message='Вход подтверждён.' }
+        return [pscustomobject]@{ State='valid'; User=$user; StatusCode=200; RetryAfterSeconds=0; Message=(Get-RamText -Text 'Вход подтверждён.') }
     } catch {
-        return [pscustomobject]@{ State='transient'; User=$null; StatusCode=200; RetryAfterSeconds=0; Message='Roblox вернул повреждённый ответ при проверке входа.' }
+        return [pscustomobject]@{ State='transient'; User=$null; StatusCode=200; RetryAfterSeconds=0; Message=(Get-RamText -Text 'Roblox вернул повреждённый ответ при проверке входа.') }
     }
 }
 
@@ -672,27 +672,27 @@ function Start-RamAuthCheckAsync {
 
 function Complete-RamAuthCheckAsync {
     param([Parameter(Mandatory)]$Job)
-    $result = [pscustomobject]@{ State='transient'; User=$null; StatusCode=0; RetryAfterSeconds=0; Message='Связь с Roblox недоступна.' }
+    $result = [pscustomobject]@{ State='transient'; User=$null; StatusCode=0; RetryAfterSeconds=0; Message=(Get-RamText -Text 'Связь с Roblox недоступна.') }
     try {
         if ($Job.Task.Status -ne [System.Threading.Tasks.TaskStatus]::RanToCompletion) { return $result }
         $resp = $Job.Task.Result
         try {
             $result.StatusCode = [int]$resp.StatusCode
-            if ($result.StatusCode -eq 401) { $result.State='unauthorized'; $result.Message='Кука недействительна или протухла.'; return $result }
+            if ($result.StatusCode -eq 401) { $result.State='unauthorized'; $result.Message=(Get-RamText -Text 'Кука недействительна или протухла.'); return $result }
             if ($result.StatusCode -eq 429) {
-                $result.State='rate_limited'; $result.Message='Roblox просит сбавить темп.'
+                $result.State='rate_limited'; $result.Message=(Get-RamText -Text 'Roblox просит сбавить темп.')
                 $vals=$null
                 if ($resp.Headers.TryGetValues('Retry-After',[ref]$vals)) { $n=0; if([int]::TryParse(($vals|Select-Object -First 1),[ref]$n)){ $result.RetryAfterSeconds=[Math]::Min(120,[Math]::Max(1,$n)) } }
                 if ($result.RetryAfterSeconds -le 0) { $result.RetryAfterSeconds=8 }
                 return $result
             }
-            if ($result.StatusCode -ne 200) { $result.Message="Roblox временно ответил HTTP $($result.StatusCode)."; return $result }
+            if ($result.StatusCode -ne 200) { $result.Message=(Get-RamText -Text 'Roblox временно ответил HTTP {0}.' -Arguments @([string]($($result.StatusCode)))); return $result }
             $o = $resp.Content.ReadAsStringAsync().GetAwaiter().GetResult() | ConvertFrom-Json
             $result.User=[pscustomobject]@{ Id=[int64]$o.id; Name=[string]$o.name; DisplayName=[string]$o.displayName }
-            $result.State='valid'; $result.Message='Вход подтверждён.'
+            $result.State='valid'; $result.Message=(Get-RamText -Text 'Вход подтверждён.')
             return $result
         } finally { $resp.Dispose() }
-    } catch { $result.Message="Связь с Roblox недоступна: $($_.Exception.Message)"; return $result }
+    } catch { $result.Message=(Get-RamText -Text 'Связь с Roblox недоступна: {0}' -Arguments @([string]((Get-RamErrorText -Text ($($_.Exception.Message)))))); return $result }
     finally { try{$Job.Req.Dispose()}catch{}; try{$Job.Cts.Dispose()}catch{} }
 }
 

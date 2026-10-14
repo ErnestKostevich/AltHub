@@ -8,7 +8,7 @@ function Get-RamClassicMenuStyle {
       BaseContent  — стартовая ширина содержимого окна при первом запуске.
     #>
     [pscustomobject]@{
-        Key='classic'; Title='Pulse'; Description='Компактный рабочий список: быстрые действия, минимум шума, без иконок H₂O.'
+        Key='classic'; Title='Pulse'; Description=(Get-RamText -Text 'Компактный рабочий список: быстрые действия, минимум шума, без иконок H₂O.')
         Layout='classic'; MaxColumns=1; MinCardWidth=560; BaseContent=800; NavPrefix='   '
     }
 }

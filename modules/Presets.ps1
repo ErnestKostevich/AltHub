@@ -122,11 +122,11 @@ function Get-RamHardwareSummary {
     param($Hardware)
 
     if ($null -eq $Hardware) { $Hardware = Get-RamHardware }
-    if (-not $Hardware.Known) { return 'Не удалось определить железо — посоветовать нечего, ставь на глаз.' }
+    if (-not $Hardware.Known) { return (Get-RamText -Text 'Не удалось определить железо — посоветовать нечего, ставь на глаз.') }
 
     $parts = @()
-    $parts += ('{0} ГБ памяти' -f $Hardware.RamGb)
-    $parts += ('{0} ядер / {1} потоков' -f $Hardware.Cores, $Hardware.Threads)
+    $parts += ((Get-RamText -Text '{0} ГБ памяти') -f $Hardware.RamGb)
+    $parts += ((Get-RamText -Text '{0} ядер / {1} потоков') -f $Hardware.Cores, $Hardware.Threads)
     if ($Hardware.GpuName) { $parts += $Hardware.GpuName }
     return ($parts -join '  ·  ')
 }
@@ -146,20 +146,20 @@ function Get-RamHardwareAdvice {
             MaxAccounts = $max
             Tier        = 'unknown'
             Preset      = 'balanced'
-            Text        = 'Железо определить не вышло. Начни с двух аккаунтов и средних настроек, дальше посмотришь по ощущениям.'
+            Text        = (Get-RamText -Text 'Железо определить не вышло. Начни с двух аккаунтов и средних настроек, дальше посмотришь по ощущениям.')
         }
     }
 
     $ram = [double]$Hardware.RamGb
     if ($ram -lt 8) {
         $tier = 'weak';   $preset = 'twink'
-        $text = "Машина скромная: {0} ГБ памяти. Больше {1} клиентов сразу лучше не открывать, и всем твинкам ставить графику 1-2." -f $Hardware.RamGb, $max
+        $text = (Get-RamText -Text 'Машина скромная: {0} ГБ памяти. Больше {1} клиентов сразу лучше не открывать, и всем твинкам ставить графику 1-2.') -f $Hardware.RamGb, $max
     } elseif ($ram -lt 16) {
         $tier = 'normal'; $preset = 'balanced'
-        $text = "Обычная машина: {0} ГБ памяти. Спокойно потянет {1} клиентов, если твинкам поставить графику пониже." -f $Hardware.RamGb, $max
+        $text = (Get-RamText -Text 'Обычная машина: {0} ГБ памяти. Спокойно потянет {1} клиентов, если твинкам поставить графику пониже.') -f $Hardware.RamGb, $max
     } else {
         $tier = 'strong'; $preset = 'balanced'
-        $text = "Машина мощная: {0} ГБ памяти, {1} потоков. Потянет {2} клиентов; основному можно ставить максимум графики." -f $Hardware.RamGb, $Hardware.Threads, $max
+        $text = (Get-RamText -Text 'Машина мощная: {0} ГБ памяти, {1} потоков. Потянет {2} клиентов; основному можно ставить максимум графики.') -f $Hardware.RamGb, $Hardware.Threads, $max
     }
 
     return [pscustomobject]@{
@@ -183,8 +183,8 @@ function Get-RamAccountPresets {
     @(
         [pscustomobject]@{
             Key      = 'main'
-            Title    = 'Основной — красиво'
-            Hint     = 'Максимум графики, без предела кадров, звук на полную. Для того аккаунта, в который реально играешь.'
+            Title    = (Get-RamText -Text 'Основной — красиво')
+            Hint     = (Get-RamText -Text 'Максимум графики, без предела кадров, звук на полную. Для того аккаунта, в который реально играешь.')
             Graphics = '10'
             Fps      = '0'
             Volume   = '100'
@@ -192,8 +192,8 @@ function Get-RamAccountPresets {
         },
         [pscustomobject]@{
             Key      = 'balanced'
-            Title    = 'Сбалансированно'
-            Hint     = 'Середина по графике, 60 кадров, звук вполовину. Разумно, если непонятно с чего начать.'
+            Title    = (Get-RamText -Text 'Сбалансированно')
+            Hint     = (Get-RamText -Text 'Середина по графике, 60 кадров, звук вполовину. Разумно, если непонятно с чего начать.')
             Graphics = '5'
             Fps      = '60'
             Volume   = '50'
@@ -201,8 +201,8 @@ function Get-RamAccountPresets {
         },
         [pscustomobject]@{
             Key      = 'twink'
-            Title    = 'Твинк — легко тянет'
-            Hint     = 'Графика 2, 60 кадров, звук выключен. Играбельно, но почти не грузит машину.'
+            Title    = (Get-RamText -Text 'Твинк — легко тянет')
+            Hint     = (Get-RamText -Text 'Графика 2, 60 кадров, звук выключен. Играбельно, но почти не грузит машину.')
             Graphics = '2'
             Fps      = '60'
             Volume   = '0'
@@ -210,8 +210,8 @@ function Get-RamAccountPresets {
         },
         [pscustomobject]@{
             Key      = 'farm'
-            Title    = 'Фоновый фарм'
-            Hint     = 'Минимум графики, 30 кадров, тишина. Для окон, в которые не смотришь.'
+            Title    = (Get-RamText -Text 'Фоновый фарм')
+            Hint     = (Get-RamText -Text 'Минимум графики, 30 кадров, тишина. Для окон, в которые не смотришь.')
             Graphics = '1'
             Fps      = '30'
             Volume   = '0'
@@ -249,7 +249,7 @@ function Set-RamAccountPreset {
 
 function Get-RamPresetChoices {
     <# Пары для New-RamCombo: «не менять» плюс сами наборы. #>
-    $items = @([pscustomobject]@{ Text = 'не менять'; Value = '' })
+    $items = @([pscustomobject]@{ Text = (Get-RamText -Text 'не менять'); Value = '' })
     foreach ($p in Get-RamAccountPresets) {
         $items += [pscustomobject]@{ Text = $p.Title; Value = $p.Key }
     }

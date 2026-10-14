@@ -367,11 +367,11 @@ function Apply-RamAccountClientSettings {
         } catch {
             # Файл настроек не является условием запуска самого клиента.
             # Сообщаем точную причину и продолжаем с обычными настройками.
-            $script:ClientSettingsSkippedReason = "Не удалось создать файл настроек Roblox: $($_.Exception.Message)"
+            $script:ClientSettingsSkippedReason = (Get-RamText -Text 'Не удалось создать файл настроек Roblox: {0}' -Arguments @([string]((Get-RamErrorText -Text ($($_.Exception.Message))))))
             return @()
         }
         if (-not (Test-Path -LiteralPath $path)) {
-            $script:ClientSettingsSkippedReason = 'Файл настроек Roblox не появился после попытки создания.'
+            $script:ClientSettingsSkippedReason = (Get-RamText -Text 'Файл настроек Roblox не появился после попытки создания.')
             return @()
         }
     }
@@ -390,7 +390,7 @@ function Apply-RamAccountClientSettings {
         $ok2 = Set-RamXmlValue -Xml $xml -Name 'GraphicsQualityLevel' -Value ([string]$g.Slider)
         $ok3 = Set-RamXmlValue -Xml $xml -Name 'MaxQualityEnabled'    -Value $g.MaxQuality
         if (-not ($ok1 -and $ok2 -and $ok3)) { throw 'Не все настройки графики удалось записать.' }
-        $applied += $(if ($g.Saved -eq 0) { 'графика: авто' } else { "графика: $($g.Saved)" })
+        $applied += $(if ($g.Saved -eq 0) { (Get-RamText -Text 'графика: авто') } else { (Get-RamText -Text 'графика: {0}' -Arguments @([string]($($g.Saved)))) })
     }
 
     # --- предел кадров
@@ -399,7 +399,7 @@ function Apply-RamAccountClientSettings {
         if ([int]::TryParse([string]$Account.FramerateCap, [ref]$fps)) {
             if ($fps -lt 0) { $fps = 0 }
             if (-not (Set-RamXmlValue -Xml $xml -Name 'FramerateCap' -Value ([string]$fps))) { throw 'Не удалось записать предел FPS.' }
-            $applied += $(if ($fps -eq 0) { 'FPS: без предела' } else { "FPS: $fps" })
+            $applied += $(if ($fps -eq 0) { (Get-RamText -Text 'FPS: без предела') } else { "FPS: $fps" })
         }
     }
 
@@ -411,7 +411,7 @@ function Apply-RamAccountClientSettings {
             if ($vol -gt 100) { $vol = 100 }
             $f = [math]::Round($vol / 100.0, 3)
             if (-not (Set-RamXmlValue -Xml $xml -Name 'MasterVolume' -Value ([string]$f).Replace(',', '.'))) { throw 'Не удалось записать громкость.' }
-            $applied += "звук: $vol%"
+            $applied += (Get-RamText -Text 'звук: {0}%' -Arguments @([string]($vol)))
         }
     }
 
@@ -419,7 +419,7 @@ function Apply-RamAccountClientSettings {
     if (-not [string]::IsNullOrWhiteSpace([string]$Account.Fullscreen)) {
         $fs = ([string]$Account.Fullscreen -eq 'yes')
         if (-not (Set-RamXmlValue -Xml $xml -Name 'Fullscreen' -Value $(if ($fs) { 'true' } else { 'false' }))) { throw 'Не удалось записать полноэкранный режим.' }
-        $applied += $(if ($fs) { 'полный экран' } else { 'в окне' })
+        $applied += $(if ($fs) { (Get-RamText -Text 'полный экран') } else { (Get-RamText -Text 'в окне') })
     }
 
     if ($applied.Count -gt 0) {
@@ -440,25 +440,25 @@ function Apply-RamAccountClientSettings {
 function Get-RamGraphicsChoices {
     <# Варианты для выпадающего списка в настройках аккаунта. #>
     @(
-        [pscustomobject]@{ Text = 'не трогать';      Value = ''     },
-        [pscustomobject]@{ Text = 'Авто';            Value = 'auto' },
-        [pscustomobject]@{ Text = '1 — минимум';     Value = '1'    },
+        [pscustomobject]@{ Text = (Get-RamText -Text 'не трогать');      Value = ''     },
+        [pscustomobject]@{ Text = (Get-RamText -Text 'Авто');            Value = 'auto' },
+        [pscustomobject]@{ Text = (Get-RamText -Text '1 — минимум');     Value = '1'    },
         [pscustomobject]@{ Text = '2';               Value = '2'    },
         [pscustomobject]@{ Text = '3';               Value = '3'    },
         [pscustomobject]@{ Text = '4';               Value = '4'    },
-        [pscustomobject]@{ Text = '5 — середина';    Value = '5'    },
+        [pscustomobject]@{ Text = (Get-RamText -Text '5 — середина');    Value = '5'    },
         [pscustomobject]@{ Text = '6';               Value = '6'    },
         [pscustomobject]@{ Text = '7';               Value = '7'    },
         [pscustomobject]@{ Text = '8';               Value = '8'    },
         [pscustomobject]@{ Text = '9';               Value = '9'    },
-        [pscustomobject]@{ Text = '10 — максимум';   Value = '10'   }
+        [pscustomobject]@{ Text = (Get-RamText -Text '10 — максимум');   Value = '10'   }
     )
 }
 
 function Get-RamFpsChoices {
     @(
-        [pscustomobject]@{ Text = 'не трогать';   Value = ''    },
-        [pscustomobject]@{ Text = 'без предела';  Value = '0'   },
+        [pscustomobject]@{ Text = (Get-RamText -Text 'не трогать');   Value = ''    },
+        [pscustomobject]@{ Text = (Get-RamText -Text 'без предела');  Value = '0'   },
         [pscustomobject]@{ Text = '30';           Value = '30'  },
         [pscustomobject]@{ Text = '60';           Value = '60'  },
         [pscustomobject]@{ Text = '120';          Value = '120' },
@@ -469,9 +469,9 @@ function Get-RamFpsChoices {
 
 function Get-RamFullscreenChoices {
     @(
-        [pscustomobject]@{ Text = 'не трогать';   Value = ''    },
-        [pscustomobject]@{ Text = 'в окне';       Value = 'no'  },
-        [pscustomobject]@{ Text = 'полный экран'; Value = 'yes' }
+        [pscustomobject]@{ Text = (Get-RamText -Text 'не трогать');   Value = ''    },
+        [pscustomobject]@{ Text = (Get-RamText -Text 'в окне');       Value = 'no'  },
+        [pscustomobject]@{ Text = (Get-RamText -Text 'полный экран'); Value = 'yes' }
     )
 }
 
@@ -482,17 +482,17 @@ function Get-RamAccountSettingsSummary {
     $parts = @()
 
     $g = [string]$Account.Graphics
-    if ($g -eq 'auto')            { $parts += 'графика авто' }
-    elseif (-not [string]::IsNullOrWhiteSpace($g)) { $parts += "графика $g" }
+    if ($g -eq 'auto')            { $parts += (Get-RamText -Text 'графика авто') }
+    elseif (-not [string]::IsNullOrWhiteSpace($g)) { $parts += (Get-RamText -Text 'графика {0}' -Arguments @([string]($g))) }
 
     $v = [string]$Account.Volume
-    if (-not [string]::IsNullOrWhiteSpace($v)) { $parts += "звук $v%" }
+    if (-not [string]::IsNullOrWhiteSpace($v)) { $parts += (Get-RamText -Text 'звук {0}%' -Arguments @([string]($v))) }
 
     $f = [string]$Account.FramerateCap
-    if ($f -eq '0')                { $parts += 'FPS без предела' }
+    if ($f -eq '0')                { $parts += (Get-RamText -Text 'FPS без предела') }
     elseif (-not [string]::IsNullOrWhiteSpace($f)) { $parts += "$f FPS" }
 
-    if ([string]$Account.Fullscreen -eq 'yes') { $parts += 'полный экран' }
+    if ([string]$Account.Fullscreen -eq 'yes') { $parts += (Get-RamText -Text 'полный экран') }
 
     return ($parts -join '  ·  ')
 }

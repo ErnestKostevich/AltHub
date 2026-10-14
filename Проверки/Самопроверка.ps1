@@ -3208,6 +3208,13 @@ Check 'Перетаскивание чинит старый порядок и с
     '9 сценариев: дубли, новые аккаунты, фильтр, 40 карточек, Undo, шифрование, Ctrl+1…9 и мышь во всех меню'
 }
 
+Check 'Русский и английский сохраняются и работают во всех меню' {
+    $runner=Join-Path $PSScriptRoot 'Проверка языка.ps1'
+    $output=@(& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $runner -NoPause 2>&1)
+    if($LASTEXITCODE -ne 0 -or @($output | Where-Object {[string]$_ -like 'PASS:*'}).Count -ne 6){throw ($output -join ' | ')}
+    '6 групп: JSON, переводы, CRLF, три меню и диалоги на четырёх DPI, Save/Cancel RU ↔ EN без изменения аккаунтов и очереди'
+}
+
 Check 'README не врёт числом проверок' {
     # Число в README трижды разошлось с кодом и висело устаревшим, пока его
     # не заметил человек. Считаем проверки прямо из этого файла и требуем,

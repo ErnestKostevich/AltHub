@@ -52,9 +52,13 @@ function Get-RamMenuCardWidth {
 
 function Show-RamMenuStyleUpgradeChoice {
     if (-not $script:NeedsMenuStyleChoice) { return }
-    $answer = Show-RamMessage -Title 'AltHub 1.4 — выбери меню' -Kind 'info' -Message (
-        "В версии 1.4 есть три независимых вида меню. Цветовую тему можно менять отдельно.`n`n" +
-        "Dashboard — вкладки сверху и адаптивная сетка карточек.`nH₂O Original — авторская раскладка H₂O с рисованными иконками.`nPulse — компактный рабочий список без иконок H₂O."
+    $answer = Show-RamMessage -Title (Get-RamText -Text 'AltHub 1.4 — выбери меню') -Kind 'info' -Message (
+        (Get-RamText -Text 'В версии 1.4 есть три независимых вида меню. Цветовую тему можно менять отдельно.
+
+') +
+        (Get-RamText -Text 'Dashboard — вкладки сверху и адаптивная сетка карточек.
+H₂O Original — авторская раскладка H₂O с рисованными иконками.
+Pulse — компактный рабочий список без иконок H₂O.')
     ) -Buttons @(
         @{ Text='Dashboard'; Value='wide'; Kind='primary' },
         @{ Text='H₂O Original'; Value='water' },

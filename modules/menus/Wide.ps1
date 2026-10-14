@@ -9,7 +9,7 @@ function Get-RamWideMenuStyle {
       BaseContent  — стартовая ширина содержимого окна при первом запуске.
     #>
     [pscustomobject]@{
-        Key='wide'; Title='Dashboard'; Description='Современная широкая панель: вкладки сверху и адаптивная сетка карточек.'
+        Key='wide'; Title='Dashboard'; Description=(Get-RamText -Text 'Современная широкая панель: вкладки сверху и адаптивная сетка карточек.')
         Layout='modern'; MaxColumns=4; MinCardWidth=320; BaseContent=980; NavPrefix=''
     }
 }

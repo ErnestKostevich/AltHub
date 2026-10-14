@@ -49,7 +49,7 @@ try {
     foreach ($entry in Get-ChildItem -LiteralPath $stage -Recurse -Force) {
         if ($forbidden -contains $entry.Name) { throw "В релиз попал запрещённый путь: $($entry.FullName)" }
     }
-    foreach ($required in @('extension\icon16.png','extension\icon48.png','extension\icon128.png','modules\UiModern.ps1','modules\menus\Classic.ps1','docs\settings.png','docs\launch-center.png','Проверки\Проверка очереди.ps1')) {
+    foreach ($required in @('extension\icon16.png','extension\icon48.png','extension\icon128.png','modules\UiModern.ps1','modules\menus\Classic.ps1','modules\Localization.ps1','modules\locales\en-common.json','modules\locales\en-help.json','modules\locales\en-part1.json','modules\locales\en-part2.json','modules\locales\en-part3.json','docs\settings.png','docs\launch-center.png','docs\en\themes.png','Проверки\Проверка очереди.ps1','Проверки\Проверка языка.ps1')) {
         if (-not (Test-Path -LiteralPath (Join-Path $stage $required))) { throw "В staging нет $required" }
     }
     $stamp = Join-Path $stage 'docs\screenshots-version.txt'

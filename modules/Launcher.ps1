@@ -138,7 +138,7 @@ function Get-RamOutdatedClientWarning {
     if ($null -eq $regEntry) { return $null }
     if ($regEntry.Version -ge $clients[0].Version) { return $null }
 
-    return "Roblox обновился: в реестре ещё старая версия $($regEntry.Version), запускаю новую $($clients[0].Version). Иначе старый клиент дёрнул бы установщик, а тот закрывает открытые окна."
+    return (Get-RamText -Text 'Roblox обновился: в реестре ещё старая версия {0}, запускаю новую {1}. Иначе старый клиент дёрнул бы установщик, а тот закрывает открытые окна.' -Arguments @([string]($($regEntry.Version)),[string]($($clients[0].Version))))
 }
 
 function Test-RamMicrosoftStoreRoblox {

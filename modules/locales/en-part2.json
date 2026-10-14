@@ -1,0 +1,1686 @@
+[
+  {
+    "Source": "\n\nЧаще всего помогает пауза побольше между запусками — она в Настройках.",
+    "Translation": "\n\nIncreasing the delay between launches often helps — you can change it in Settings."
+  },
+  {
+    "Source": "   •   показано: {0}",
+    "Translation": "   •   shown: {0}"
+  },
+  {
+    "Source": "  ·  первая причина: {0}",
+    "Translation": "  ·  first reason: {0}"
+  },
+  {
+    "Source": "  · приват",
+    "Translation": "  · private"
+  },
+  {
+    "Source": "  Запустить",
+    "Translation": "  Launch"
+  },
+  {
+    "Source": "  Популярные из Roblox",
+    "Translation": "  Popular on Roblox"
+  },
+  {
+    "Source": "  Справка",
+    "Translation": "  Help"
+  },
+  {
+    "Source": "  основному — графика на максимум, звук включён",
+    "Translation": "  main account — maximum graphics, sound on"
+  },
+  {
+    "Source": " (был в игре ",
+    "Translation": " (time in game: "
+  },
+  {
+    "Source": " (приватный сервер)",
+    "Translation": " (private server)"
+  },
+  {
+    "Source": " из набора «{0}»",
+    "Translation": " in group “{0}”"
+  },
+  {
+    "Source": " ч назад",
+    "Translation": " h ago"
+  },
+  {
+    "Source": "'{0}' закрылся сразу после запуска другого окна — похоже, новое окно выбило старое.",
+    "Translation": "'{0}' closed immediately after another window launched — the new window may have forced the old one to close."
+  },
+  {
+    "Source": "'{0}' стартовал (PID {1}).",
+    "Translation": "'{0}' started (PID {1})."
+  },
+  {
+    "Source": "'{0}': Roblox ограничил частоту, повтор через {1} с (попытка {2}).",
+    "Translation": "'{0}': Roblox rate limit; retry in {1} s (attempt {2})."
+  },
+  {
+    "Source": "'{0}': вход живой — {1}{2}",
+    "Translation": "'{0}': session valid — {1}{2}"
+  },
+  {
+    "Source": "'{0}': вход починен, пробую запустить снова.",
+    "Translation": "'{0}': session repaired; trying to launch again."
+  },
+  {
+    "Source": "'{0}': куки нет.",
+    "Translation": "'{0}': no cookie."
+  },
+  {
+    "Source": "'{0}': окно не появилось вовремя. Запускаю следующего — настройки графики могли не успеть примениться.",
+    "Translation": "'{0}': the window did not appear in time. Launching the next account — graphics settings may not have applied."
+  },
+  {
+    "Source": "'{0}': прожил меньше 20 с, автоперезапуск пропущен.",
+    "Translation": "'{0}': ran for less than 20 s; auto-restart skipped."
+  },
+  {
+    "Source": "1 — минимум",
+    "Translation": "1 — minimum"
+  },
+  {
+    "Source": "<длинный токен скрыт>",
+    "Translation": "<long token hidden>"
+  },
+  {
+    "Source": "Access is denied|Отказано в доступе",
+    "Translation": "Access is denied|Отказано в доступе"
+  },
+  {
+    "Source": "AltHub закроется и НЕ тронет accounts.dat — иначе он перезаписал бы его пустым списком.\n\n",
+    "Translation": "AltHub will close and will NOT touch accounts.dat — otherwise it would overwrite it with an empty list.\n\n"
+  },
+  {
+    "Source": "AltHub не смог загрузить {0}.\n\n{1}",
+    "Translation": "AltHub could not load {0}.\n\n{1}"
+  },
+  {
+    "Source": "AltHub — мало места на диске",
+    "Translation": "AltHub — low disk space"
+  },
+  {
+    "Source": "Chrome for Testing {0} готов: {1}",
+    "Translation": "Chrome for Testing {0} is ready: {1}"
+  },
+  {
+    "Source": "Chrome for Testing скачать не вышло: {0}",
+    "Translation": "Could not download Chrome for Testing: {0}"
+  },
+  {
+    "Source": "Chrome for Testing — официальную сборку Chromium от Google: у неё чистый ",
+    "Translation": "Chrome for Testing — Google's official Chromium build: it has a clean "
+  },
+  {
+    "Source": "Chrome for Testing: спрашиваю у Google свежую сборку Stable/win64.",
+    "Translation": "Chrome for Testing: requesting the latest Stable/win64 build from Google."
+  },
+  {
+    "Source": "Ctrl+{0}: «{1}» сейчас не запущен.",
+    "Translation": "Ctrl+{0}: “{1}” is not running."
+  },
+  {
+    "Source": "Dashboard — вкладки сверху и адаптивная сетка карточек.\nH₂O Original — авторская раскладка H₂O с рисованными иконками.\nPulse — компактный рабочий список без иконок H₂O.",
+    "Translation": "Dashboard — top tabs and a responsive card grid.\nH₂O Original — H₂O's original layout with custom icons.\nPulse — a compact account list without H₂O icons."
+  },
+  {
+    "Source": "HTTP {0} при скачивании Chrome for Testing.",
+    "Translation": "HTTP {0} while downloading Chrome for Testing."
+  },
+  {
+    "Source": "ID игры: {0} — название не получено",
+    "Translation": "Game ID: {0} — title unavailable"
+  },
+  {
+    "Source": "Roblox без игры",
+    "Translation": "Roblox without a game"
+  },
+  {
+    "Source": "Roblox вернул слишком много перенаправлений.",
+    "Translation": "Roblox returned too many redirects."
+  },
+  {
+    "Source": "Roblox закроется и забудет вход, а на сервере он останется живым. ",
+    "Translation": "Roblox will close and forget its local login, but the server-side session will remain valid. "
+  },
+  {
+    "Source": "Roblox не подтвердил вход",
+    "Translation": "Roblox did not confirm the login"
+  },
+  {
+    "Source": "Roblox обновился: в реестре ещё старая версия {0}, запускаю новую {1}. Иначе старый клиент дёрнул бы установщик, а тот закрывает открытые окна.",
+    "Translation": "Roblox updated: the registry still points to version {0}; launching the new version {1}. The old client would start the installer, which closes running windows."
+  },
+  {
+    "Source": "Roblox просит паузу — продолжу через {0} с.",
+    "Translation": "Roblox requested a pause — resuming in {0} s."
+  },
+  {
+    "Source": "Roblox просит сбавить темп. Повтори через {0} с.",
+    "Translation": "Roblox requested a slower rate. Try again in {0} s."
+  },
+  {
+    "Source": "Roblox сейчас обновляется.\n\nПодожди, пока обновление закончится, и запусти снова. Если запустить прямо сейчас, установщик закроет открытые окна.",
+    "Translation": "Roblox is updating.\n\nWait for the update to finish, then launch again. Launching now would let the installer close running windows."
+  },
+  {
+    "Source": "Windows запретила открыть локальный порт (отказ в доступе), это не занятый порт.",
+    "Translation": "Windows denied access to the local port; the port is not merely busy."
+  },
+  {
+    "Source": "{0} %    {1} из {2} МБ",
+    "Translation": "{0} %    {1} of {2} MB"
+  },
+  {
+    "Source": "{0} ГБ памяти",
+    "Translation": "{0} GB RAM"
+  },
+  {
+    "Source": "{0} из браузера:",
+    "Translation": "{0} from the browser:"
+  },
+  {
+    "Source": "{0} с",
+    "Translation": "{0} s"
+  },
+  {
+    "Source": "{0}K играют",
+    "Translation": "{0}K playing"
+  },
+  {
+    "Source": "«Забрать вход». Если в приложении сейчас другой аккаунт — «Сменить аккаунт»: ",
+    "Translation": "“Import login”. If the app is currently signed into another account, use “Switch account”: "
+  },
+  {
+    "Source": "Авто",
+    "Translation": "Auto"
+  },
+  {
+    "Source": "Аккаунт «{0}» — вход мёртв, его надо взять заново.\n\n",
+    "Translation": "Account “{0}” — session expired; import the login again.\n\n"
+  },
+  {
+    "Source": "Аккаунт: {0}",
+    "Translation": "Account: {0}"
+  },
+  {
+    "Source": "Аккаунтов в нём: {0}. Свои настройки сохранены для каждого. Запускать — в разделе «Сценарии».",
+    "Translation": "Accounts: {0}. Individual settings are saved for each account. Launch from “Scenarios”."
+  },
+  {
+    "Source": "Аккаунтов: {0}  ·  {1}",
+    "Translation": "Accounts: {0}  ·  {1}"
+  },
+  {
+    "Source": "Аккаунты, свои игры и настройки, раскладка окон — одним действием.",
+    "Translation": "Accounts, individual games and settings, and window layout — in one action."
+  },
+  {
+    "Source": "Ау",
+    "Translation": "Ping"
+  },
+  {
+    "Source": "Без куки аккаунт запустить нельзя — ничего не сохранено.",
+    "Translation": "An account cannot launch without a cookie — nothing was saved."
+  },
+  {
+    "Source": "Боковое меню и тулбар",
+    "Translation": "Sidebar and toolbar"
+  },
+  {
+    "Source": "Быстрая настройка: основной «{0}», твинов {1}, игра — {2}.",
+    "Translation": "Quick setup: main account “{0}”, {1} alts, game — {2}."
+  },
+  {
+    "Source": "В XML Roblox не найден раздел пользовательских настроек; поле {0} создать негде.",
+    "Translation": "Roblox XML has no user settings section; there is nowhere to create field {0}."
+  },
+  {
+    "Source": "В версии 1.4 есть три независимых вида меню. Цветовую тему можно менять отдельно.\n\n",
+    "Translation": "Version 1.4 has three independent menu styles. You can change the color theme separately.\n\n"
+  },
+  {
+    "Source": "В наборе «{0}» ничего не нашлось",
+    "Translation": "Nothing found in group “{0}”"
+  },
+  {
+    "Source": "В приложении Roblox замечен «{0}» — его можно добавить одним кликом по строке внизу.",
+    "Translation": "Account “{0}” detected in the Roblox app — click the row below to add it."
+  },
+  {
+    "Source": "В приложении Roblox сейчас «{0}» — нажми сюда, чтобы добавить его в менеджер",
+    "Translation": "The Roblox app is signed into “{0}” — click here to add it to AltHub"
+  },
+  {
+    "Source": "В профиле «{0}» набор «{1}» пуст — некого запускать.",
+    "Translation": "Profile “{0}”: group “{1}” is empty — no accounts to launch."
+  },
+  {
+    "Source": "В списке сборок Google нет Chrome for Testing для win64.",
+    "Translation": "Google's build list has no Chrome for Testing for win64."
+  },
+  {
+    "Source": "В сценарии неверное число колонок.",
+    "Translation": "The scenario has an invalid column count."
+  },
+  {
+    "Source": "В сценарии нет настроек одного из выбранных аккаунтов.",
+    "Translation": "The scenario is missing settings for a selected account."
+  },
+  {
+    "Source": "В файле не нашлось ни куки, ни приглашения.",
+    "Translation": "No cookie or invitation found in the file."
+  },
+  {
+    "Source": "ВХОД ИЗ ТВОЕГО БРАУЗЕРА",
+    "Translation": "LOGIN FROM YOUR BROWSER"
+  },
+  {
+    "Source": "Ввести куку вручную",
+    "Translation": "Enter a cookie manually"
+  },
+  {
+    "Source": "Вернуть все переключатели к тому, что советуем по умолчанию",
+    "Translation": "Restore all toggles to the recommended defaults"
+  },
+  {
+    "Source": "Вернуть рекомендованное",
+    "Translation": "Restore recommended"
+  },
+  {
+    "Source": "Вид меню и цветовая тема независимы. После сохранения окно перестроится, запущенные клиенты Roblox останутся работать.",
+    "Translation": "Menu style and color theme are independent. Saving rebuilds the window; running Roblox clients keep working."
+  },
+  {
+    "Source": "Включить его и показать, как поставить расширение-мост в браузер? Это делается один раз.",
+    "Translation": "Enable it and show how to install the browser bridge extension? You only need to do this once."
+  },
+  {
+    "Source": "Включённый приём слушает только 127.0.0.1 — петлю внутри твоего компьютера.",
+    "Translation": "When enabled, the browser bridge listens only on 127.0.0.1 — your computer's loopback address."
+  },
+  {
+    "Source": "Внешний браузер: ошибка во время входа: {0}",
+    "Translation": "External browser: login error: {0}"
+  },
+  {
+    "Source": "Внешний браузер: расширение {0}",
+    "Translation": "External browser: extension {0}"
+  },
+  {
+    "Source": "Войди в приложении Roblox под нужным аккаунтом и нажми «Добавить аккаунт» — менеджер заберёт вход сам, пароль вводить не надо.",
+    "Translation": "Sign into the desired account in the Roblox app and click “Add account” — AltHub imports the login automatically; no password needed."
+  },
+  {
+    "Source": "Войди под нужным и нажми «Куки» ещё раз, либо жми красную кнопку ↻ на карточке — ",
+    "Translation": "Sign into the desired account and click “Cookies” again, or click the red ↻ button on the card — "
+  },
+  {
+    "Source": "Войти в этот аккаунт заново — вход умер",
+    "Translation": "Sign into this account again — session expired"
+  },
+  {
+    "Source": "Вошли под «{0}», а не под «{1}».",
+    "Translation": "Signed into “{0}”, not “{1}”."
+  },
+  {
+    "Source": "Вручную  —  вставить куку самому",
+    "Translation": "Manual  —  paste a cookie yourself"
+  },
+  {
+    "Source": "Все в Adopt Me!",
+    "Translation": "All to Adopt Me!"
+  },
+  {
+    "Source": "Все в Grow a Garden",
+    "Translation": "All to Grow a Garden"
+  },
+  {
+    "Source": "Все входы живые — чинить нечего.",
+    "Translation": "All sessions are valid — nothing to repair."
+  },
+  {
+    "Source": "Все порты из диапазона 52713-52717 заняты другими программами.",
+    "Translation": "All ports in the 52713-52717 range are used by other programs."
+  },
+  {
+    "Source": "Все способы добавить аккаунт",
+    "Translation": "All ways to add an account"
+  },
+  {
+    "Source": "Вставить несколько кук сразу, забрать из браузера или из файла",
+    "Translation": "Paste multiple cookies, import from a browser, or load a file"
+  },
+  {
+    "Source": "Вставить пачкой, в отдельном окне",
+    "Translation": "Bulk paste in a separate window"
+  },
+  {
+    "Source": "Вставь хотя бы одну куку или приглашение.",
+    "Translation": "Paste at least one cookie or invitation."
+  },
+  {
+    "Source": "Всё, можно работать.",
+    "Translation": "All set — ready to go."
+  },
+  {
+    "Source": "Вход «{0}» обновлён",
+    "Translation": "Login for “{0}” updated"
+  },
+  {
+    "Source": "Вход в «{0}» не обновлён.",
+    "Translation": "Login for “{0}” was not updated."
+  },
+  {
+    "Source": "Вход возвращён из копии:\n\n{0}\n\nОткрой Roblox — там снова будет тот аккаунт.",
+    "Translation": "Login restored from backup:\n\n{0}\n\nOpen Roblox — that account will be signed in again."
+  },
+  {
+    "Source": "Вход подтверждён.",
+    "Translation": "Login confirmed."
+  },
+  {
+    "Source": "Вход прошёл, но аккаунт не добавился:",
+    "Translation": "Login succeeded, but the account was not added:"
+  },
+  {
+    "Source": "Выбери цвет из списка. Метка рисуется полоской слева на карточке — удобно различать фармеров, торговых и основной.",
+    "Translation": "Choose a color. The label appears as a stripe on the left of the card — useful for distinguishing farming, trading, and main accounts."
+  },
+  {
+    "Source": "Выбор из нескольких действий.",
+    "Translation": "Choose from several actions."
+  },
+  {
+    "Source": "Выделение",
+    "Translation": "Selection"
+  },
+  {
+    "Source": "ГОТОВЫЕ НАБОРЫ",
+    "Translation": "PRESETS"
+  },
+  {
+    "Source": "Глобальные горячие клавиши занял кто-то другой — Ctrl+1..9 работать не будут.",
+    "Translation": "Other programs have taken the global hotkeys — Ctrl+1..9 will not work."
+  },
+  {
+    "Source": "Готово к работе.",
+    "Translation": "Ready to use."
+  },
+  {
+    "Source": "Готово. В Roblox вернулись твои прежние графика, звук и FPS.",
+    "Translation": "Done. Your previous Roblox graphics, sound, and FPS settings are restored."
+  },
+  {
+    "Source": "Готово. Осталось нажать «Сохранить».",
+    "Translation": "Done. Click “Save” to apply."
+  },
+  {
+    "Source": "Готово. Теперь при запуске будет спрашиваться пароль.",
+    "Translation": "Done. A password will now be required at startup."
+  },
+  {
+    "Source": "Готово: вход в «{0}» снова живой.",
+    "Translation": "Done: the session for “{0}” is valid again."
+  },
+  {
+    "Source": "Готовый сценарий  ▾",
+    "Translation": "Scenario preset  ▾"
+  },
+  {
+    "Source": "Громкость",
+    "Translation": "Volume"
+  },
+  {
+    "Source": "Дай теме название.",
+    "Translation": "Give the theme a name."
+  },
+  {
+    "Source": "Действия",
+    "Translation": "Actions"
+  },
+  {
+    "Source": "Длинное сообщение. ",
+    "Translation": "Long message. "
+  },
+  {
+    "Source": "Добавить",
+    "Translation": "Add"
+  },
+  {
+    "Source": "Добавить аккаунты",
+    "Translation": "Add accounts"
+  },
+  {
+    "Source": "Добавить игру",
+    "Translation": "Add game"
+  },
+  {
+    "Source": "Добавить из поля",
+    "Translation": "Add from field"
+  },
+  {
+    "Source": "Добавить этот аккаунт",
+    "Translation": "Add this account"
+  },
+  {
+    "Source": "Добавлен аккаунт '{0}' вручную.",
+    "Translation": "Account '{0}' added manually."
+  },
+  {
+    "Source": "Добавлен аккаунт «{0}» из приложения Roblox.",
+    "Translation": "Account “{0}” added from the Roblox app."
+  },
+  {
+    "Source": "Добавлено аккаунтов: {0}",
+    "Translation": "Accounts added: {0}"
+  },
+  {
+    "Source": "Добавь игру ссылкой или из популярных. Потом отметь аккаунты в разделе «Аккаунты» и нажми на игре «Назначить отмеченным».",
+    "Translation": "Add a game by link or from popular games. Then select accounts on the “Accounts” page and click “Assign to selected” on the game."
+  },
+  {
+    "Source": "Если Roblox закрылся сам, менеджер запустит его снова — до трёх раз подряд. По умолчанию выключено: при проблемах со связью даёт лишние попытки входа.",
+    "Translation": "If Roblox closes unexpectedly, AltHub restarts it up to three consecutive times. Off by default: connection issues can cause extra login attempts."
+  },
+  {
+    "Source": "Ещё способы  ▾",
+    "Translation": "More ways  ▾"
+  },
+  {
+    "Source": "Железо определить не вышло. Начни с двух аккаунтов и средних настроек, дальше посмотришь по ощущениям.",
+    "Translation": "Could not detect your hardware. Start with two accounts and medium settings, then adjust based on performance."
+  },
+  {
+    "Source": "Журнал",
+    "Translation": "Log"
+  },
+  {
+    "Source": "ЗАМЕТКА — ВИДНА НА КАРТОЧКЕ",
+    "Translation": "NOTE — SHOWN ON THE CARD"
+  },
+  {
+    "Source": "Забрать вход",
+    "Translation": "Import login"
+  },
+  {
+    "Source": "Загрузить из файла",
+    "Translation": "Load from file"
+  },
+  {
+    "Source": "Задать игру...",
+    "Translation": "Set game..."
+  },
+  {
+    "Source": "Закрывается",
+    "Translation": "Closing"
+  },
+  {
+    "Source": "Закрыто окон: {0}",
+    "Translation": "Windows closed: {0}"
+  },
+  {
+    "Source": "Закрыть все окна Roblox",
+    "Translation": "Close all Roblox windows"
+  },
+  {
+    "Source": "Закрыть сейчас все окна Roblox (открыто: {0}) и включить мультизапуск?",
+    "Translation": "Close all Roblox windows now ({0} open) and enable multi-instance?"
+  },
+  {
+    "Source": "Запуск '{0}' -> {1}",
+    "Translation": "Launching '{0}' -> {1}"
+  },
+  {
+    "Source": "Запуск одним кликом, без чёрного окна консоли",
+    "Translation": "Launch with one click, without a console window"
+  },
+  {
+    "Source": "Запуск отменён: идёт обновление Roblox.",
+    "Translation": "Launch canceled: Roblox is updating."
+  },
+  {
+    "Source": "Запуск по расписанию пропущен: Roblox обновлялся.",
+    "Translation": "Scheduled launch skipped: Roblox was updating."
+  },
+  {
+    "Source": "Запускать некого: список пуст.",
+    "Translation": "No accounts to launch: the list is empty."
+  },
+  {
+    "Source": "Запускаю «{0}»...",
+    "Translation": "Launching “{0}”..."
+  },
+  {
+    "Source": "Запустились не все: {0} — причины в журнале.",
+    "Translation": "Some launches failed: {0} — see the log for details."
+  },
+  {
+    "Source": "Запустить выбранные аккаунты с сохранёнными параметрами",
+    "Translation": "Launch selected accounts with saved settings"
+  },
+  {
+    "Source": "Запустить эти аккаунты ({0}) прямо сейчас?",
+    "Translation": "Launch these accounts ({0}) now?"
+  },
+  {
+    "Source": "Запустить?",
+    "Translation": "Launch?"
+  },
+  {
+    "Source": "Знакомство",
+    "Translation": "Welcome"
+  },
+  {
+    "Source": "Значок в часах не создался ({0}) — крестик будет просто закрывать программу.",
+    "Translation": "Could not create the tray icon ({0}) — the close button will exit the app."
+  },
+  {
+    "Source": "ИЛИ ВСТАВЬ ССЫЛКУ ВРУЧНУЮ",
+    "Translation": "OR PASTE A LINK MANUALLY"
+  },
+  {
+    "Source": "Игра «{0}» назначена.\n\n{1}",
+    "Translation": "Game “{0}” assigned.\n\n{1}"
+  },
+  {
+    "Source": "Игра не задана — Roblox просто откроется",
+    "Translation": "No game set — opens Roblox"
+  },
+  {
+    "Source": "Игра, набор, метка, удаление — для отмеченных аккаунтов",
+    "Translation": "Game, group, label, and removal — for selected accounts"
+  },
+  {
+    "Source": "Игры",
+    "Translation": "Games"
+  },
+  {
+    "Source": "Из браузера добавлен «{0}».",
+    "Translation": "Added “{0}” from the browser."
+  },
+  {
+    "Source": "Из брошенного файла: добавлено {0}, обновлено {1}.",
+    "Translation": "Dropped file: added {0}, updated {1}."
+  },
+  {
+    "Source": "Из приложения Roblox  —  проще всего",
+    "Translation": "From the Roblox app  —  easiest"
+  },
+  {
+    "Source": "Из файла применено: настроек {0}, игр {1}.\n\nАккаунты по нему не создаются — в выгрузке настроек кук нет.",
+    "Translation": "Applied from file: {0} settings, {1} games.\n\nThis does not create accounts — settings exports contain no cookies."
+  },
+  {
+    "Source": "Изм.",
+    "Translation": "Edit"
+  },
+  {
+    "Source": "Изменён аккаунт '{0}'.",
+    "Translation": "Account '{0}' edited."
+  },
+  {
+    "Source": "Иметь несколько аккаунтов Roblox разрешает сам — переключатель до пяти аккаунтов есть прямо в клиенте. AltHub не меняет Roblox и не лезет в его память: он запускает официальный клиент и раскладывает окна.\n\n",
+    "Translation": "Roblox itself allows multiple accounts — the client includes a switcher for up to five accounts. AltHub does not modify Roblox or access its memory: it launches the official client and arranges windows.\n\n"
+  },
+  {
+    "Source": "КУДА ДЕВАЕТСЯ ОКНО",
+    "Translation": "WHERE THE WINDOW GOES"
+  },
+  {
+    "Source": "Каждый новый клиент сразу уходит в панель задач и не выпрыгивает поверх браузера, игры или Discord. Показать нужное окно можно из карточки.",
+    "Translation": "Each new client is minimized to the taskbar immediately, without appearing over your browser, game, or Discord. Show the desired window from its card."
+  },
+  {
+    "Source": "Какой набор поднимать",
+    "Translation": "Group to launch"
+  },
+  {
+    "Source": "Каскадом",
+    "Translation": "Cascade"
+  },
+  {
+    "Source": "Клавиша приёма",
+    "Translation": "Import hotkey"
+  },
+  {
+    "Source": "Клавишу можно выбрать другую в настройках, раздел «Из браузера». А можно вообще не пользоваться клавишей: на панели браузера есть значок AltHub, он делает то же самое.",
+    "Translation": "You can change the hotkey in Settings, under “From browser”. Or skip the hotkey entirely: the AltHub icon on the browser toolbar does the same thing."
+  },
+  {
+    "Source": "Клиент Roblox: версия {0}",
+    "Translation": "Roblox client: version {0}"
+  },
+  {
+    "Source": "Колонками",
+    "Translation": "Columns"
+  },
+  {
+    "Source": "Компактный рабочий список: быстрые действия, минимум шума, без иконок H₂O.",
+    "Translation": "A compact account list: quick actions, less clutter, no H₂O icons."
+  },
+  {
+    "Source": "Красная кнопка на карточке откроет окно браузера, где можно войти руками.",
+    "Translation": "The red button on the card opens a browser window where you can sign in manually."
+  },
+  {
+    "Source": "Кука недействительна или протухла — добавь аккаунт заново через мастер.",
+    "Translation": "Cookie invalid or expired — add the account again using the wizard."
+  },
+  {
+    "Source": "Кука получена. Нажми «Проверить».",
+    "Translation": "Cookie received. Click “Check”."
+  },
+  {
+    "Source": "Куки сюда НЕ попадают. Только названия аккаунтов и игры.",
+    "Translation": "Cookies are NOT included. Only account names and games."
+  },
+  {
+    "Source": "Либо ты закрыл его сам, либо истекло время ожидания. Можно попробовать ещё раз.",
+    "Translation": "The window was closed or the wait timed out. You can try again."
+  },
+  {
+    "Source": "Мастер настройки доступен в «Справке» — «Пройти настройку заново».",
+    "Translation": "The setup wizard is available under “Help” — “Run setup again”."
+  },
+  {
+    "Source": "Машина скромная: {0} ГБ памяти. Больше {1} клиентов сразу лучше не открывать, и всем твинкам ставить графику 1-2.",
+    "Translation": "Limited hardware: {0} GB RAM. Avoid more than {1} clients at once, and set all alts to graphics 1-2."
+  },
+  {
+    "Source": "Места окон запомнены: {0} шт. Дальше окна будут вставать туда же.",
+    "Translation": "Saved positions for {0} windows. Future windows will use these positions."
+  },
+  {
+    "Source": "Место: ",
+    "Translation": "Position: "
+  },
+  {
+    "Source": "Минимум графики, 30 кадров, тишина. Для окон, в которые не смотришь.",
+    "Translation": "Minimum graphics, 30 FPS, muted. For windows you are not watching."
+  },
+  {
+    "Source": "Мои игры",
+    "Translation": "My games"
+  },
+  {
+    "Source": "Мультизапуск включён: оба замка взяты (singletonMutex + singletonEvent).",
+    "Translation": "Multi-instance enabled: both locks acquired (singletonMutex + singletonEvent)."
+  },
+  {
+    "Source": "Мультизапуск, похоже, сломан обновлением Roblox — подробности в журнале.",
+    "Translation": "A Roblox update may have broken multi-instance — see the log for details."
+  },
+  {
+    "Source": "НАБОР И МЕТКА",
+    "Translation": "GROUP AND LABEL"
+  },
+  {
+    "Source": "НАСТРОЙКИ КЛИЕНТА ДЛЯ ЭТОГО АККАУНТА",
+    "Translation": "CLIENT SETTINGS FOR THIS ACCOUNT"
+  },
+  {
+    "Source": "На другом компьютере открой «Добавить» -> «Ещё способы» -> «Вставить пачкой» и вставь его.",
+    "Translation": "On the other computer, open “Add” -> “More ways” -> “Bulk paste” and paste it."
+  },
+  {
+    "Source": "Набор",
+    "Translation": "Group"
+  },
+  {
+    "Source": "Набор не менялся — поле осталось пустым.",
+    "Translation": "Group unchanged — the field was left blank."
+  },
+  {
+    "Source": "Надо закрыть Roblox (открыто окон: {0}). Закрыть сейчас?",
+    "Translation": "Roblox must be closed ({0} windows open). Close now?"
+  },
+  {
+    "Source": "Нажми «＋ Своя игра» и вставь ссылку — или возьми готовую из популярных. Игры также попадают сюда сами, когда назначаешь их аккаунтам.",
+    "Translation": "Click “＋ Custom game” and paste a link — or choose a popular game. Games also appear here when assigned to accounts."
+  },
+  {
+    "Source": "Название игры подтянулось: «{0}».",
+    "Translation": "Game title found: “{0}”."
+  },
+  {
+    "Source": "Название темы",
+    "Translation": "Theme name"
+  },
+  {
+    "Source": "Найдена версия Roblox из Microsoft Store — с ней мультизапуск не работает. Нужна обычная версия с roblox.com.",
+    "Translation": "The Microsoft Store version of Roblox was found — it does not support multi-instance. Install the standard version from roblox.com."
+  },
+  {
+    "Source": "Настройки",
+    "Translation": "Settings"
+  },
+  {
+    "Source": "Настройки аккаунта...",
+    "Translation": "Account settings..."
+  },
+  {
+    "Source": "Настройки графики и звука Roblox возвращены к исходным.",
+    "Translation": "Roblox graphics and sound settings restored to their original values."
+  },
+  {
+    "Source": "Начать работу",
+    "Translation": "Get started"
+  },
+  {
+    "Source": "Не вышло забрать вход из браузера.",
+    "Translation": "Could not import the login from the browser."
+  },
+  {
+    "Source": "Не вышло: {0}",
+    "Translation": "Failed: {0}"
+  },
+  {
+    "Source": "Не запустился ",
+    "Translation": "Failed to launch "
+  },
+  {
+    "Source": "Не найдено расширение-мост (ожидалось в {0}\\manifest.json).",
+    "Translation": "Bridge extension not found (expected at {0}\\manifest.json)."
+  },
+  {
+    "Source": "Не получилось открыть браузер.",
+    "Translation": "Could not open the browser."
+  },
+  {
+    "Source": "Не понял, что это за игра. Вставь ссылку на игру, ссылку «Поделиться» или ID числом.",
+    "Translation": "Could not identify the game. Paste a game link, a “Share” link, or a numeric ID."
+  },
+  {
+    "Source": "Не удалось взять замки мультизапуска. Попробуй перезапустить менеджер.",
+    "Translation": "Could not acquire multi-instance locks. Try restarting AltHub."
+  },
+  {
+    "Source": "Не удалось записать громкость.",
+    "Translation": "Could not save volume."
+  },
+  {
+    "Source": "Не удалось определить железо — посоветовать нечего, ставь на глаз.",
+    "Translation": "Could not detect your hardware — no recommendation available; choose settings manually."
+  },
+  {
+    "Source": "Не удалось открыть окно входа:",
+    "Translation": "Could not open the login window:"
+  },
+  {
+    "Source": "Не удалось понять, что это за игра. Нужна ссылка на игру, приглашение на приватный сервер или номер игры.",
+    "Translation": "Could not identify the game. A game link, private server invitation, or game ID is required."
+  },
+  {
+    "Source": "Не удалось сохранить список аккаунтов:\n\n{0}",
+    "Translation": "Could not save the account list:\n\n{0}"
+  },
+  {
+    "Source": "Неизвестное поле настроек Roblox: {0}",
+    "Translation": "Unknown Roblox settings field: {0}"
+  },
+  {
+    "Source": "Несколько окон Roblox сразу",
+    "Translation": "Multiple Roblox windows at once"
+  },
+  {
+    "Source": "Нечего запоминать: сейчас нет запущенных окон.",
+    "Translation": "No positions to save: no windows are running."
+  },
+  {
+    "Source": "Ни одну из клавиш приёма Windows не отдала — их держат другие программы.",
+    "Translation": "Windows could not assign any import hotkey — other programs are using them."
+  },
+  {
+    "Source": "Ничего страшного: вход через окно браузера работает и на Edge или Chrome, которые уже стоят.",
+    "Translation": "No problem: browser login also works with your existing Edge or Chrome."
+  },
+  {
+    "Source": "Новый сценарий запуска",
+    "Translation": "New launch scenario"
+  },
+  {
+    "Source": "Нужен мастер-пароль.",
+    "Translation": "Master password required."
+  },
+  {
+    "Source": "Обновить",
+    "Translation": "Refresh"
+  },
+  {
+    "Source": "Обновлено.",
+    "Translation": "Updated."
+  },
+  {
+    "Source": "Обновлён вход аккаунта '{0}'.",
+    "Translation": "Login for account '{0}' updated."
+  },
+  {
+    "Source": "Обнулить всю статистику? Сами аккаунты и игры останутся на месте.",
+    "Translation": "Reset all statistics? Accounts and games will remain unchanged."
+  },
+  {
+    "Source": "Один раз скачивается официальный Chromium от Google (~150 МБ). Это тот же браузер, которым пользуется RAM. Твой обычный Chrome/Edge не затрагивается.",
+    "Translation": "Downloads Google's official Chromium once (~150 MB). This is the same browser RAM uses. Your regular Chrome/Edge is unaffected."
+  },
+  {
+    "Source": "Одним играешь, остальные стоят на приватном сервере.",
+    "Translation": "Play on one account while the others stay on a private server."
+  },
+  {
+    "Source": "Океан",
+    "Translation": "Ocean"
+  },
+  {
+    "Source": "Окна разложены {0}: {1} шт.",
+    "Translation": "Windows arranged in {0}: {1}."
+  },
+  {
+    "Source": "Окно",
+    "Translation": "Window"
+  },
+  {
+    "Source": "Окно «{0}» закрыть не вышло. Попробуй ещё раз или закрой его вручную.",
+    "Translation": "Could not close the window for “{0}”. Try again or close it manually."
+  },
+  {
+    "Source": "Окно браузера  —  войти руками, как на сайте",
+    "Translation": "Browser window  —  sign in manually, like on the website"
+  },
+  {
+    "Source": "Окно браузера: закрыто без получения входа.",
+    "Translation": "Browser window: closed without obtaining a login."
+  },
+  {
+    "Source": "Окно входа не загрузилось за 20 секунд — перезапускаю его один раз.",
+    "Translation": "Login window did not load within 20 seconds — restarting it once."
+  },
+  {
+    "Source": "Окно открыто",
+    "Translation": "Window opened"
+  },
+  {
+    "Source": "Окно этого аккаунта сейчас не запущено — закрывать нечего.",
+    "Translation": "This account has no running window — nothing to close."
+  },
+  {
+    "Source": "Он рядом с часами. Если не видно — нажми стрелку ^ слева от часов.",
+    "Translation": "It is next to the clock. If hidden, click the ^ arrow to the left of the clock."
+  },
+  {
+    "Source": "Основной",
+    "Translation": "Main"
+  },
+  {
+    "Source": "Основной аккаунт сценария не найден. Пересохрани сценарий.",
+    "Translation": "The scenario's main account was not found. Save the scenario again."
+  },
+  {
+    "Source": "Основной — красиво",
+    "Translation": "Main — high quality"
+  },
+  {
+    "Source": "Осталось починить: {0}",
+    "Translation": "Still to repair: {0}"
+  },
+  {
+    "Source": "Открой roblox.com под нужным аккаунтом и нажми {0} — или значок AltHub на панели браузера.",
+    "Translation": "Open roblox.com under the desired account and press {0} — or click the AltHub icon on the browser toolbar."
+  },
+  {
+    "Source": "Открыть AltHub",
+    "Translation": "Open AltHub"
+  },
+  {
+    "Source": "Открыть Roblox в браузере",
+    "Translation": "Open Roblox in browser"
+  },
+  {
+    "Source": "Открыть папку",
+    "Translation": "Open folder"
+  },
+  {
+    "Source": "Отменено запусков: {0}. Эти аккаунты не будут автоматически перезапускаться до ручного запуска или перезапуска AltHub.",
+    "Translation": "Launches canceled: {0}. These accounts will not auto-restart until launched manually or AltHub is restarted."
+  },
+  {
+    "Source": "Отменять нечего — с открытия программы список не менялся.",
+    "Translation": "Nothing to undo — the list has not changed since startup."
+  },
+  {
+    "Source": "Отметь аккаунты, нажми «Запустить», дождись окон — потом «Окна».",
+    "Translation": "Select accounts, click “Launch”, wait for the windows, then click “Windows”."
+  },
+  {
+    "Source": "Отметь галочками окна, которые нужно закрыть. AltHub не закрывает все аккаунты молча.",
+    "Translation": "Select the windows you want to close. AltHub does not silently close every account."
+  },
+  {
+    "Source": "Отметь нужные аккаунты, задай им игру и нажми «Сохранить сценарий». Дальше весь набор запускается одной кнопкой.",
+    "Translation": "Select the desired accounts, assign their game, and click “Save scenario”. Then launch the whole group with one button."
+  },
+  {
+    "Source": "Очень длинное название игры для проверки",
+    "Translation": "Very long game title for testing"
+  },
+  {
+    "Source": "Очередь на паузе. Открытые окна Roblox продолжают работать.",
+    "Translation": "Queue paused. Running Roblox windows keep working."
+  },
+  {
+    "Source": "Очистить",
+    "Translation": "Clear"
+  },
+  {
+    "Source": "ПАПКА РАСШИРЕНИЯ",
+    "Translation": "EXTENSION FOLDER"
+  },
+  {
+    "Source": "ПОСЛЕДНИЙ ЗАПУСК",
+    "Translation": "LAST LAUNCH"
+  },
+  {
+    "Source": "Пароли не совпадают. Попробуй ещё раз.",
+    "Translation": "Passwords do not match. Try again."
+  },
+  {
+    "Source": "Пауза очереди. Уже открытые окна продолжают работать.",
+    "Translation": "Pause queue. Running windows keep working."
+  },
+  {
+    "Source": "Переспрашивает, если закрываешь AltHub с запущенными клиентами. Сами клиенты при этом не закрываются.",
+    "Translation": "Asks for confirmation when closing AltHub with running clients. The clients themselves are not closed."
+  },
+  {
+    "Source": "По запросу «{0}» ничего не нашлось",
+    "Translation": "No results for “{0}”"
+  },
+  {
+    "Source": "Повторить ошибки",
+    "Translation": "Retry failed"
+  },
+  {
+    "Source": "Повторяю неудавшиеся запуски: {0}.",
+    "Translation": "Retrying failed launches: {0}."
+  },
+  {
+    "Source": "Подробности записаны в data\\logs\\crash-*.log — покажи этот файл, если повторится.",
+    "Translation": "Details saved to data\\logs\\crash-*.log — share this file if it happens again."
+  },
+  {
+    "Source": "Подхвачен уже работающий клиент: «{0}».",
+    "Translation": "Detected an already running client: “{0}”."
+  },
+  {
+    "Source": "Пока ни одного аккаунта",
+    "Translation": "No accounts yet"
+  },
+  {
+    "Source": "Показать игры, в которые сейчас играют больше всего, и добавить их в список",
+    "Translation": "Show the most-played games on Roblox and add them to the list"
+  },
+  {
+    "Source": "Показать эту тему",
+    "Translation": "Preview this theme"
+  },
+  {
+    "Source": "Поле пустое. Вставь туда куку или список кук.",
+    "Translation": "The field is empty. Paste a cookie or a list of cookies."
+  },
+  {
+    "Source": "Поменять это можно в «Настройки» -> «Прочее».",
+    "Translation": "You can change this under “Settings” -> “Other”."
+  },
+  {
+    "Source": "Понятно, запускать",
+    "Translation": "Understood, launch"
+  },
+  {
+    "Source": "Популярные из Roblox",
+    "Translation": "Popular on Roblox"
+  },
+  {
+    "Source": "После распаковки chrome.exe не оказался в data\\chrome-for-testing\\.",
+    "Translation": "After extraction, chrome.exe was missing from data\\chrome-for-testing\\."
+  },
+  {
+    "Source": "Похоже, вставилось не всё. Значение .ROBLOSECURITY длинное.",
+    "Translation": "The pasted value may be incomplete. .ROBLOSECURITY values are long."
+  },
+  {
+    "Source": "Починено входов: {0} из {1}.{2}",
+    "Translation": "Sessions repaired: {0} of {1}.{2}"
+  },
+  {
+    "Source": "Починить вход  —  сейчас мёртв",
+    "Translation": "Repair login  —  session expired"
+  },
+  {
+    "Source": "Починить не вышло: в приложении Roblox сейчас другой аккаунт.\n\n",
+    "Translation": "Could not repair: the Roblox app is signed into a different account.\n\n"
+  },
+  {
+    "Source": "Починка входов: восстановлено {0} из {1}.",
+    "Translation": "Session repair: restored {0} of {1}."
+  },
+  {
+    "Source": "Поэтому её можно поменять — а можно вообще не пользоваться ею и жать кнопку ",
+    "Translation": "You can change the hotkey — or skip it entirely and click the button "
+  },
+  {
+    "Source": "Предел кадров (FPS)",
+    "Translation": "Frame rate limit (FPS)"
+  },
+  {
+    "Source": "Пригодится для переноса на другой компьютер.\n\n",
+    "Translation": "Useful for transferring to another computer.\n\n"
+  },
+  {
+    "Source": "Приложение Roblox найдено — аккаунты можно добавлять одной кнопкой.",
+    "Translation": "Roblox app found — accounts can be added with one button."
+  },
+  {
+    "Source": "Присмотр включён за набором «{0}»: вылетевшие поднимаются сами.",
+    "Translation": "Watching group “{0}”: crashed clients will restart automatically."
+  },
+  {
+    "Source": "Приём входа из браузера включить не вышло: ",
+    "Translation": "Could not enable browser login import: "
+  },
+  {
+    "Source": "Приём из браузера включён, жду на 127.0.0.1:{0}.",
+    "Translation": "Browser import enabled; listening on 127.0.0.1:{0}."
+  },
+  {
+    "Source": "Приём из браузера выключен.",
+    "Translation": "Browser import disabled."
+  },
+  {
+    "Source": "Приём из браузера: {0}",
+    "Translation": "Browser import: {0}"
+  },
+  {
+    "Source": "Приём из браузера: клавиша {0}.",
+    "Translation": "Browser import: hotkey {0}."
+  },
+  {
+    "Source": "Приём из браузера: сбой при разборе запроса: {0}",
+    "Translation": "Browser import: request parsing failed: {0}"
+  },
+  {
+    "Source": "Проверить",
+    "Translation": "Check"
+  },
+  {
+    "Source": "Проверить этот вход",
+    "Translation": "Check this session"
+  },
+  {
+    "Source": "Проверка входов завершена.",
+    "Translation": "Session check complete."
+  },
+  {
+    "Source": "Проверь интернет и нажми «Обновить».",
+    "Translation": "Check your internet connection and click “Refresh”."
+  },
+  {
+    "Source": "Проверяю входы и баланс: {0} из {1}…",
+    "Translation": "Checking sessions and balances: {0} of {1}…"
+  },
+  {
+    "Source": "Проверяю входы: {0} из {1}…",
+    "Translation": "Checking sessions: {0} of {1}…"
+  },
+  {
+    "Source": "Продлить его нечем — Roblox не отдаёт новую куку ни на один запрос, это проверено. Нужно войти заново.",
+    "Translation": "The session cannot be extended — Roblox does not return a new cookie for any request tested. You must sign in again."
+  },
+  {
+    "Source": "Пройти настройку заново — тот самый мастер первого запуска: железо, тема, аккаунты, наборы.\n\n",
+    "Translation": "Run setup again — the first-run wizard for hardware, themes, accounts, and groups.\n\n"
+  },
+  {
+    "Source": "Пропустить",
+    "Translation": "Skip"
+  },
+  {
+    "Source": "Профиль «{0}» сохранён.",
+    "Translation": "Profile “{0}” saved."
+  },
+  {
+    "Source": "Профиль окна входа перенесён из externalbrowserprofile в {0} — прогрев сохранён.",
+    "Translation": "Login window profile moved from externalbrowserprofile to {0} — existing browser state preserved."
+  },
+  {
+    "Source": "Профиль: не удалось поправить Preferences: {0}",
+    "Translation": "Profile: could not update Preferences: {0}"
+  },
+  {
+    "Source": "Прочее",
+    "Translation": "Other"
+  },
+  {
+    "Source": "Пуск",
+    "Translation": "Launch"
+  },
+  {
+    "Source": "Работают ещё клиенты Roblox: {0} — под каким аккаунтом, определить не вышло.",
+    "Translation": "Other Roblox clients are running: {0} — their accounts could not be identified."
+  },
+  {
+    "Source": "Раскладывать окна сеткой сразу после запуска",
+    "Translation": "Arrange windows in a grid after launch"
+  },
+  {
+    "Source": "Расписание {0} сработало, но запускать нечего.",
+    "Translation": "Schedule {0} triggered, but there were no accounts to launch."
+  },
+  {
+    "Source": "Расширение для входа из браузера",
+    "Translation": "Browser login extension"
+  },
+  {
+    "Source": "Резервная копия не найдена.",
+    "Translation": "Backup not found."
+  },
+  {
+    "Source": "Русский",
+    "Translation": "Russian"
+  },
+  {
+    "Source": "Сбалансированно",
+    "Translation": "Balanced"
+  },
+  {
+    "Source": "Сбрось поиск (Esc) или выбери набор «Все» вверху.",
+    "Translation": "Clear the search (Esc) or select the “All” group above."
+  },
+  {
+    "Source": "Светлая",
+    "Translation": "Light"
+  },
+  {
+    "Source": "Своя игра",
+    "Translation": "Custom game"
+  },
+  {
+    "Source": "Сделать ярлык на рабочем столе",
+    "Translation": "Create desktop shortcut"
+  },
+  {
+    "Source": "Сейчас не удалось проверить вход в «{0}».",
+    "Translation": "Could not check the session for “{0}” right now."
+  },
+  {
+    "Source": "Сейчас: AES-256 с мастер-паролем. Файл переносится на другой компьютер, пароль спрашивается при запуске.",
+    "Translation": "Current: AES-256 with a master password. The file can be moved to another computer; the password is required at startup."
+  },
+  {
+    "Source": "Сейчас: жду на клавише {0}, но расширение ещё ни разу не отзывалось — похоже, оно не установлено в браузере.",
+    "Translation": "Current: waiting for hotkey {0}, but the extension has never responded — it may not be installed in the browser."
+  },
+  {
+    "Source": "Сейчас: приём включён, но порт занять не вышло — все порты диапазона заняты.",
+    "Translation": "Current: browser import enabled, but no port could be acquired — all ports in the range are busy."
+  },
+  {
+    "Source": "Сеткой",
+    "Translation": "Grid"
+  },
+  {
+    "Source": "Скачать Chrome for Testing?",
+    "Translation": "Download Chrome for Testing?"
+  },
+  {
+    "Source": "Скопировать",
+    "Translation": "Copy"
+  },
+  {
+    "Source": "Скопировать путь",
+    "Translation": "Copy path"
+  },
+  {
+    "Source": "Слишком короткий пароль — хотя бы 4 символа.",
+    "Translation": "Password too short — at least 4 characters required."
+  },
+  {
+    "Source": "Сначала вставь куку.",
+    "Translation": "Paste a cookie first."
+  },
+  {
+    "Source": "Сначала закрой все окна Roblox — иначе клиент запишет свои настройки обратно.",
+    "Translation": "Close all Roblox windows first — otherwise the client will write its settings back."
+  },
+  {
+    "Source": "Сначала отметь аккаунты в разделе «Аккаунты».",
+    "Translation": "Select accounts on the “Accounts” page first."
+  },
+  {
+    "Source": "Собрать в набор",
+    "Translation": "Assign to group"
+  },
+  {
+    "Source": "Советуем 8-10. Меньше пяти Roblox не успевает подхватить предыдущее окно, и аккаунт может не войти.",
+    "Translation": "We recommend 8-10. Below five, Roblox may not detect the previous window in time, and the account may fail to sign in."
+  },
+  {
+    "Source": "Создать профиль",
+    "Translation": "Create profile"
+  },
+  {
+    "Source": "Сохранить",
+    "Translation": "Save"
+  },
+  {
+    "Source": "Сохранённых входов пока нет.",
+    "Translation": "No saved logins yet."
+  },
+  {
+    "Source": "Список пуст",
+    "Translation": "List empty"
+  },
+  {
+    "Source": "Способ второй, через приложение: открой Roblox под «{0}» и нажми ",
+    "Translation": "Second method, through the app: open Roblox as “{0}” and click "
+  },
+  {
+    "Source": "Справка",
+    "Translation": "Help"
+  },
+  {
+    "Source": "Ссылка на игру, ссылка «Поделиться» (share?code=...), приглашение на приватный сервер или просто ID. Можно выбрать из сохранённых.",
+    "Translation": "Game link, “Share” link (share?code=...), private server invitation, or numeric ID. You can choose a saved game."
+  },
+  {
+    "Source": "Статистика",
+    "Translation": "Statistics"
+  },
+  {
+    "Source": "Стоп",
+    "Translation": "Stop"
+  },
+  {
+    "Source": "Сценарии",
+    "Translation": "Scenarios"
+  },
+  {
+    "Source": "Сценарий запомнит выбранные аккаунты, игру и настройки каждого, а также раскладку окон. Например «Основа + твинки». Запуск — одной кнопкой.",
+    "Translation": "The scenario saves selected accounts, their games and individual settings, and the window layout. For example, “Main + alts”. Launch with one button."
+  },
+  {
+    "Source": "ТВОЙ КОМПЬЮТЕР",
+    "Translation": "YOUR COMPUTER"
+  },
+  {
+    "Source": "Так ведёт себя обычный Chrome 137 и новее: он намеренно игнорирует загрузку расширений из командной строки.",
+    "Translation": "Standard Chrome 137 and later deliberately ignore extension loading from the command line."
+  },
+  {
+    "Source": "Твинк 1",
+    "Translation": "Alt 1"
+  },
+  {
+    "Source": "Твины",
+    "Translation": "Alts"
+  },
+  {
+    "Source": "Текст или JSON (*.txt;*.json)|*.txt;*.json|Все файлы (*.*)|*.*",
+    "Translation": "Text or JSON (*.txt;*.json)|*.txt;*.json|All files (*.*)|*.*"
+  },
+  {
+    "Source": "Тема «{0}» сохранена.",
+    "Translation": "Theme “{0}” saved."
+  },
+  {
+    "Source": "Тема сохранена в файл. Можешь отдать её другу — он откроет её кнопкой «Из файла...».",
+    "Translation": "Theme saved to a file. Share it with a friend — they can load it using “From file...”."
+  },
+  {
+    "Source": "Тогда крестик будет просто закрывать программу — так её точно не потеряешь.\n\n",
+    "Translation": "Then the close button will exit the app — so you will not lose track of it.\n\n"
+  },
+  {
+    "Source": "Тёмная",
+    "Translation": "Dark"
+  },
+  {
+    "Source": "У этого аккаунта нет сохранённого входа.",
+    "Translation": "This account has no saved login."
+  },
+  {
+    "Source": "Убрать из менеджера",
+    "Translation": "Remove from AltHub"
+  },
+  {
+    "Source": "Убрать отмеченные аккаунты (их {0}) из наборов?",
+    "Translation": "Remove selected accounts ({0}) from their groups?"
+  },
+  {
+    "Source": "Удалить выбранную свою тему",
+    "Translation": "Delete the selected custom theme"
+  },
+  {
+    "Source": "Узнать",
+    "Translation": "Find out"
+  },
+  {
+    "Source": "Файл настроек Roblox изменился после записи AltHub. Автовосстановление отменено, чтобы не затереть более новые ручные изменения.",
+    "Translation": "The Roblox settings file changed after AltHub wrote it. Automatic restoration canceled to avoid overwriting newer manual changes."
+  },
+  {
+    "Source": "Файл с куками приложения Roblox повреждён или его формат изменился.",
+    "Translation": "The Roblox app's cookie file is damaged or its format has changed."
+  },
+  {
+    "Source": "Файла с входом нет — приложение и так никого не помнит.",
+    "Translation": "Login file missing — the app is not remembering any account."
+  },
+  {
+    "Source": "Фоновый фарм",
+    "Translation": "Background farming"
+  },
+  {
+    "Source": "Хранилище входов приложения Roblox не найдено — куки придётся вставлять вручную.",
+    "Translation": "Roblox app login storage not found — cookies must be pasted manually."
+  },
+  {
+    "Source": "Хранилище перешифровано под мастер-пароль.",
+    "Translation": "Storage re-encrypted with the master password."
+  },
+  {
+    "Source": "Центр запуска",
+    "Translation": "Launch center"
+  },
+  {
+    "Source": "Через окно браузера добавлен аккаунт: {0}",
+    "Translation": "Account added through the browser window: {0}"
+  },
+  {
+    "Source": "Что уже известно: переход между играми (телепорт) часто срабатывает только в последнем запущенном окне.\n\n",
+    "Translation": "Known issue: switching games (teleporting) often works only in the most recently launched window.\n\n"
+  },
+  {
+    "Source": "Чтобы разобрать ссылку «Поделиться», нужен хотя бы один добавленный аккаунт: Roblox отвечает на такие запросы только авторизованным.",
+    "Translation": "To resolve a “Share” link, add at least one account first: Roblox requires authentication for these requests."
+  },
+  {
+    "Source": "Чёрная",
+    "Translation": "Black"
+  },
+  {
+    "Source": "Эрнест Костевич",
+    "Translation": "Ernest Kostevich"
+  },
+  {
+    "Source": "Этот аккаунт уже вышел из очереди.",
+    "Translation": "This account has already left the queue."
+  },
+  {
+    "Source": "Ярлык создан ✓",
+    "Translation": "Shortcut created ✓"
+  },
+  {
+    "Source": "аккаунт",
+    "Translation": "account"
+  },
+  {
+    "Source": "аккаунтов: {0}",
+    "Translation": "accounts: {0}"
+  },
+  {
+    "Source": "без метки",
+    "Translation": "no label"
+  },
+  {
+    "Source": "быстрая настройка",
+    "Translation": "quick setup"
+  },
+  {
+    "Source": "в окне",
+    "Translation": "windowed"
+  },
+  {
+    "Source": "в файле нет цветов темы",
+    "Translation": "no theme colors in the file"
+  },
+  {
+    "Source": "включение приёма из браузера",
+    "Translation": "enabling browser import"
+  },
+  {
+    "Source": "все окна Roblox закрыты",
+    "Translation": "all Roblox windows closed"
+  },
+  {
+    "Source": "вход из браузера: жду на {0}, расширение не отзывалось",
+    "Translation": "browser login: waiting on {0}; no response from extension"
+  },
+  {
+    "Source": "вход мёртв",
+    "Translation": "session expired"
+  },
+  {
+    "Source": "вход сохранён ",
+    "Translation": "login saved "
+  },
+  {
+    "Source": "выбор меню после обновления",
+    "Translation": "menu selection after update"
+  },
+  {
+    "Source": "вылезет, проходишь сам — за тебя её никто не разгадывает.",
+    "Translation": "appears, complete it yourself — it is not solved for you."
+  },
+  {
+    "Source": "главная Roblox (без игры)",
+    "Translation": "Roblox home (no game)"
+  },
+  {
+    "Source": "графика авто",
+    "Translation": "graphics auto"
+  },
+  {
+    "Source": "добавлено: {0}",
+    "Translation": "added: {0}"
+  },
+  {
+    "Source": "загрузка",
+    "Translation": "loading"
+  },
+  {
+    "Source": "запоминание размера окна",
+    "Translation": "saving window size"
+  },
+  {
+    "Source": "запусков: {0}    ·    вылетов: {1}    ·    наиграно: ",
+    "Translation": "launches: {0}    ·    crashes: {1}    ·    play time: "
+  },
+  {
+    "Source": "звук: {0}%",
+    "Translation": "volume: {0}%"
+  },
+  {
+    "Source": "значок задан, но система его не приняла",
+    "Translation": "icon specified, but rejected by the system"
+  },
+  {
+    "Source": "и в итоге останется одно окно.\n\n",
+    "Translation": "leaving only one window.\n\n"
+  },
+  {
+    "Source": "игра не менялась",
+    "Translation": "game unchanged"
+  },
+  {
+    "Source": "из папки extension. Иначе куку из твоего браузера не достать никак: она ",
+    "Translation": "from the extension folder. Without it, the browser cookie cannot be read: it is "
+  },
+  {
+    "Source": "каскад",
+    "Translation": "cascade"
+  },
+  {
+    "Source": "колонками",
+    "Translation": "in columns"
+  },
+  {
+    "Source": "красная",
+    "Translation": "red"
+  },
+  {
+    "Source": "мастер1",
+    "Translation": "wizard1"
+  },
+  {
+    "Source": "мастер1/осн",
+    "Translation": "wizard1/main"
+  },
+  {
+    "Source": "минимальный размер окна",
+    "Translation": "minimum window size"
+  },
+  {
+    "Source": "набор",
+    "Translation": "group"
+  },
+  {
+    "Source": "назначение игры",
+    "Translation": "assigning game"
+  },
+  {
+    "Source": "настройки Roblox не меняются",
+    "Translation": "Roblox settings unchanged"
+  },
+  {
+    "Source": "не запущен",
+    "Translation": "not running"
+  },
+  {
+    "Source": "недействительна|протухла",
+    "Translation": "недействительна|протухла"
+  },
+  {
+    "Source": "ничего не разобрал",
+    "Translation": "nothing could be parsed"
+  },
+  {
+    "Source": "обновление состояния",
+    "Translation": "state update"
+  },
+  {
+    "Source": "она откроет окно браузера, где можно войти руками.",
+    "Translation": "it opens a browser window where you can sign in manually."
+  },
+  {
+    "Source": "основной крупно",
+    "Translation": "large main window"
+  },
+  {
+    "Source": "отмечено: {0} из {1}",
+    "Translation": "selected: {0} of {1}"
+  },
+  {
+    "Source": "пауза",
+    "Translation": "paused"
+  },
+  {
+    "Source": "переключение приёма из браузера",
+    "Translation": "toggling browser import"
+  },
+  {
+    "Source": "перестройка после изменения размера",
+    "Translation": "rebuilding after resize"
+  },
+  {
+    "Source": "подхват работающих клиентов",
+    "Translation": "detecting running clients"
+  },
+  {
+    "Source": "полный экран",
+    "Translation": "fullscreen"
+  },
+  {
+    "Source": "предыдущий",
+    "Translation": "previous"
+  },
+  {
+    "Source": "приём из браузера",
+    "Translation": "browser import"
+  },
+  {
+    "Source": "просто Roblox, без игры",
+    "Translation": "Roblox only, no game"
+  },
+  {
+    "Source": "раскладка бокового меню",
+    "Translation": "sidebar layout"
+  },
+  {
+    "Source": "раскладка верхней строки при показе окна",
+    "Translation": "top-row layout when showing window"
+  },
+  {
+    "Source": "раскладка окна при показе",
+    "Translation": "window layout when showing"
+  },
+  {
+    "Source": "расширение",
+    "Translation": "extension"
+  },
+  {
+    "Source": "сетка",
+    "Translation": "grid"
+  },
+  {
+    "Source": "скачано {0} МБ",
+    "Translation": "downloaded {0} MB"
+  },
+  {
+    "Source": "снятие горячих клавиш",
+    "Translation": "unregistering hotkeys"
+  },
+  {
+    "Source": "снятие игры",
+    "Translation": "clearing game"
+  },
+  {
+    "Source": "сообщение",
+    "Translation": "message"
+  },
+  {
+    "Source": "сообщение/дл",
+    "Translation": "message/long"
+  },
+  {
+    "Source": "строка слишком короткая для куки",
+    "Translation": "line too short for a cookie"
+  },
+  {
+    "Source": "убрать в часы",
+    "Translation": "minimize to tray"
+  },
+  {
+    "Source": "фоновая задача",
+    "Translation": "background task"
+  },
+  {
+    "Source": "это действие",
+    "Translation": "this action"
+  },
+  {
+    "Source": "— оставить как есть —",
+    "Translation": "— leave unchanged —"
+  },
+  {
+    "Source": "— убрать из набора —",
+    "Translation": "— remove from group —"
+  },
+  {
+    "Source": "＋ Своя тема",
+    "Translation": "＋ Custom theme"
+  }
+]

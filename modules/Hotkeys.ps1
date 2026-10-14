@@ -336,7 +336,7 @@ function New-RamDesktopShortcut {
     try {
         $target = Join-Path $script:Root 'AltHub.vbs'
         if (-not (Test-Path -LiteralPath $target)) {
-            $res.Error = "Рядом с программой нет AltHub.vbs — распакуй архив целиком."
+            $res.Error = (Get-RamText -Text 'Рядом с программой нет AltHub.vbs — распакуй архив целиком.')
             return $res
         }
 
@@ -346,7 +346,7 @@ function New-RamDesktopShortcut {
         $s.TargetPath       = 'wscript.exe'
         $s.Arguments        = '"' + $target + '"'
         $s.WorkingDirectory = $script:Root
-        $s.Description      = 'AltHub — менеджер аккаунтов Roblox'
+        $s.Description      = (Get-RamText -Text 'AltHub — менеджер аккаунтов Roblox')
 
         $ico = Join-Path (Get-RamDataDir) 'althub.ico'
         if (-not (Test-Path -LiteralPath $ico)) { [void](Get-RamAppIcon) }

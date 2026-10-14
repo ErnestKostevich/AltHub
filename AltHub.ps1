@@ -79,6 +79,16 @@ Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 [System.Windows.Forms.Application]::EnableVisualStyles()
 
+. (Join-Path $PSScriptRoot 'modules\Localization.ps1')
+$script:RamStartupUiLanguage='ru'
+try {
+    $startupSettingsPath=Join-Path $PSScriptRoot 'data\settings.json'
+    if(-not $NoAutoStart -and (Test-Path -LiteralPath $startupSettingsPath)){
+        $startupSettings=ConvertFrom-Json -InputObject ([IO.File]::ReadAllText($startupSettingsPath,[Text.Encoding]::UTF8))
+        if($startupSettings.UiLanguage -eq 'en'){$script:RamStartupUiLanguage='en'}
+    }
+} catch { }
+
 # ----------------------------------------------------------------------------
 # МЕСТО НА ДИСКЕ.
 #
@@ -96,10 +106,14 @@ try {
     if ($free -lt 150MB) {
         $mb = [math]::Round($free / 1MB)
         [void][System.Windows.Forms.MessageBox]::Show(
-            ("На диске $tempDrive почти не осталось места (свободно $mb МБ).`n`n" +
-             "AltHub не сможет запуститься: Windows негде создать временные файлы.`n`n" +
-             "Освободи хотя бы 500 МБ на этом диске и открой программу заново."),
-            'AltHub — мало места на диске',
+            ((Get-RamText -Text 'На диске {0} почти не осталось места (свободно {1} МБ).
+
+' -Arguments @([string]($tempDrive),[string]($mb))) +
+             (Get-RamText -Text 'AltHub не сможет запуститься: Windows негде создать временные файлы.
+
+') +
+             (Get-RamText -Text 'Освободи хотя бы 500 МБ на этом диске и открой программу заново.')),
+            (Get-RamText -Text 'AltHub — мало места на диске'),
             [System.Windows.Forms.MessageBoxButtons]::OK,
             [System.Windows.Forms.MessageBoxIcon]::Warning)
         exit 1
@@ -119,9 +133,11 @@ foreach ($moduleFile in $moduleFiles) {
     try {
         . (Join-Path $script:Root $moduleFile)
     } catch {
-        $moduleMessage = "AltHub не смог загрузить $moduleFile.`n`n$($_.Exception.Message)"
+        $moduleMessage = (Get-RamText -Text 'AltHub не смог загрузить {0}.
+
+{1}' -Arguments @([string]($moduleFile),[string]((Get-RamErrorText -Text ($($_.Exception.Message))))))
         if ($NoAutoStart) { throw $moduleMessage }
-        [void][System.Windows.Forms.MessageBox]::Show($moduleMessage, 'AltHub — ошибка модуля', 'OK', 'Error')
+        [void][System.Windows.Forms.MessageBox]::Show($moduleMessage, (Get-RamText -Text 'AltHub — ошибка модуля'), 'OK', 'Error')
         exit 1
     }
 }
@@ -194,7 +210,7 @@ $Global:RamNoDialogs = [bool]$NoAutoStart
 
 $script:AppName    = 'AltHub'
 $script:AppVersion = '1.5.0-rc1'
-$script:AppAuthor  = 'Эрнест Костевич'
+$script:AppAuthor  = (Get-RamText -Text 'Эрнест Костевич')
 
 function Get-RamAvatarDir { Join-Path (Get-RamDataDir) 'avatars' }
 
@@ -202,10 +218,10 @@ function Get-RamAvatarDir { Join-Path (Get-RamDataDir) 'avatars' }
 
 function Protect-RamMessage {
     param([string]$Message)
-    $safe = $Message -replace '_\|WARNING[^\s]*', '<кука скрыта>'
-    $safe = $safe -replace '[A-Za-z0-9_\-]{200,}', '<длинный токен скрыт>'
-    $safe = $safe -replace '(?i)("?password"?\s*[:=]\s*)"[^"]*"', '$1"<пароль скрыт>"'
-    return ($safe -replace '(?i)(password\s*[:=]\s*)\S+', '$1<пароль скрыт>')
+    $safe = $Message -replace '_\|WARNING[^\s]*', (Get-RamText -Text '<кука скрыта>')
+    $safe = $safe -replace '[A-Za-z0-9_\-]{200,}', (Get-RamText -Text '<длинный токен скрыт>')
+    $safe = $safe -replace '(?i)("?password"?\s*[:=]\s*)"[^"]*"', (Get-RamText -Text '$1"<пароль скрыт>"')
+    return ($safe -replace '(?i)(password\s*[:=]\s*)\S+', (Get-RamText -Text '$1<пароль скрыт>'))
 }
 
 function Write-RamLog {
@@ -252,11 +268,11 @@ function Invoke-RamSafe {
     #>
     param(
         [Parameter(Mandatory)][scriptblock]$Body,
-        [string]$What = 'фоновая задача'
+        [string]$What = (Get-RamText -Text 'фоновая задача')
     )
     try { & $Body }
     catch {
-        try { Write-RamLog "Сбой ($What): $($_.Exception.Message)" 'err' } catch { }
+        try { Write-RamLog (Get-RamText -Text 'Сбой ({0}): {1}' -Arguments @([string]($What),[string]((Get-RamErrorText -Text ($($_.Exception.Message)))))) 'err' } catch { }
         try { Write-RamCrashDump -Error $_ -What $What } catch { }
     }
 }
@@ -275,15 +291,15 @@ function Write-RamCrashDump {
         $lines = @(
             '=' * 70
             (Get-Date).ToString('yyyy-MM-dd HH:mm:ss') + '  ' + $What
-            'Сообщение: ' + $Error.Exception.Message
-            'Тип: '       + $Error.Exception.GetType().FullName
+            (Get-RamText -Text 'Сообщение: ') + $Error.Exception.Message
+            (Get-RamText -Text 'Тип: ')       + $Error.Exception.GetType().FullName
         )
-        if ($Error.InvocationInfo) { $lines += 'Место: ' + $Error.InvocationInfo.PositionMessage }
-        if ($Error.ScriptStackTrace) { $lines += 'Стек:', $Error.ScriptStackTrace }
+        if ($Error.InvocationInfo) { $lines += (Get-RamText -Text 'Место: ') + $Error.InvocationInfo.PositionMessage }
+        if ($Error.ScriptStackTrace) { $lines += (Get-RamText -Text 'Стек:'), $Error.ScriptStackTrace }
 
         # Тот же фильтр, что и в журнале: кука в файл не попадёт.
         $safe = foreach ($l in $lines) {
-            ($l -replace '_\|WARNING[^\s]*', '<кука скрыта>') -replace '[A-Za-z0-9_\-]{200,}', '<длинный токен скрыт>'
+            ($l -replace '_\|WARNING[^\s]*', (Get-RamText -Text '<кука скрыта>')) -replace '[A-Za-z0-9_\-]{200,}', (Get-RamText -Text '<длинный токен скрыт>')
         }
         Add-Content -LiteralPath $path -Value $safe -Encoding UTF8
     } catch { }
@@ -306,18 +322,20 @@ function Register-RamCrashGuard {
     try {
         [System.Windows.Forms.Application]::add_ThreadException({
             param($sender, $e)
-            try { Write-RamLog "Сбой в интерфейсе: $($e.Exception.Message)" 'err' } catch { }
+            try { Write-RamLog (Get-RamText -Text 'Сбой в интерфейсе: {0}' -Arguments @([string]((Get-RamErrorText -Text ($($e.Exception.Message)))))) 'err' } catch { }
             try {
                 Write-RamCrashDump -Error ([pscustomobject]@{
                     Exception        = $e.Exception
                     InvocationInfo   = $null
                     ScriptStackTrace = $e.Exception.StackTrace
-                }) -What 'интерфейс'
+                }) -What (Get-RamText -Text 'интерфейс')
             } catch { }
             try {
-                Show-RamError ("Что-то пошло не так, но программа продолжит работать.`n`n" +
+                Show-RamError ((Get-RamText -Text 'Что-то пошло не так, но программа продолжит работать.
+
+') +
                                "$($e.Exception.Message)`n`n" +
-                               'Подробности записаны в data\logs\crash-*.log — покажи этот файл, если повторится.')
+                               (Get-RamText -Text 'Подробности записаны в data\logs\crash-*.log — покажи этот файл, если повторится.'))
             } catch { }
         })
     } catch { }
@@ -329,7 +347,7 @@ function Register-RamCrashGuard {
                     Exception        = $e.ExceptionObject
                     InvocationInfo   = $null
                     ScriptStackTrace = ''
-                }) -What 'вне интерфейса' } catch { }
+                }) -What (Get-RamText -Text 'вне интерфейса') } catch { }
         })
     } catch { }
 }
@@ -410,10 +428,10 @@ function Update-RamLoginButton {
     $btn.Tag.Mode = $mode
 
     if ($dead -gt 0) {
-        Set-RamButtonText -Button $btn -Text "Починить входы ($dead)"
+        Set-RamButtonText -Button $btn -Text (Get-RamText -Text 'Починить входы ({0})' -Arguments @([string]($dead)))
         Set-RamButtonKind -Button $btn -Kind 'danger'
     } else {
-        Set-RamButtonText -Button $btn -Text 'Проверить входы'
+        Set-RamButtonText -Button $btn -Text (Get-RamText -Text 'Проверить входы')
         Set-RamButtonKind -Button $btn -Kind 'ghost'
     }
 }
@@ -440,19 +458,19 @@ function Update-RamStatusLine {
     $queued  = $script:LaunchQueue.Count
 
     $parts = @()
-    if ($all -eq 0) { $parts += 'аккаунтов пока нет — нажми «Добавить»' }
-    else            { $parts += "отмечено: $checked из $all" }
+    if ($all -eq 0) { $parts += (Get-RamText -Text 'аккаунтов пока нет — нажми «Добавить»') }
+    else            { $parts += (Get-RamText -Text 'отмечено: {0} из {1}' -Arguments @([string]($checked),[string]($all))) }
 
-    if ($running -gt 0) { $parts += "в игре: $running" }
+    if ($running -gt 0) { $parts += (Get-RamText -Text 'в игре: {0}' -Arguments @([string]($running))) }
     if ($queued  -gt 0) {
         $left = [int][Math]::Max(0.0, ($script:NextLaunchTime - (Get-Date)).TotalSeconds)
-        $parts += $(if ($script:LaunchPaused) { "пауза: $queued в очереди" } else { "в очереди: $queued, следующий через $left с" })
+        $parts += $(if ($script:LaunchPaused) { (Get-RamText -Text 'пауза: {0} в очереди' -Arguments @([string]($queued))) } else { (Get-RamText -Text 'в очереди: {0}, следующий через {1} с' -Arguments @([string]($queued),[string]($left))) })
     }
     if ($dead -gt 0) {
-        $parts += $(if ($dead -eq 1) { 'мёртвый вход: 1' } else { "мёртвых входов: $dead" })
+        $parts += $(if ($dead -eq 1) { (Get-RamText -Text 'мёртвый вход: 1') } else { (Get-RamText -Text 'мёртвых входов: {0}' -Arguments @([string]($dead))) })
     }
     if ($script:UndoStack.Count -gt 0) {
-        $parts += "Ctrl+Z вернёт: $($script:UndoStack[$script:UndoStack.Count - 1].Label)"
+        $parts += (Get-RamText -Text 'Ctrl+Z вернёт: {0}' -Arguments @([string]($($script:UndoStack[$script:UndoStack.Count - 1].Label))))
     }
     # Приём входа из браузера — самый неочевидный способ добавить аккаунт, и
     # раньше про него можно было узнать, только догадавшись зайти в настройки.
@@ -468,12 +486,12 @@ function Update-RamHeaderCounts {
     $n = @($script:Accounts).Count
     $r = $script:Instances.Count
     $q = $script:LaunchQueue.Count
-    $txt = "аккаунтов: $n   •   запущено: $r"
-    if ($q -gt 0) { $txt += "   •   в очереди: $q" }
+    $txt = (Get-RamText -Text 'аккаунтов: {0}   •   запущено: {1}' -Arguments @([string]($n),[string]($r)))
+    if ($q -gt 0) { $txt += (Get-RamText -Text '   •   в очереди: {0}' -Arguments @([string]($q))) }
     if (-not [string]::IsNullOrWhiteSpace($script:Filter)) {
-        $txt += "   •   показано: $($script:Cards.Count)"
+        $txt += (Get-RamText -Text '   •   показано: {0}' -Arguments @([string]($($script:Cards.Count))))
     }
-    if ($script:Settings -and $script:Settings.AutoRestart) { $txt += "   •   автоперезапуск вкл" }
+    if ($script:Settings -and $script:Settings.AutoRestart) { $txt += (Get-RamText -Text '   •   автоперезапуск вкл') }
     $script:UI.Subtitle.Text = $txt
     if ($script:UI.ContainsKey('SidebarCounts') -and $null -ne $script:UI.SidebarCounts) {
         $script:UI.SidebarCounts.Accounts.Text = [string]$n
@@ -506,10 +524,10 @@ function Start-AltHub {
 
     try {
         if (Recover-RamPendingRobloxSettings) {
-            Write-RamLog 'Восстановлены обычные настройки Roblox после незавершённого прошлого запуска.' 'warn'
+            Write-RamLog (Get-RamText -Text 'Восстановлены обычные настройки Roblox после незавершённого прошлого запуска.') 'warn'
         }
     } catch {
-        Write-RamLog "Не удалось автоматически восстановить настройки Roblox: $($_.Exception.Message)" 'warn'
+        Write-RamLog (Get-RamText -Text 'Не удалось автоматически восстановить настройки Roblox: {0}' -Arguments @([string]((Get-RamErrorText -Text ($($_.Exception.Message)))))) 'warn'
     }
 
     # Тему надо поставить ДО создания любых элементов: цвета кнопок и карточек
@@ -526,16 +544,18 @@ function Start-AltHub {
     $mode = Get-RamStorageMode
     if ($mode -eq 'broken') {
         $script:AccountsWriteBlocked = $true
-        Show-RamError "Файл accounts.dat повреждён или имеет неизвестный формат.`n`nAltHub не будет открывать пустой список и не перезапишет файл. Восстанови одну из копий в data\backups\accounts либо пришли журнал автору."
+        Show-RamError (Get-RamText -Text 'Файл accounts.dat повреждён или имеет неизвестный формат.
+
+AltHub не будет открывать пустой список и не перезапишет файл. Восстанови одну из копий в data\backups\accounts либо пришли журнал автору.')
         return
     }
     if ($mode -eq 'aes') {
         while ($true) {
-            $p = Show-RamPasswordDialog -Prompt 'Хранилище защищено мастер-паролем:'
+            $p = Show-RamPasswordDialog -Prompt (Get-RamText -Text 'Хранилище защищено мастер-паролем:')
             if ($null -eq $p) {
                 # Отмена — не поломка, но молча исчезать нельзя: со стороны
                 # это неотличимо от падения программы.
-                Show-RamInfo 'Без мастер-пароля список аккаунтов не открыть, поэтому AltHub закрывается. Запусти его снова, когда пароль будет под рукой.'
+                Show-RamInfo (Get-RamText -Text 'Без мастер-пароля список аккаунтов не открыть, поэтому AltHub закрывается. Запусти его снова, когда пароль будет под рукой.')
                 return
             }
             try {
@@ -554,64 +574,70 @@ function Start-AltHub {
             # обещало «список будет пустым» — хотя программа дальше
             # закрывается. Файл действительно не тронут: запись заблокирована.
             $script:AccountsWriteBlocked = $true
-            Show-RamError ("Не удалось прочитать сохранённые аккаунты:`n`n$($_.Exception.Message)`n`n" +
-                           "AltHub закроется и НЕ тронет accounts.dat — иначе он перезаписал бы его пустым списком.`n`n" +
-                           "Частая причина: папку перенесли на другой компьютер или в другую учётную запись Windows. " +
-                           "Такой файл читается только там, где был создан. Резервные копии лежат в data\backups\accounts.")
+            Show-RamError ((Get-RamText -Text 'Не удалось прочитать сохранённые аккаунты:
+
+{0}
+
+' -Arguments @([string]((Get-RamErrorText -Text ($($_.Exception.Message)))))) +
+                           (Get-RamText -Text 'AltHub закроется и НЕ тронет accounts.dat — иначе он перезаписал бы его пустым списком.
+
+') +
+                           (Get-RamText -Text 'Частая причина: папку перенесли на другой компьютер или в другую учётную запись Windows. ') +
+                           (Get-RamText -Text 'Такой файл читается только там, где был создан. Резервные копии лежат в data\backups\accounts.'))
             return
         }
     }
 
     # Мастер первого запуска — до главного окна: он может сменить тему, а
     # цвета запоминаются кнопками в момент создания.
-    Invoke-RamSafe -What 'мастер первого запуска' -Body { Invoke-RamFirstRun }
-    Invoke-RamSafe -What 'выбор меню после обновления' -Body { Show-RamMenuStyleUpgradeChoice }
+    Invoke-RamSafe -What (Get-RamText -Text 'мастер первого запуска') -Body { Invoke-RamFirstRun }
+    Invoke-RamSafe -What (Get-RamText -Text 'выбор меню после обновления') -Body { Show-RamMenuStyleUpgradeChoice }
 
     $form = New-RamMainForm
 
-    Write-RamLog "$($script:AppName) v$($script:AppVersion) — автор: $($script:AppAuthor)." 'ok'
-    Write-RamLog ('Хранилище: ' + $(switch (Get-RamStorageMode) {
-        'aes'   { 'AES-256 + мастер-пароль' }
-        'dpapi' { 'DPAPI (привязано к учётке Windows)' }
-        default { 'ещё не создано' } })) 'info'
+    Write-RamLog (Get-RamText -Text '{0} v{1} — автор: {2}.' -Arguments @([string]($($script:AppName)),[string]($($script:AppVersion)),[string]($($script:AppAuthor)))) 'ok'
+    Write-RamLog ((Get-RamText -Text 'Хранилище: ') + $(switch (Get-RamStorageMode) {
+        'aes'   { (Get-RamText -Text 'AES-256 + мастер-пароль') }
+        'dpapi' { (Get-RamText -Text 'DPAPI (привязано к учётке Windows)') }
+        default { (Get-RamText -Text 'ещё не создано') } })) 'info'
 
     try {
         $script:PlayerPath = Get-RamRobloxPlayerPath
         $client = Get-RamRobloxClients | Select-Object -First 1
         if ($null -ne $client) {
-            Write-RamLog "Клиент Roblox найден: версия $($client.Version)" 'ok'
+            Write-RamLog (Get-RamText -Text 'Клиент Roblox найден: версия {0}' -Arguments @([string]($($client.Version)))) 'ok'
         } else {
-            Write-RamLog 'Клиент Roblox найден.' 'ok'
+            Write-RamLog (Get-RamText -Text 'Клиент Roblox найден.') 'ok'
         }
 
         $outdated = Get-RamOutdatedClientWarning
         if ($outdated) { Write-RamLog $outdated 'warn' }
 
         if (Test-RamRobloxUpdating) {
-            Write-RamLog 'Прямо сейчас идёт обновление Roblox — дождись его конца, иначе установщик закроет открытые окна.' 'warn'
+            Write-RamLog (Get-RamText -Text 'Прямо сейчас идёт обновление Roblox — дождись его конца, иначе установщик закроет открытые окна.') 'warn'
         }
     } catch {
         Write-RamLog $_.Exception.Message 'err'
         if (Test-RamMicrosoftStoreRoblox) {
-            Write-RamLog 'Найдена версия Roblox из Microsoft Store — с ней мультизапуск не работает. Нужна обычная версия с roblox.com.' 'warn'
+            Write-RamLog (Get-RamText -Text 'Найдена версия Roblox из Microsoft Store — с ней мультизапуск не работает. Нужна обычная версия с roblox.com.') 'warn'
         }
     }
 
     if ($script:Settings.KeepMutex) {
         $lock = Enable-RamMultiInstance
         if ($lock.EventBlocked) {
-            Write-RamLog 'Мультизапуск включён: оба замка взяты (singletonMutex + singletonEvent).' 'ok'
+            Write-RamLog (Get-RamText -Text 'Мультизапуск включён: оба замка взяты (singletonMutex + singletonEvent).') 'ok'
         } elseif ($lock.RobloxWasRunning) {
-            Write-RamLog 'Roblox был открыт ДО менеджера — мультизапуск пока выключен. Закрой все окна Roblox: менеджер предложит сделать это сам при запуске.' 'warn'
+            Write-RamLog (Get-RamText -Text 'Roblox был открыт ДО менеджера — мультизапуск пока выключен. Закрой все окна Roblox: менеджер предложит сделать это сам при запуске.') 'warn'
         } else {
-            Write-RamLog 'Не удалось взять замки мультизапуска. Попробуй перезапустить менеджер.' 'warn'
+            Write-RamLog (Get-RamText -Text 'Не удалось взять замки мультизапуска. Попробуй перезапустить менеджер.') 'warn'
         }
     }
 
     if (Test-RamRobloxCookieFile) {
-        Write-RamLog 'Приложение Roblox найдено — аккаунты можно добавлять одной кнопкой.' 'ok'
+        Write-RamLog (Get-RamText -Text 'Приложение Roblox найдено — аккаунты можно добавлять одной кнопкой.') 'ok'
     } else {
-        Write-RamLog 'Хранилище входов приложения Roblox не найдено — куки придётся вставлять вручную.' 'warn'
+        Write-RamLog (Get-RamText -Text 'Хранилище входов приложения Roblox не найдено — куки придётся вставлять вручную.') 'warn'
     }
 
     Remove-RamOldLogs
@@ -620,7 +646,7 @@ function Start-AltHub {
     # откроет инструкцию. Иначе он может пойти ставить расширение раньше — и
     # Chrome будет ругаться на отсутствующие файлы значков, а кнопки на панели
     # не появится. Рисование одноразовое: если файлы уже есть, ничего не делает.
-    Invoke-RamSafe -What 'значки расширения' -Body { [void](Save-RamExtensionIcons) }
+    Invoke-RamSafe -What (Get-RamText -Text 'значки расширения') -Body { [void](Save-RamExtensionIcons) }
 
     # Окно горячих клавиш нужно и для Ctrl+1..9, и для клавиши приёма из
     # браузера, поэтому создаём его, если включено хоть что-то из двух.
@@ -628,7 +654,7 @@ function Start-AltHub {
         $cnt = Register-RamHotkeys -OnPressed {
             param($sender, $e)
             if ($e.Id -eq 20) {
-                Invoke-RamSafe -What 'приём входа из браузера' -Body { [void](Invoke-RamBrowserGrab) }
+                Invoke-RamSafe -What (Get-RamText -Text 'приём входа из браузера') -Body { [void](Invoke-RamBrowserGrab) }
             } else {
                 Invoke-RamFocusAccountByIndex -Index $e.Id
             }
@@ -636,16 +662,16 @@ function Start-AltHub {
 
         if ($script:Settings.HotkeySwitch) {
             if ($cnt -gt 0) {
-                Write-RamLog "Горячие клавиши Ctrl+1..Ctrl+$cnt переключают окна аккаунтов — работают и из игры." 'ok'
+                Write-RamLog (Get-RamText -Text 'Горячие клавиши Ctrl+1..Ctrl+{0} переключают окна аккаунтов — работают и из игры.' -Arguments @([string]($cnt))) 'ok'
             } else {
-                Write-RamLog 'Глобальные горячие клавиши занял кто-то другой — Ctrl+1..9 работать не будут.' 'warn'
+                Write-RamLog (Get-RamText -Text 'Глобальные горячие клавиши занял кто-то другой — Ctrl+1..9 работать не будут.') 'warn'
             }
         }
     }
 
     # Приём входа из браузера. Порт занимаем, только если человек его включил.
     if ($script:Settings.BridgeEnabled) {
-        Invoke-RamSafe -What 'запуск приёма из браузера' -Body {
+        Invoke-RamSafe -What (Get-RamText -Text 'запуск приёма из браузера') -Body {
             $bport = Start-RamCookieBridge
             if ($bport -gt 0) {
                 # ОБЯЗАТЕЛЬНО через ...WithFallback, а не Register напрямую.
@@ -655,31 +681,31 @@ function Start-AltHub {
                 $key = [string]$script:Settings.BridgeHotkey
                 $got = Set-RamBridgeHotkeyWithFallback -Preferred $key -Announce
                 if ($got) {
-                    Write-RamLog "Приём из браузера: жми $got на странице roblox.com — аккаунт добавится сам." 'ok'
+                    Write-RamLog (Get-RamText -Text 'Приём из браузера: жми {0} на странице roblox.com — аккаунт добавится сам.' -Arguments @([string]($got))) 'ok'
                 }
             } else {
                 # Все порты диапазона заняты. Молчать нельзя: галочка стоит,
                 # а приёма нет, и понять это можно только зайдя в настройки.
                 $bridgeWhy = Get-RamBridgeStartError
-                if (-not $bridgeWhy) { $bridgeWhy = 'Все порты из диапазона 52713-52717 заняты другими программами.' }
+                if (-not $bridgeWhy) { $bridgeWhy = (Get-RamText -Text 'Все порты из диапазона 52713-52717 заняты другими программами.') }
                 Show-RamMessage -Kind 'warn' -Message (
-                    ('Приём входа из браузера включить не вышло: ' + $bridgeWhy) +
+                    ((Get-RamText -Text 'Приём входа из браузера включить не вышло: ') + $bridgeWhy) +
                     [Environment]::NewLine + [Environment]::NewLine +
-                    'Закрой лишнее и перезапусти AltHub, либо пользуйся другими способами добавить аккаунт.')
+                    (Get-RamText -Text 'Закрой лишнее и перезапусти AltHub, либо пользуйся другими способами добавить аккаунт.'))
             }
         }
     }
 
     if ($script:Settings.WatchGroup) {
-        Write-RamLog "Присмотр включён за набором «$($script:Settings.WatchGroup)»: вылетевшие поднимаются сами." 'ok'
+        Write-RamLog (Get-RamText -Text 'Присмотр включён за набором «{0}»: вылетевшие поднимаются сами.' -Arguments @([string]($($script:Settings.WatchGroup)))) 'ok'
     }
 
     # Клиенты Roblox могли остаться работать с прошлого раза — подхватываем их,
     # иначе они числятся закрытыми и присмотр наплодит дубликаты.
-    Invoke-RamSafe -What 'подхват работающих клиентов' -Body { [void](Restore-RamAdoptRunningClients) }
+    Invoke-RamSafe -What (Get-RamText -Text 'подхват работающих клиентов') -Body { [void](Restore-RamAdoptRunningClients) }
 
     Build-RamCards
-    Set-RamStatus 'Готово к работе.'
+    Set-RamStatus (Get-RamText -Text 'Готово к работе.')
 
     # Проверку входов делаем не сразу, а первым тиком таймера: окно уже
     # нарисовано, и человек видит, что происходит, а не пустой экран.
@@ -688,10 +714,10 @@ function Start-AltHub {
         $startupCheck.Interval = 900
         $startupCheck.Add_Tick({
             $this.Stop()
-            Invoke-RamSafe -What 'проверка входов при старте' -Body {
-                Set-RamStatus 'Проверяю входы...'
+            Invoke-RamSafe -What (Get-RamText -Text 'проверка входов при старте') -Body {
+                Set-RamStatus (Get-RamText -Text 'Проверяю входы...')
                 Invoke-RamStartupCookieCheck
-                Set-RamStatus 'Готово к работе.'
+                Set-RamStatus (Get-RamText -Text 'Готово к работе.')
             }
         })
         $startupCheck.Start()
@@ -699,7 +725,7 @@ function Start-AltHub {
     }
 
     if (@($script:Accounts).Count -eq 0) {
-        Write-RamLog 'Аккаунтов пока нет. Нажми «Добавить аккаунты».' 'info'
+        Write-RamLog (Get-RamText -Text 'Аккаунтов пока нет. Нажми «Добавить аккаунты».') 'info'
     }
 
     # Application::Run, а НЕ ShowDialog.
@@ -726,7 +752,7 @@ function Start-AltHub {
             Update-RamStatsPanel
             Update-RamGamesPanel
             Update-RamProfilesPanel
-            Set-RamStatus 'Оформление применено. Roblox и очередь запуска не прерывались.'
+            Set-RamStatus (Get-RamText -Text 'Оформление применено. Roblox и очередь запуска не прерывались.')
             if ($script:LaunchQueue.Count -gt 0) { $script:UI.LaunchTimer.Start() }
         }
     } while ($script:RebuildUi)
@@ -734,7 +760,7 @@ function Start-AltHub {
     # Порт освобождаем явно, а не надеемся на завершение процесса: если
     # программу перезапустят быстро, следующий запуск наткнётся на занятый
     # порт и приём молча не включится.
-    Invoke-RamSafe -What 'остановка приёма из браузера' -Body { Stop-RamCookieBridge }
+    Invoke-RamSafe -What (Get-RamText -Text 'остановка приёма из браузера') -Body { Stop-RamCookieBridge }
     foreach ($img in @($script:AvatarImages.Values)) { try { $img.Dispose() } catch { } }
     $script:AvatarImages = @{}
     if ($script:RestartRequested) {
@@ -753,11 +779,13 @@ if ($NoAutoStart) { return }
 try {
     Start-AltHub
 } catch {
-    $msg = "AltHub не смог запуститься.`n`n" +
+    $msg = (Get-RamText -Text 'AltHub не смог запуститься.
+
+') +
            $_.Exception.Message + "`n`n" +
-           "Место: " + $_.InvocationInfo.ScriptName + ", строка " + $_.InvocationInfo.ScriptLineNumber
+           (Get-RamText -Text 'Место: ') + $_.InvocationInfo.ScriptName + (Get-RamText -Text ', строка ') + $_.InvocationInfo.ScriptLineNumber
     try {
-        [System.Windows.Forms.MessageBox]::Show($msg, 'Ошибка запуска',
+        [System.Windows.Forms.MessageBox]::Show($msg, (Get-RamText -Text 'Ошибка запуска'),
             [System.Windows.Forms.MessageBoxButtons]::OK,
             [System.Windows.Forms.MessageBoxIcon]::Error) | Out-Null
     } catch {

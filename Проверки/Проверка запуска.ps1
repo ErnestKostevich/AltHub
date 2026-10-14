@@ -28,6 +28,7 @@
 param(
     # Папка со сборкой. По умолчанию — на уровень выше папки «Проверки».
     [string]$Path = (Split-Path -Parent $PSScriptRoot),
+    [ValidateSet('ru','en')][string]$UiLanguage='ru',
     # Не удалять временную копию после прогона (чтобы посмотреть журнал).
     [switch]$Keep
 )
@@ -46,6 +47,7 @@ public delegate bool EnumWindowsProc(IntPtr h, IntPtr l);
 [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int GetClassNameW(IntPtr h, System.Text.StringBuilder s, int n);
 [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern IntPtr SendMessageW(IntPtr h, uint msg, IntPtr wp, IntPtr lp);
 [DllImport("user32.dll")] public static extern bool PostMessageW(IntPtr h, uint msg, IntPtr wp, IntPtr lp);
+[DllImport("user32.dll")] public static extern bool PostThreadMessageW(uint id, uint msg, IntPtr wp, IntPtr lp);
 '@
 
 $script:total = 0
@@ -144,9 +146,19 @@ function Get-RamOurProcesses {
 function Stop-RamAll {
     param([int[]]$Before)
     foreach ($p in (Get-RamOurProcesses -Before $Before)) {
-        try { $p.Kill() } catch { }
+        try {
+            $window=Get-RamAppWindow -ProcessId $p.Id
+            if($null -ne $window){
+                $windowPid=0
+                $threadId=[RamCheck.Win]::GetWindowThreadProcessId($window.Handle,[ref]$windowPid)
+                # WM_CLOSE can hide a tray-mode form again; WM_QUIT exits its owned Application.Run loop.
+                if($windowPid -eq $p.Id -and $threadId){[void][RamCheck.Win]::PostThreadMessageW($threadId,0x0012,[IntPtr]::Zero,[IntPtr]::Zero)}
+            }
+            if($p.WaitForExit(5000)){continue}
+            Write-Warning "Тестовая копия $($p.Id) не закрылась за 5 секунд; принудительное завершение может оставить значок в трее."
+            $p.Kill()
+        } catch { if(-not $p.HasExited){throw} }
     }
-    Start-Sleep -Seconds 1
 }
 
 # --------------------------------------------------------------- подготовка -
@@ -219,6 +231,7 @@ $seed = [pscustomobject]@{
     # (так встречают обновившихся с 1.3), главное окно ждёт ответа, и стенд
     # докладывал «окно так и не появилось» — хотя появилось окно вопроса.
     MenuStyle             = 'wide'
+    UiLanguage            = $UiLanguage
     SettingsSchemaVersion = 14
 }
 ConvertTo-Json -InputObject $seed -Depth 3 |
@@ -226,16 +239,6 @@ ConvertTo-Json -InputObject $seed -Depth 3 |
 Write-Host ''
 
 $vbs = Join-Path $work 'AltHub.vbs'
-
-# Оставшиеся с прошлого прогона копии надо убрать: они держат замок «одна
-# копия», и тогда проверка второго запуска врёт — новая копия честно не
-# запускается, но не потому, что защита сработала, а потому что мешает старая.
-foreach ($p in @(Get-Process -Name powershell -ErrorAction SilentlyContinue)) {
-    if ($null -ne (Get-RamAppWindow -ProcessId $p.Id)) {
-        try { $p.Kill() } catch { }
-    }
-}
-Start-Sleep -Seconds 2
 
 $before = @(Get-Process -Name powershell -ErrorAction SilentlyContinue | ForEach-Object { $_.Id })
 
@@ -260,6 +263,12 @@ Step 'Окно появляется после двойного клика по 
         if ($seen.Count) { throw ('главного окна нет, вместо него: ' + ($seen -join ', ')) }
         throw 'окно AltHub так и не появилось — для человека это выглядит как «не запускается»'
     }
+    Add-Type -AssemblyName UIAutomationClient,UIAutomationTypes
+    $automationRoot=[System.Windows.Automation.AutomationElement]::FromHandle($script:app.Win.Handle)
+    $names=@($automationRoot.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition) | ForEach-Object {$_.Current.Name})
+    # Owner-drawn tabs have blank UIA names on .NET Framework; check native text controls.
+    $expected=if($UiLanguage -eq 'en'){@('No accounts yet','search: name, username, game, note')}else{@('Пока ни одного аккаунта','поиск: имя, ник, игра, заметка')}
+    foreach($caption in $expected){if($names -notcontains $caption){throw "Язык при холодном запуске не применился: $UiLanguage / $caption. UIA: $($names -join ' | ')"}}
     "окно нашлось за отведённое время, процесс $($script:app.Proc.Id)"
 }
 
@@ -341,7 +350,11 @@ Step 'Крестик не оставляет программу без след�
 
 Stop-RamAll -Before $before
 if (-not $Keep) {
-    try { Remove-Item -LiteralPath $work -Recurse -Force } catch { }
+    $resolvedWork=[IO.Path]::GetFullPath($work)
+    $resolvedTemp=[IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\')+'\'
+    if($resolvedWork.StartsWith($resolvedTemp,[StringComparison]::OrdinalIgnoreCase) -and (Split-Path -Leaf $resolvedWork) -match '^althub-launch-[0-9a-f]{8}$'){
+        try { Remove-Item -LiteralPath $resolvedWork -Recurse -Force } catch { }
+    }
 } else {
     Write-Host ("  Копия оставлена: {0}" -f $work) -ForegroundColor DarkGray
 }

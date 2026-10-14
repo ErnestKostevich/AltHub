@@ -8,7 +8,7 @@ function Get-RamWaterMenuStyle {
       BaseContent  — стартовая ширина содержимого окна при первом запуске.
     #>
     [pscustomobject]@{
-        Key='water'; Title='H₂O Original'; Description='Авторская раскладка H₂O: боковые действия и рисованные иконки.'
+        Key='water'; Title='H₂O Original'; Description=(Get-RamText -Text 'Авторская раскладка H₂O: боковые действия и рисованные иконки.')
         Layout='water'; MaxColumns=2; MinCardWidth=560; BaseContent=760; NavPrefix='  '
     }
 }

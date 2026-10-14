@@ -197,17 +197,17 @@ function Get-RamPaletteColorKeys {
       сам, подгоняя под светлую или тёмную основу.
     #>
     @(
-        [pscustomobject]@{ Key = 'Bg';        Title = 'Фон окна' }
-        [pscustomobject]@{ Key = 'Panel';     Title = 'Боковое меню и тулбар' }
-        [pscustomobject]@{ Key = 'Card';      Title = 'Карточка аккаунта' }
-        [pscustomobject]@{ Key = 'CardHover'; Title = 'Карточка под мышью' }
-        [pscustomobject]@{ Key = 'CardSel';   Title = 'Выделение' }
-        [pscustomobject]@{ Key = 'Border';    Title = 'Границы и обводка' }
-        [pscustomobject]@{ Key = 'Text';      Title = 'Основной текст' }
-        [pscustomobject]@{ Key = 'Muted';     Title = 'Приглушённый текст' }
-        [pscustomobject]@{ Key = 'Accent';    Title = 'Акцент (кнопки, галочки)' }
-        [pscustomobject]@{ Key = 'AccentHov'; Title = 'Акцент под мышью' }
-        [pscustomobject]@{ Key = 'LogBack';   Title = 'Фон журнала' }
+        [pscustomobject]@{ Key = 'Bg';        Title = (Get-RamText -Text 'Фон окна') }
+        [pscustomobject]@{ Key = 'Panel';     Title = (Get-RamText -Text 'Боковое меню и тулбар') }
+        [pscustomobject]@{ Key = 'Card';      Title = (Get-RamText -Text 'Карточка аккаунта') }
+        [pscustomobject]@{ Key = 'CardHover'; Title = (Get-RamText -Text 'Карточка под мышью') }
+        [pscustomobject]@{ Key = 'CardSel';   Title = (Get-RamText -Text 'Выделение') }
+        [pscustomobject]@{ Key = 'Border';    Title = (Get-RamText -Text 'Границы и обводка') }
+        [pscustomobject]@{ Key = 'Text';      Title = (Get-RamText -Text 'Основной текст') }
+        [pscustomobject]@{ Key = 'Muted';     Title = (Get-RamText -Text 'Приглушённый текст') }
+        [pscustomobject]@{ Key = 'Accent';    Title = (Get-RamText -Text 'Акцент (кнопки, галочки)') }
+        [pscustomobject]@{ Key = 'AccentHov'; Title = (Get-RamText -Text 'Акцент под мышью') }
+        [pscustomobject]@{ Key = 'LogBack';   Title = (Get-RamText -Text 'Фон журнала') }
     )
 }
 
@@ -377,7 +377,7 @@ function Get-RamPalette {
         # Полночь — глубокий синий с фиолетовым акцентом
         'midnight' {
             return @{
-                Key       = 'midnight'; Title = 'Полночь'
+                Key       = 'midnight'; Title = (Get-RamText -Text 'Полночь')
                 Bg        = & $c  16  18  34
                 Panel     = & $c  23  26  46
                 Card      = & $c  32  36  62
@@ -399,7 +399,7 @@ function Get-RamPalette {
         # Светлая — для тех, кому тёмное не заходит
         'light' {
             return @{
-                Key       = 'light'; Title = 'Светлая'
+                Key       = 'light'; Title = (Get-RamText -Text 'Светлая')
                 Bg        = & $c 243 245 249
                 Panel     = & $c 255 255 255
                 Card      = & $c 255 255 255
@@ -429,37 +429,37 @@ function Get-RamPalette {
 
         'emerald' {  # Изумруд — глубокая зелёная
             $p = New-RamDerivedPalette -Accent ([System.Drawing.Color]::FromArgb(16, 185, 129)) -Base 'dark' -Tint 0.34 -Lift -0.012
-            $p.Key = 'emerald'; $p.Title = 'Изумруд'; return $p
+            $p.Key = 'emerald'; $p.Title = (Get-RamText -Text 'Изумруд'); return $p
         }
         'sunset' {   # Закат — тёплая, чуть светлее прочих
             $p = New-RamDerivedPalette -Accent ([System.Drawing.Color]::FromArgb(251, 113, 64)) -Base 'dark' -Tint 0.30 -Lift 0.022
-            $p.Key = 'sunset'; $p.Title = 'Закат'; return $p
+            $p.Key = 'sunset'; $p.Title = (Get-RamText -Text 'Закат'); return $p
         }
         'rose' {     # Роза — тёплая розовая, средней глубины
             $p = New-RamDerivedPalette -Accent ([System.Drawing.Color]::FromArgb(244, 94, 150)) -Base 'dark' -Tint 0.26 -Lift 0.008
-            $p.Key = 'rose'; $p.Title = 'Роза'; return $p
+            $p.Key = 'rose'; $p.Title = (Get-RamText -Text 'Роза'); return $p
         }
         'ocean' {    # Океан — холодная бирюза, светлее изумруда
             $p = New-RamDerivedPalette -Accent ([System.Drawing.Color]::FromArgb(34, 197, 211)) -Base 'dark' -Tint 0.28 -Lift 0.030
-            $p.Key = 'ocean'; $p.Title = 'Океан'; return $p
+            $p.Key = 'ocean'; $p.Title = (Get-RamText -Text 'Океан'); return $p
         }
         'grape' {    # Виноград — самая насыщенная и тёмная
             $p = New-RamDerivedPalette -Accent ([System.Drawing.Color]::FromArgb(168, 120, 245)) -Base 'dark' -Tint 0.40 -Lift -0.004
-            $p.Key = 'grape'; $p.Title = 'Виноград'; return $p
+            $p.Key = 'grape'; $p.Title = (Get-RamText -Text 'Виноград'); return $p
         }
         'amoled' {   # Чёрная — почти чёрный фон для AMOLED
             $p = New-RamDerivedPalette -Accent ([System.Drawing.Color]::FromArgb(0, 162, 255)) -Base 'black' -Tint 0.24
-            $p.Key = 'amoled'; $p.Title = 'Чёрная'; return $p
+            $p.Key = 'amoled'; $p.Title = (Get-RamText -Text 'Чёрная'); return $p
         }
         'sky' {      # Небо — светлая, отчётливо голубая (не серая, как Светлая)
             $p = New-RamDerivedPalette -Accent ([System.Drawing.Color]::FromArgb(14, 130, 233)) -Base 'light' -Tint 0.62 -Lift -0.012
-            $p.Key = 'sky'; $p.Title = 'Небо'; return $p
+            $p.Key = 'sky'; $p.Title = (Get-RamText -Text 'Небо'); return $p
         }
 
         # Тёмная — по умолчанию, нейтральная под стиль Roblox
         default {
             return @{
-                Key       = 'dark'; Title = 'Тёмная'
+                Key       = 'dark'; Title = (Get-RamText -Text 'Тёмная')
                 Bg        = & $c  24  26  31
                 Panel     = & $c  31  34  40
                 Card      = & $c  39  43  51
@@ -483,16 +483,16 @@ function Get-RamPalette {
 function Get-RamStockThemeList {
     <# Встроенные темы. Порядок = порядок в меню выбора. #>
     @(
-        [pscustomobject]@{ Key = 'dark';     Title = 'Тёмная'   },
-        [pscustomobject]@{ Key = 'midnight'; Title = 'Полночь'  },
-        [pscustomobject]@{ Key = 'emerald';  Title = 'Изумруд'  },
-        [pscustomobject]@{ Key = 'ocean';    Title = 'Океан'    },
-        [pscustomobject]@{ Key = 'grape';    Title = 'Виноград' },
-        [pscustomobject]@{ Key = 'rose';     Title = 'Роза'     },
-        [pscustomobject]@{ Key = 'sunset';   Title = 'Закат'    },
-        [pscustomobject]@{ Key = 'amoled';   Title = 'Чёрная'   },
-        [pscustomobject]@{ Key = 'light';    Title = 'Светлая'  },
-        [pscustomobject]@{ Key = 'sky';      Title = 'Небо'     }
+        [pscustomobject]@{ Key = 'dark';     Title = (Get-RamText -Text 'Тёмная')   },
+        [pscustomobject]@{ Key = 'midnight'; Title = (Get-RamText -Text 'Полночь')  },
+        [pscustomobject]@{ Key = 'emerald';  Title = (Get-RamText -Text 'Изумруд')  },
+        [pscustomobject]@{ Key = 'ocean';    Title = (Get-RamText -Text 'Океан')    },
+        [pscustomobject]@{ Key = 'grape';    Title = (Get-RamText -Text 'Виноград') },
+        [pscustomobject]@{ Key = 'rose';     Title = (Get-RamText -Text 'Роза')     },
+        [pscustomobject]@{ Key = 'sunset';   Title = (Get-RamText -Text 'Закат')    },
+        [pscustomobject]@{ Key = 'amoled';   Title = (Get-RamText -Text 'Чёрная')   },
+        [pscustomobject]@{ Key = 'light';    Title = (Get-RamText -Text 'Светлая')  },
+        [pscustomobject]@{ Key = 'sky';      Title = (Get-RamText -Text 'Небо')     }
     )
 }
 
@@ -1589,8 +1589,8 @@ function Get-RamGroupShort {
        сокращаем только эти два «встроенных» варианта. #>
     param([string]$Group)
     switch ($Group) {
-        'Основной' { return 'Основа' }
-        'Твины'    { return 'Твин' }
+        'Основной' { return (Get-RamText -Text 'Основа') }
+        'Твины'    { return (Get-RamText -Text 'Твин') }
         default    { return $Group }
     }
 }
@@ -1653,7 +1653,7 @@ function New-RamStatusDot {
     # как рисовать точку и текст — тогда кэшировать нечего.
     $p.BackColor = [System.Drawing.Color]::Transparent
     $fillNow = if ($null -ne $BackFill) { $BackFill } else { $Global:RamTheme.Card }
-    $p.Tag = [pscustomobject]@{ Caption = 'не запущен'; Color = $Global:RamTheme.Muted; NoDot = [bool]$NoDot; Center = [bool]$Center; Fill = $fillNow; GroupSuffix = $GroupSuffix; RowH = $rowH }
+    $p.Tag = [pscustomobject]@{ Caption = (Get-RamText -Text 'не запущен'); Color = $Global:RamTheme.Muted; NoDot = [bool]$NoDot; Center = [bool]$Center; Fill = $fillNow; GroupSuffix = $GroupSuffix; RowH = $rowH }
     Set-RamDoubleBuffered $p
 
     $p.Add_Paint({

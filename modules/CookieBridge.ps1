@@ -93,7 +93,9 @@ function Get-RamBridgeGrabPage {
       видит всегда. Поэтому F10 открывает вот это, расширение просыпается,
       отдаёт куку и закрывает вкладку само.
     #>
-    return @'
+    $receiving=[Net.WebUtility]::HtmlEncode((Get-RamText -Text 'Забираю вход и закрываю вкладку…'))
+    $missing=[Net.WebUtility]::HtmlEncode((Get-RamText -Text 'Если вкладка не закрылась — расширение AltHub не установлено в этом браузере.'))
+    $html= @'
 <!doctype html><meta charset="utf-8"><title>AltHub</title>
 <style>
  body{margin:0;height:100vh;display:flex;align-items:center;justify-content:center;
@@ -101,9 +103,10 @@ function Get-RamBridgeGrabPage {
  div{text-align:center;line-height:1.6}
  b{color:#a78bfa}
 </style>
-<div><b>AltHub</b><br>Забираю вход и закрываю вкладку…<br>
-<small>Если вкладка не закрылась — расширение AltHub не установлено в этом браузере.</small></div>
+<div><b>AltHub</b><br>__RECEIVING__<br>
+<small>__MISSING__</small></div>
 '@
+    return $html.Replace('__RECEIVING__',$receiving).Replace('__MISSING__',$missing)
 }
 
 function Save-RamExtensionIcons {
@@ -170,10 +173,10 @@ function Save-RamExtensionIcons {
             $bmp.Save((Join-Path $dir ("icon{0}.png" -f $n)), [System.Drawing.Imaging.ImageFormat]::Png)
             $bmp.Dispose()
         }
-        Write-RamLog 'Значки расширения нарисованы в папке extension.' 'info'
+        Write-RamLog (Get-RamText -Text 'Значки расширения нарисованы в папке extension.') 'info'
         return $true
     } catch {
-        Write-RamLog "Не вышло нарисовать значки расширения: $($_.Exception.Message)" 'warn'
+        Write-RamLog (Get-RamText -Text 'Не вышло нарисовать значки расширения: {0}' -Arguments @([string]((Get-RamErrorText -Text ($($_.Exception.Message)))))) 'warn'
         return $false
     }
 }
@@ -197,7 +200,7 @@ function Start-RamCookieBridge {
             try { if (-not $code) { $code = [int]$_.Exception.InnerException.ErrorCode } } catch { }
             try { $l.Close() } catch { }
             if ($code -eq 5 -or $_.Exception.Message -match 'Access is denied|Отказано в доступе') {
-                $script:Bridge.StartError = 'Windows запретила открыть локальный порт (отказ в доступе), это не занятый порт.'
+                $script:Bridge.StartError = (Get-RamText -Text 'Windows запретила открыть локальный порт (отказ в доступе), это не занятый порт.')
                 break
             }
             continue
@@ -217,16 +220,16 @@ function Start-RamCookieBridge {
         # Под защитой: это обработчик таймера, и необработанная ошибка внутри
         # него роняет весь интерфейс. Проверка «Есть защита от падения» на
         # этом месте и сработала, когда защиты не было.
-        $t.Add_Tick({ Invoke-RamSafe -What 'приём из браузера' -Body { Invoke-RamBridgePump } })
+        $t.Add_Tick({ Invoke-RamSafe -What (Get-RamText -Text 'приём из браузера') -Body { Invoke-RamBridgePump } })
         $t.Start()
         $script:Bridge.Timer = $t
 
-        Write-RamLog "Приём из браузера включён, жду на 127.0.0.1:$port." 'ok'
+        Write-RamLog (Get-RamText -Text 'Приём из браузера включён, жду на 127.0.0.1:{0}.' -Arguments @([string]($port))) 'ok'
         return $port
     }
 
-    if ($script:Bridge.StartError) { Write-RamLog ("Приём из браузера: " + $script:Bridge.StartError) 'warn' }
-    else { Write-RamLog 'Приём из браузера: все порты диапазона заняты, включить не вышло.' 'warn' }
+    if ($script:Bridge.StartError) { Write-RamLog ((Get-RamText -Text 'Приём из браузера: ') + $script:Bridge.StartError) 'warn' }
+    else { Write-RamLog (Get-RamText -Text 'Приём из браузера: все порты диапазона заняты, включить не вышло.') 'warn' }
     return 0
 }
 
@@ -241,7 +244,7 @@ function Stop-RamCookieBridge {
     if ($null -ne $script:Bridge.Listener) {
         try { $script:Bridge.Listener.Stop() } catch { }
         try { $script:Bridge.Listener.Close() } catch { }
-        Write-RamLog "Приём из браузера выключен, порт $($script:Bridge.Port) освобождён." 'info'
+        Write-RamLog (Get-RamText -Text 'Приём из браузера выключен, порт {0} освобождён.' -Arguments @([string]($($script:Bridge.Port)))) 'info'
     }
     $script:Bridge.Listener = $null
     $script:Bridge.Task     = $null
@@ -353,12 +356,12 @@ function Invoke-RamBridgePump {
                 Write-RamBridgeText -Response $resp -Text 'ok' -Type 'text/plain'
                 if (-not [string]::IsNullOrWhiteSpace($body)) {
                     $why = $body.Trim()
-                    Write-RamLog "Приём из браузера: $why" 'warn'
+                    Write-RamLog (Get-RamText -Text 'Приём из браузера: {0}' -Arguments @([string]($why))) 'warn'
                     # Окно поднимаем ДО сообщения: иначе модальное окно
                     # открывается за браузером, а поднятие происходит уже
                     # после того, как человек его закроет.
                     Show-RamMainWindow
-                    Show-RamMessage -Kind 'warn' -Message ('Не вышло забрать вход из браузера.' +
+                    Show-RamMessage -Kind 'warn' -Message ((Get-RamText -Text 'Не вышло забрать вход из браузера.') +
                         [Environment]::NewLine + [Environment]::NewLine + $why)
                 }
             }
@@ -368,7 +371,7 @@ function Invoke-RamBridgePump {
             }
         }
     } catch {
-        Write-RamLog "Приём из браузера: сбой при разборе запроса: $($_.Exception.Message)" 'warn'
+        Write-RamLog (Get-RamText -Text 'Приём из браузера: сбой при разборе запроса: {0}' -Arguments @([string]((Get-RamErrorText -Text ($($_.Exception.Message)))))) 'warn'
         try { $ctx.Response.Close() } catch { }
     } finally {
         $script:Bridge.Pumping = $false
@@ -405,7 +408,7 @@ function Receive-RamBridgeCookie {
     # ответе 429 запрос ждёт до 25 секунд — и Windows успевает дописать к
     # заголовку окна «Не отвечает». Честно говорим, что происходит, и даём
     # окну перерисоваться перед тем, как уйти в ожидание.
-    Set-RamStatus 'Проверяю вход, полученный из браузера…'
+    Set-RamStatus (Get-RamText -Text 'Проверяю вход, полученный из браузера…')
     if ($script:UI.ContainsKey('Form') -and $null -ne $script:UI.Form) {
         try { $script:UI.Form.Refresh() } catch { }
     }
@@ -415,15 +418,15 @@ function Receive-RamBridgeCookie {
     try {
         $r = Import-RamAccountLine -Line $Cookie
     } catch {
-        Write-RamLog "Приём из браузера: не удалось добавить аккаунт: $($_.Exception.Message)" 'err'
+        Write-RamLog (Get-RamText -Text 'Приём из браузера: не удалось добавить аккаунт: {0}' -Arguments @([string]((Get-RamErrorText -Text ($($_.Exception.Message)))))) 'err'
         return $false
     }
 
     if ($r -and $r.Ok) {
-        Write-RamLog "Из браузера добавлен аккаунт: $($r.Alias)" 'ok'
+        Write-RamLog (Get-RamText -Text 'Из браузера добавлен аккаунт: {0}' -Arguments @([string]($($r.Alias)))) 'ok'
         Save-RamState
         if ($script:UI.ContainsKey('Cards')) {
-            Invoke-RamSafe -What 'обновление списка после приёма из браузера' -Body {
+            Invoke-RamSafe -What (Get-RamText -Text 'обновление списка после приёма из браузера') -Body {
                 Build-RamCards
                 Update-RamHeaderCounts
             }
@@ -437,15 +440,15 @@ function Receive-RamBridgeCookie {
         #
         # Поэтому: поднимаем окно и говорим словами, что именно приехало.
         Show-RamMainWindow
-        $what = if ($r.New) { 'Добавлен аккаунт' } else { 'Обновлён вход' }
-        Show-RamMessage -Kind 'ok' -Message ("$what из браузера:" + [Environment]::NewLine + [Environment]::NewLine +
+        $what = if ($r.New) { (Get-RamText -Text 'Добавлен аккаунт') } else { (Get-RamText -Text 'Обновлён вход') }
+        Show-RamMessage -Kind 'ok' -Message ((Get-RamText -Text '{0} из браузера:' -Arguments @([string]($what))) + [Environment]::NewLine + [Environment]::NewLine +
                                              $r.Alias)
         return $true
     } else {
-        $why = if ($r -and $r.Error) { $r.Error } else { 'Roblox не подтвердил вход' }
-        Write-RamLog "Приём из браузера: кука пришла, но аккаунт не добавлен — $why" 'warn'
+        $why = if ($r -and $r.Error) { $r.Error } else { (Get-RamText -Text 'Roblox не подтвердил вход') }
+        Write-RamLog (Get-RamText -Text 'Приём из браузера: кука пришла, но аккаунт не добавлен — {0}' -Arguments @([string]($why))) 'warn'
         Show-RamMainWindow
-        Show-RamMessage -Kind 'warn' -Message ("Вход из браузера не принят." + [Environment]::NewLine + [Environment]::NewLine + $why)
+        Show-RamMessage -Kind 'warn' -Message ((Get-RamText -Text 'Вход из браузера не принят.') + [Environment]::NewLine + [Environment]::NewLine + $why)
         return $false
     }
 }
@@ -470,7 +473,7 @@ function Set-RamBridgeHotkeyWithFallback {
 
     if (Register-RamBridgeHotkey -Key $Preferred) {
         $script:Bridge.Hotkey = $Preferred
-        Write-RamLog "Приём из браузера: клавиша $Preferred." 'ok'
+        Write-RamLog (Get-RamText -Text 'Приём из браузера: клавиша {0}.' -Arguments @([string]($Preferred))) 'ok'
         return $Preferred
     }
 
@@ -480,26 +483,26 @@ function Set-RamBridgeHotkeyWithFallback {
             $script:Bridge.Hotkey = $k
             $script:Settings.BridgeHotkey = $k
             Save-RamSettings -Settings $script:Settings
-            Write-RamLog "Клавишу $Preferred держит другая программа — приём переехал на $k." 'warn'
+            Write-RamLog (Get-RamText -Text 'Клавишу {0} держит другая программа — приём переехал на {1}.' -Arguments @([string]($Preferred),[string]($k))) 'warn'
             if ($Announce) {
                 Show-RamMessage -Kind 'warn' -Message (
-                    "Клавишу $Preferred в этой системе уже занимает другая программа, и Windows не отдала её AltHub." +
+                    (Get-RamText -Text 'Клавишу {0} в этой системе уже занимает другая программа, и Windows не отдала её AltHub.' -Arguments @([string]($Preferred))) +
                     [Environment]::NewLine + [Environment]::NewLine +
-                    "Приём входа переехал на $k — жми её на странице roblox.com." +
+                    (Get-RamText -Text 'Приём входа переехал на {0} — жми её на странице roblox.com.' -Arguments @([string]($k))) +
                     [Environment]::NewLine + [Environment]::NewLine +
-                    'Клавишу можно выбрать другую в настройках, раздел «Из браузера». А можно вообще не пользоваться клавишей: на панели браузера есть значок AltHub, он делает то же самое.')
+                    (Get-RamText -Text 'Клавишу можно выбрать другую в настройках, раздел «Из браузера». А можно вообще не пользоваться клавишей: на панели браузера есть значок AltHub, он делает то же самое.'))
             }
             return $k
         }
     }
 
     $script:Bridge.Hotkey = ''
-    Write-RamLog 'Все клавиши приёма заняты другими программами.' 'err'
+    Write-RamLog (Get-RamText -Text 'Все клавиши приёма заняты другими программами.') 'err'
     if ($Announce) {
         Show-RamMessage -Kind 'warn' -Message (
-            'Ни одну из клавиш приёма Windows не отдала — их держат другие программы.' +
+            (Get-RamText -Text 'Ни одну из клавиш приёма Windows не отдала — их держат другие программы.') +
             [Environment]::NewLine + [Environment]::NewLine +
-            'Приём из браузера всё равно работает: нажми значок AltHub на панели браузера, он делает ровно то же самое.')
+            (Get-RamText -Text 'Приём из браузера всё равно работает: нажми значок AltHub на панели браузера, он делает ровно то же самое.'))
     }
     return ''
 }
@@ -519,9 +522,9 @@ function Invoke-RamBrowserGrab {
         # Молча ничего не делать нельзя: человек нажал клавишу и ждёт
         # результата. Если приёма нет — надо сказать и сразу предложить
         # включить, а не отправлять искать настройку самому.
-        Write-RamLog 'Приём из браузера выключен.' 'warn'
-        if (Confirm-Ram ('Приём входа из браузера сейчас выключен, поэтому нажатие ничего не сделало.' +
-                         [Environment]::NewLine + [Environment]::NewLine + 'Включить его?')) {
+        Write-RamLog (Get-RamText -Text 'Приём из браузера выключен.') 'warn'
+        if (Confirm-Ram ((Get-RamText -Text 'Приём входа из браузера сейчас выключен, поэтому нажатие ничего не сделало.') +
+                         [Environment]::NewLine + [Environment]::NewLine + (Get-RamText -Text 'Включить его?'))) {
             $script:Settings.BridgeEnabled = $true
             Save-RamSettings -Settings $script:Settings
             Update-RamCookieBridgeState
@@ -532,10 +535,10 @@ function Invoke-RamBrowserGrab {
     $url = "http://127.0.0.1:$port/grab?althub_grab=$port&althub_token=$($script:Bridge.Token)"
     try {
         Start-Process $url | Out-Null
-        Write-RamLog 'Прошу браузер отдать текущий вход…' 'info'
+        Write-RamLog (Get-RamText -Text 'Прошу браузер отдать текущий вход…') 'info'
         return $true
     } catch {
-        Write-RamLog "Не удалось открыть браузер: $($_.Exception.Message)" 'err'
+        Write-RamLog (Get-RamText -Text 'Не удалось открыть браузер: {0}' -Arguments @([string]((Get-RamErrorText -Text ($($_.Exception.Message)))))) 'err'
         return $false
     }
 }
@@ -570,7 +573,7 @@ function Update-RamCookieBridgeState {
         [void](Register-RamHotkeys -OnPressed {
             param($sender, $e)
             if ($e.Id -eq 20) {
-                Invoke-RamSafe -What 'приём входа из браузера' -Body { [void](Invoke-RamBrowserGrab) }
+                Invoke-RamSafe -What (Get-RamText -Text 'приём входа из браузера') -Body { [void](Invoke-RamBrowserGrab) }
             } else {
                 Invoke-RamFocusAccountByIndex -Index $e.Id
             }

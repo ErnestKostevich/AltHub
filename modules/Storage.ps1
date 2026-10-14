@@ -388,6 +388,7 @@ function Get-RamDefaultSettings {
         LaunchDelaySec  = 8      # пауза между запусками аккаунтов
         LaunchMinimized = $true  # новые окна Roblox появляются свёрнутыми
         Locale          = 'ru_ru'
+        UiLanguage      = 'ru'   # язык AltHub, независимо от языка клиента Roblox
         Theme           = 'dark' # ключ темы (стоковой или своей)
         MenuStyle       = 'wide' # classic | water | wide; новое меню для чистой установки
         SettingsSchemaVersion = 14
@@ -507,6 +508,7 @@ function Load-RamSettings {
     # Мусор в файле не должен превращаться в непонятное поведение окна.
     if ($s.OnClose -notin @('exit', 'tray')) { $s.OnClose = 'exit' }
     if ($s.MenuStyle -notin @('classic','water','wide')) { $s.MenuStyle = 'classic' }
+    if ($s.UiLanguage -notin @('ru','en')) { $s.UiLanguage = 'ru' }
     if ([string]::IsNullOrWhiteSpace([string]$s.BridgeHotkey)) { $s.BridgeHotkey = 'F10' }
     if ($s.BridgeHotkey -notin (Get-RamBridgeHotkeyChoices)) { $s.BridgeHotkey = 'F10' }
     return $s

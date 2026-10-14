@@ -336,12 +336,12 @@ function Get-RamLabelColors {
     <# Цветные метки для группировки глазом. #>
     $t = $Global:RamTheme
     return @(
-        [pscustomobject]@{ Key = '';       Text = 'без метки'; Color = $t.Border },
-        [pscustomobject]@{ Key = 'red';    Text = 'красная';   Color = [System.Drawing.Color]::FromArgb(239,  68,  68) },
-        [pscustomobject]@{ Key = 'orange'; Text = 'оранжевая'; Color = [System.Drawing.Color]::FromArgb(245, 158,  11) },
-        [pscustomobject]@{ Key = 'green';  Text = 'зелёная';   Color = [System.Drawing.Color]::FromArgb( 34, 197,  94) },
-        [pscustomobject]@{ Key = 'blue';   Text = 'синяя';     Color = [System.Drawing.Color]::FromArgb( 59, 130, 246) },
-        [pscustomobject]@{ Key = 'purple'; Text = 'фиолетовая';Color = [System.Drawing.Color]::FromArgb(168,  85, 247) }
+        [pscustomobject]@{ Key = '';       Text = (Get-RamText -Text 'без метки'); Color = $t.Border },
+        [pscustomobject]@{ Key = 'red';    Text = (Get-RamText -Text 'красная');   Color = [System.Drawing.Color]::FromArgb(239,  68,  68) },
+        [pscustomobject]@{ Key = 'orange'; Text = (Get-RamText -Text 'оранжевая'); Color = [System.Drawing.Color]::FromArgb(245, 158,  11) },
+        [pscustomobject]@{ Key = 'green';  Text = (Get-RamText -Text 'зелёная');   Color = [System.Drawing.Color]::FromArgb( 34, 197,  94) },
+        [pscustomobject]@{ Key = 'blue';   Text = (Get-RamText -Text 'синяя');     Color = [System.Drawing.Color]::FromArgb( 59, 130, 246) },
+        [pscustomobject]@{ Key = 'purple'; Text = (Get-RamText -Text 'фиолетовая');Color = [System.Drawing.Color]::FromArgb(168,  85, 247) }
     )
 }
 
@@ -515,15 +515,15 @@ function Build-RamCardsWater {
 
         if (@($script:Accounts).Count -eq 0) {
             # Высота — по переносу текста: на узком окне и крупном шрифте строк больше.
-            $host_.Controls.Add((New-RamNoticeCard -Width $W -Title 'Пока ни одного аккаунта' `
-                -Text 'Войди в приложении Roblox под нужным аккаунтом и нажми «Добавить» — менеджер заберёт вход сам, пароль вводить не надо.'))
+            $host_.Controls.Add((New-RamNoticeCard -Width $W -Title (Get-RamText -Text 'Пока ни одного аккаунта') `
+                -Text (Get-RamText -Text 'Войди в приложении Roblox под нужным аккаунтом и нажми «Добавить» — менеджер заберёт вход сам, пароль вводить не надо.')))
             return
         }
 
         if ($visible.Count -eq 0) {
-            $why = if ($script:GroupFilter) { "В наборе «$($script:GroupFilter)» ничего не нашлось" }
-                   else { "По запросу «$($script:Filter)» ничего не нашлось" }
-            $host_.Controls.Add((New-RamNoticeCard -Width $W -Title $why -Text 'Сбрось поиск (Esc) или выбери набор «Все» вверху.'))
+            $why = if ($script:GroupFilter) { (Get-RamText -Text 'В наборе «{0}» ничего не нашлось' -Arguments @([string]($($script:GroupFilter)))) }
+                   else { (Get-RamText -Text 'По запросу «{0}» ничего не нашлось' -Arguments @([string]($($script:Filter)))) }
+            $host_.Controls.Add((New-RamNoticeCard -Width $W -Title $why -Text (Get-RamText -Text 'Сбрось поиск (Esc) или выбери набор «Все» вверху.')))
             return
         }
 
@@ -764,10 +764,10 @@ function Build-RamCardsWater {
                                     -Font $t.FontTitle -Truncatable
             $card.Controls.Add($lblName)
 
-            $sub = if ($a.Username) { "@$($a.Username)  ·  ID $($a.UserId)" } else { 'вход не проверен' }
+            $sub = if ($a.Username) { "@$($a.Username)  ·  ID $($a.UserId)" } else { (Get-RamText -Text 'вход не проверен') }
             # Коротко: длинная подсказка съедала строку целиком и прятала ник.
             # Что делать — написано на красной кнопке внизу.
-            if ([string]$a.CookieOk -eq 'no') { $sub = 'вход мёртв   ·   ' + $sub }
+            if ([string]$a.CookieOk -eq 'no') { $sub = (Get-RamText -Text 'вход мёртв   ·   ') + $sub }
             if ($compact -and -not [string]::IsNullOrWhiteSpace($a.Group)) { $sub = "[$($a.Group)]  $sub" }
             $subColor = if ([string]$a.CookieOk -eq 'no') { $t.Danger } else { $t.Muted }
             $lblSub = New-RamLabel -Text $sub -X $nameX -Y $subY -Width $maxTextW -Height $hSm `
@@ -785,9 +785,9 @@ function Build-RamCardsWater {
 
             $gameTxt = if ($a.GameName) { $a.GameName }
                        elseif ($a.PlaceId) { "ID $($a.PlaceId)" }
-                       else { 'просто Roblox' }
+                       else { (Get-RamText -Text 'просто Roblox') }
             if ($compact -and [int]$a.Robux -ge 0) { $gameTxt = "$($a.Robux) R$ · $gameTxt" }
-            if ($a.LinkCode) { $gameTxt += '  · приват' }
+            if ($a.LinkCode) { $gameTxt += (Get-RamText -Text '  · приват') }
             $lblGame = New-RamLabel -Text $gameTxt -X $gameX -Y $gameY -Width $gameW -Height $hBody `
                                     -Color $(if ($a.PlaceId) { $t.Text } else { $t.Muted }) -Truncatable
             $card.Controls.Add($lblGame)
@@ -806,7 +806,7 @@ function Build-RamCardsWater {
 
                 $facts = @($(if ([int]$a.Robux -ge 0) { "$($a.Robux) R$" } else { 'Robux: —' }))
                 if ([string]$a.Premium -eq 'yes') { $facts += 'Premium' }
-                if ($a.Created)               { $facts += "с $($a.Created)" }
+                if ($a.Created)               { $facts += (Get-RamText -Text 'с {0}' -Arguments @([string]($($a.Created)))) }
                 if ($facts.Count -gt 0) {
                     $card.Controls.Add((New-RamLabel -Text ($facts -join '  ·  ') -X $gameX -Y $factsY -Width $gameW -Height $hSm `
                                                     -Font $t.FontSmall -Color $t.Muted -Truncatable))
@@ -904,11 +904,11 @@ function Build-RamCardsWater {
                 # трогаем (только play/gear/stop заменены на глифы по просьбе
                 # пользователя).
                 $bPlay = New-RamButton -Text '↻' -Width $playRowW -Height $playRowH -Fixed -Kind 'danger' -Radius $playRadius `
-                                       -Tooltip 'Войти в этот аккаунт заново — вход умер' -OnClick {
+                                       -Tooltip (Get-RamText -Text 'Войти в этот аккаунт заново — вход умер') -OnClick {
                     Invoke-RamAccountPrimaryAction -Id ([string]$this.Tag.AccountId)
                 }
             } else {
-                $bPlay = New-RamButton -Text '' -Icon 'play' -IconOnly -Width $playRowW -Height $playRowH -Fixed -Kind 'primary' -Radius $playRadius -Tooltip 'Запустить этот аккаунт' -OnClick {
+                $bPlay = New-RamButton -Text '' -Icon 'play' -IconOnly -Width $playRowW -Height $playRowH -Fixed -Kind 'primary' -Radius $playRadius -Tooltip (Get-RamText -Text 'Запустить этот аккаунт') -OnClick {
                     Invoke-RamAccountPrimaryAction -Id ([string]$this.Tag.AccountId)
                 }
             }
@@ -921,7 +921,7 @@ function Build-RamCardsWater {
             # псевдографики «✎» — на мелком шрифте карточки он не читался как
             # карандаш и больше напоминал крапинку/изюминку, чем действие
             # «настроить».
-            $bEdit = New-RamButton -Text '' -Icon 'gear' -IconOnly -Width $icoW -Height $btnH -Fixed -Tooltip 'Настройки аккаунта' -OnClick {
+            $bEdit = New-RamButton -Text '' -Icon 'gear' -IconOnly -Width $icoW -Height $btnH -Fixed -Tooltip (Get-RamText -Text 'Настройки аккаунта') -OnClick {
                 $old = Get-RamAccountById -Id $this.Tag.AccountId
                 if ($null -eq $old) { return }
                 $new = Show-RamAccountDialog -Account $old
@@ -929,20 +929,20 @@ function Build-RamCardsWater {
                     foreach ($p in $new.PSObject.Properties.Name) { $old.$p = $new.$p }
                     Save-RamState
                     Build-RamCards
-                    Write-RamLog "Изменён аккаунт '$($old.Alias)'." 'ok'
+                    Write-RamLog (Get-RamText -Text 'Изменён аккаунт ''{0}''.' -Arguments @([string]($($old.Alias)))) 'ok'
                 }
             }
             $bEdit.Tag | Add-Member -NotePropertyName AccountId -NotePropertyValue $a.Id -Force
             $bEdit.Location = New-Object System.Drawing.Point($editX, $midY)
             $card.Controls.Add($bEdit)
 
-            $bStop = New-RamButton -Text '' -Icon 'stop' -IconOnly -Width $icoW -Height $btnH -Fixed -Tooltip 'Закрыть окно этого аккаунта' -OnClick {
+            $bStop = New-RamButton -Text '' -Icon 'stop' -IconOnly -Width $icoW -Height $btnH -Fixed -Tooltip (Get-RamText -Text 'Закрыть окно этого аккаунта') -OnClick {
                 $id   = [string]$this.Tag.AccountId
                 $inst = $script:Instances[$id]
                 $acc  = Get-RamAccountById -Id $id
                 if ($null -eq $inst) {
                     # Ответ и на «делать нечего»: молчащая кнопка неотличима от сломанной.
-                    Set-RamStatus ("Окно «{0}» сейчас не запущено — закрывать нечего." -f $acc.Alias)
+                    Set-RamStatus ((Get-RamText -Text 'Окно «{0}» сейчас не запущено — закрывать нечего.') -f $acc.Alias)
                     return
                 }
                 # Закрытие руками — не вылет: счётчик вылетов не трогаем.
@@ -953,10 +953,10 @@ function Build-RamCardsWater {
                 try {
                     if (Stop-RamRobloxInstance -ProcessId $inst.ProcessId) {
                         $script:Instances.Remove($id)
-                        Write-RamLog "'$($acc.Alias)' закрыт." 'ok'
+                        Write-RamLog (Get-RamText -Text '''{0}'' закрыт.' -Arguments @([string]($($acc.Alias)))) 'ok'
                     } else {
-                        Write-RamLog "Не удалось закрыть '$($acc.Alias)' — окно остаётся под контролем менеджера." 'warn'
-                        Show-RamMessage -Kind 'warn' -Message ("Окно «$($acc.Alias)» закрыть не вышло. Оно по-прежнему под присмотром AltHub — попробуй ещё раз или закрой его вручную.")
+                        Write-RamLog (Get-RamText -Text 'Не удалось закрыть ''{0}'' — окно остаётся под контролем менеджера.' -Arguments @([string]($($acc.Alias)))) 'warn'
+                        Show-RamMessage -Kind 'warn' -Message ((Get-RamText -Text 'Окно «{0}» закрыть не вышло. Оно по-прежнему под присмотром AltHub — попробуй ещё раз или закрой его вручную.' -Arguments @([string]($($acc.Alias)))))
                     }
                 } finally {
                     # Иначе при сбое закрытия карточка навсегда застревала в «выход...».
@@ -1012,27 +1012,27 @@ function Update-RamCardStatesWater {
             # под аватаркой. "Выход" короче и садится без обрезки — и по
             # регистру теперь совпадает с соседними подписями ("не запущен",
             # "в игре", "в очереди" — все со строчной буквы).
-            Set-RamStatusDot -Dot $entry.Dot -Caption 'выход...' -Color $t.Danger -Avatar $entry.Avatar
+            Set-RamStatusDot -Dot $entry.Dot -Caption (Get-RamText -Text 'выход...') -Color $t.Danger -Avatar $entry.Avatar
         } elseif ($osClosing) {
-            Set-RamStatusDot -Dot $entry.Dot -Caption 'выход...' -Color $t.Danger -Avatar $entry.Avatar
+            Set-RamStatusDot -Dot $entry.Dot -Caption (Get-RamText -Text 'выход...') -Color $t.Danger -Avatar $entry.Avatar
         } elseif ($null -ne $inst) {
             if ($inst.Handle -ne [IntPtr]::Zero) {
-                Set-RamStatusDot -Dot $entry.Dot -Caption 'в игре' -Color $t.Ok -Avatar $entry.Avatar
+                Set-RamStatusDot -Dot $entry.Dot -Caption (Get-RamText -Text 'в игре') -Color $t.Ok -Avatar $entry.Avatar
             } else {
                 # Со строчной "з" — единственная подпись, где буква была
                 # заглавной вопреки остальным ("не запущен", "в игре",
                 # "в очереди", "выход").
-                Set-RamStatusDot -Dot $entry.Dot -Caption 'загрузка...' -Color $t.Warn -Avatar $entry.Avatar
+                Set-RamStatusDot -Dot $entry.Dot -Caption (Get-RamText -Text 'загрузка...') -Color $t.Warn -Avatar $entry.Avatar
             }
         } elseif ($script:LaunchQueue -contains $a.Id) {
-            Set-RamStatusDot -Dot $entry.Dot -Caption $(if ($script:LaunchPaused) { 'пауза' } else { 'в очереди' }) -Color $t.Accent -Avatar $entry.Avatar
+            Set-RamStatusDot -Dot $entry.Dot -Caption $(if ($script:LaunchPaused) { (Get-RamText -Text 'пауза') } else { (Get-RamText -Text 'в очереди') }) -Color $t.Accent -Avatar $entry.Avatar
         } else {
             # Мёртвый вход виден сразу, а не только по кнопке ↻: красная
             # подпись и красная рамка аватарки.
             if ([string]$a.CookieOk -eq 'no') {
-                Set-RamStatusDot -Dot $entry.Dot -Caption 'вход мёртв' -Color $t.Danger -Avatar $entry.Avatar
+                Set-RamStatusDot -Dot $entry.Dot -Caption (Get-RamText -Text 'вход мёртв') -Color $t.Danger -Avatar $entry.Avatar
             } else {
-                Set-RamStatusDot -Dot $entry.Dot -Caption 'не запущен' -Color $t.Muted -Avatar $entry.Avatar
+                Set-RamStatusDot -Dot $entry.Dot -Caption (Get-RamText -Text 'не запущен') -Color $t.Muted -Avatar $entry.Avatar
             }
         }
     }
@@ -1222,20 +1222,24 @@ function Confirm-RamTrayVisible {
     # Сначала показываем значок и подсказку, потом спрашиваем — чтобы человеку
     # было куда посмотреть.
     try {
-        $script:UI.Tray.BalloonTipTitle = 'Это значок AltHub'
-        $script:UI.Tray.BalloonTipText  = 'Он рядом с часами. Если не видно — нажми стрелку ^ слева от часов.'
+        $script:UI.Tray.BalloonTipTitle = (Get-RamText -Text 'Это значок AltHub')
+        $script:UI.Tray.BalloonTipText  = (Get-RamText -Text 'Он рядом с часами. Если не видно — нажми стрелку ^ слева от часов.')
         $script:UI.Tray.BalloonTipIcon  = [System.Windows.Forms.ToolTipIcon]::Info
         $script:UI.Tray.ShowBalloonTip(6000)
     } catch { }
 
-    $ans = Show-RamMessage -Title 'Крестик убирает в часы' -Kind 'info' -Message (
-        "Сейчас рядом с часами должен был появиться значок AltHub.`n`n" +
-        "В Windows 11 новые значки часто прячутся под стрелку ^ слева от часов — " +
-        "загляни туда и, если он там, перетащи его наружу.`n`n" +
-        "Видишь значок?"
+    $ans = Show-RamMessage -Title (Get-RamText -Text 'Крестик убирает в часы') -Kind 'info' -Message (
+        (Get-RamText -Text 'Сейчас рядом с часами должен был появиться значок AltHub.
+
+') +
+        (Get-RamText -Text 'В Windows 11 новые значки часто прячутся под стрелку ^ слева от часов — ') +
+        (Get-RamText -Text 'загляни туда и, если он там, перетащи его наружу.
+
+') +
+        (Get-RamText -Text 'Видишь значок?')
     ) -Buttons @(
-        @{ Text = 'Да, вижу';            Value = 'yes'; Kind = 'primary' },
-        @{ Text = 'Нет — просто закрывай'; Value = 'no' }
+        @{ Text = (Get-RamText -Text 'Да, вижу');            Value = 'yes'; Kind = 'primary' },
+        @{ Text = (Get-RamText -Text 'Нет — просто закрывай'); Value = 'no' }
     )
 
     if ([string]$ans -eq 'yes') {
@@ -1249,9 +1253,11 @@ function Confirm-RamTrayVisible {
     $script:Settings.OnClose = 'exit'
     $script:Settings.TrayConfirmed = $false
     Save-RamSettingsNow
-    Write-RamLog 'Значок в часах не виден — крестик переключён на обычное закрытие.' 'warn'
-    Show-RamInfo ("Тогда крестик будет просто закрывать программу — так её точно не потеряешь.`n`n" +
-                  'Поменять это можно в «Настройки» -> «Прочее».')
+    Write-RamLog (Get-RamText -Text 'Значок в часах не виден — крестик переключён на обычное закрытие.') 'warn'
+    Show-RamInfo ((Get-RamText -Text 'Тогда крестик будет просто закрывать программу — так её точно не потеряешь.
+
+') +
+                  (Get-RamText -Text 'Поменять это можно в «Настройки» -> «Прочее».'))
     return $false
 }
 
@@ -1270,11 +1276,11 @@ function Show-RamTrayHint {
     Save-RamSettingsNow
 
     try {
-        $script:UI.Tray.BalloonTipTitle = "$($script:AppName) продолжает работать"
+        $script:UI.Tray.BalloonTipTitle = (Get-RamText -Text '{0} продолжает работать' -Arguments @([string]($($script:AppName))))
         # Раз крестик больше не закрывает программу, человеку надо сразу
         # сказать, как её всё-таки закрыть — иначе он будет искать.
         $script:UI.Tray.BalloonTipText  =
-            'Окно ушло в часы. Клик по значку возвращает его, правый клик — меню, там же «Выход».'
+            (Get-RamText -Text 'Окно ушло в часы. Клик по значку возвращает его, правый клик — меню, там же «Выход».')
         $script:UI.Tray.BalloonTipIcon  = [System.Windows.Forms.ToolTipIcon]::Info
         $script:UI.Tray.ShowBalloonTip(7000)
     } catch { }
@@ -1347,7 +1353,7 @@ function Update-RamOneGameName {
             Save-RamSettingsNow
             Build-RamCards
             if ($script:Section -eq 'games') { Update-RamGamesPanel }
-            Write-RamLog "Название игры подтянулось: «$name»." 'info'
+            Write-RamLog (Get-RamText -Text 'Название игры подтянулось: «{0}».' -Arguments @([string]($name))) 'info'
         }
         return
     }
@@ -1410,14 +1416,16 @@ function Clear-RamAppSession {
 
     $running = @(Get-RamRobloxProcesses)
     if ($running.Count -gt 0) {
-        if (-not (Confirm-Ram "Чтобы сменить аккаунт, надо закрыть Roblox (открыто окон: $($running.Count)).`n`nЗакрыть сейчас?")) { return $false }
+        if (-not (Confirm-Ram (Get-RamText -Text 'Чтобы сменить аккаунт, надо закрыть Roblox (открыто окон: {0}).
+
+Закрыть сейчас?' -Arguments @([string]($($running.Count)))))) { return $false }
         foreach ($p in $running) { [void](Stop-RamRobloxInstance -ProcessId $p.Id) }
         Start-Sleep -Milliseconds 2000
     }
 
     try {
         $backup = Clear-RamRobloxSession -Label $Label
-        Write-RamLog ('Вход приложения отложен в копию: ' + (Split-Path -Leaf $backup)) 'ok'
+        Write-RamLog ((Get-RamText -Text 'Вход приложения отложен в копию: ') + (Split-Path -Leaf $backup)) 'ok'
         return $true
     } catch {
         Show-RamError $_.Exception.Message
@@ -1449,25 +1457,25 @@ function Build-RamCardMenuItems {
     [void](Add-RamMenuItem -Menu $m -Text $acc.Alias -Disabled)
     [void](Add-RamMenuItem -Menu $m -Separator)
     if ($script:LaunchQueue -contains $id) {
-        [void](Add-RamMenuItem -Menu $m -Text 'Убрать из очереди' -Tag $id -OnClick { Remove-RamQueuedAccount -Id ([string]$this.Tag) })
+        [void](Add-RamMenuItem -Menu $m -Text (Get-RamText -Text 'Убрать из очереди') -Tag $id -OnClick { Remove-RamQueuedAccount -Id ([string]$this.Tag) })
     }
 
-    [void](Add-RamMenuItem -Menu $m -Text '▶  Запустить' -Tag $id -OnClick {
+    [void](Add-RamMenuItem -Menu $m -Text (Get-RamText -Text '▶  Запустить') -Tag $id -OnClick {
         Add-RamToLaunchQueue -Accounts @((Get-RamAccountById -Id ([string]$this.Tag)))
     })
 
     if ($running) {
-        [void](Add-RamMenuItem -Menu $m -Text 'Показать окно' -Tag $id -OnClick {
+        [void](Add-RamMenuItem -Menu $m -Text (Get-RamText -Text 'Показать окно') -Tag $id -OnClick {
             $inst = $script:Instances[[string]$this.Tag]
             if ($null -ne $inst -and $inst.Handle -ne [IntPtr]::Zero) {
                 [void](Set-RamWindowForeground -Handle $inst.Handle)
             }
         })
-        [void](Add-RamMenuItem -Menu $m -Text '■  Закрыть окно' -Tag $id -OnClick {
+        [void](Add-RamMenuItem -Menu $m -Text (Get-RamText -Text '■  Закрыть окно') -Tag $id -OnClick {
             $id2  = [string]$this.Tag
             $inst = $script:Instances[$id2]
             if ($null -eq $inst) {
-                Set-RamStatus 'Окно этого аккаунта сейчас не запущено — закрывать нечего.'
+                Set-RamStatus (Get-RamText -Text 'Окно этого аккаунта сейчас не запущено — закрывать нечего.')
                 return
             }
             $acc2 = Get-RamAccountById -Id $id2
@@ -1478,10 +1486,10 @@ function Build-RamCardMenuItems {
             try {
                 if (Stop-RamRobloxInstance -ProcessId $inst.ProcessId) {
                     $script:Instances.Remove($id2)
-                    Write-RamLog "'$($acc2.Alias)' закрыт." 'ok'
+                    Write-RamLog (Get-RamText -Text '''{0}'' закрыт.' -Arguments @([string]($($acc2.Alias)))) 'ok'
                 } else {
-                    Write-RamLog "Не удалось закрыть '$($acc2.Alias)' — окно остаётся под контролем менеджера." 'warn'
-                    Show-RamMessage -Kind 'warn' -Message ("Окно «$($acc2.Alias)» закрыть не вышло. Попробуй ещё раз или закрой его вручную.")
+                    Write-RamLog (Get-RamText -Text 'Не удалось закрыть ''{0}'' — окно остаётся под контролем менеджера.' -Arguments @([string]($($acc2.Alias)))) 'warn'
+                    Show-RamMessage -Kind 'warn' -Message ((Get-RamText -Text 'Окно «{0}» закрыть не вышло. Попробуй ещё раз или закрой его вручную.' -Arguments @([string]($($acc2.Alias)))))
                 }
             } finally {
                 # Раньше при сбое здесь стоял return, и карточка навсегда
@@ -1494,10 +1502,10 @@ function Build-RamCardMenuItems {
 
     [void](Add-RamMenuItem -Menu $m -Separator)
 
-    [void](Add-RamMenuItem -Menu $m -Text 'Задать игру...' -Tag $id -OnClick {
+    [void](Add-RamMenuItem -Menu $m -Text (Get-RamText -Text 'Задать игру...') -Tag $id -OnClick {
         Invoke-RamAssignGame -Accounts @((Get-RamAccountById -Id ([string]$this.Tag)))
     })
-    [void](Add-RamMenuItem -Menu $m -Text 'Настройки аккаунта...' -Tag $id -OnClick {
+    [void](Add-RamMenuItem -Menu $m -Text (Get-RamText -Text 'Настройки аккаунта...') -Tag $id -OnClick {
         $old = Get-RamAccountById -Id ([string]$this.Tag)
         if ($null -eq $old) { return }
         $new = Show-RamAccountDialog -Account $old
@@ -1505,7 +1513,7 @@ function Build-RamCardMenuItems {
             foreach ($p in $new.PSObject.Properties.Name) { $old.$p = $new.$p }
             Save-RamState
             Build-RamCards
-            Write-RamLog "Изменён аккаунт '$($old.Alias)'." 'ok'
+            Write-RamLog (Get-RamText -Text 'Изменён аккаунт ''{0}''.' -Arguments @([string]($($old.Alias)))) 'ok'
         }
     })
 
@@ -1513,7 +1521,7 @@ function Build-RamCardMenuItems {
     # Ключ набора и аккаунт лежат в Tag одной строкой: обработчик берёт своё,
     # а не последнее из цикла.
     $sub = New-Object System.Windows.Forms.ToolStripMenuItem
-    $sub.Text      = 'Готовый набор настроек'
+    $sub.Text      = (Get-RamText -Text 'Готовый набор настроек')
     $sub.ForeColor = $t.Text
     $sub.Tag       = $id
     $cur = Get-RamMatchingPreset -Account $acc
@@ -1531,14 +1539,14 @@ function Build-RamCardMenuItems {
                 Save-RamState
                 Build-RamCards
                 $pr = Get-RamPreset -Key $parts[1]
-                Write-RamLog "'$($acc2.Alias)': набор «$($pr.Title)» — $(Get-RamAccountSettingsSummary -Account $acc2)." 'ok'
+                Write-RamLog (Get-RamText -Text '''{0}'': набор «{1}» — {2}.' -Arguments @([string]($($acc2.Alias)),[string]($($pr.Title)),[string]($(Get-RamAccountSettingsSummary -Account $acc2)))) 'ok'
             }
         })
         [void]$sub.DropDownItems.Add($mi)
     }
     [void]$m.Items.Add($sub)
 
-    $fixText  = if ($dead) { 'Починить вход  —  сейчас мёртв' } else { 'Обновить вход из приложения Roblox' }
+    $fixText  = if ($dead) { (Get-RamText -Text 'Починить вход  —  сейчас мёртв') } else { (Get-RamText -Text 'Обновить вход из приложения Roblox') }
     # Красный оставлен разрушительному пункту («Убрать»). Мёртвый вход — это
     # предупреждение, а не опасность: чинить его совершенно безопасно.
     $fixColor = if ($dead) { $t.Warn } else { $null }
@@ -1549,32 +1557,34 @@ function Build-RamCardMenuItems {
             Set-RamCookieAlive -Account $acc2
             Save-RamState
             Build-RamCards
-            Show-RamInfo "Вход «$($acc2.Alias)» на месте."
+            Show-RamInfo (Get-RamText -Text 'Вход «{0}» на месте.' -Arguments @([string]($($acc2.Alias))))
         }
     })
 
     # «Обновить страницу» для одного аккаунта: человек только что вошёл под
     # ним где-то ещё и хочет увидеть это здесь, не гоняя проверку по всем.
-    [void](Add-RamMenuItem -Menu $m -Text 'Проверить этот вход' -Tag $id -OnClick {
+    [void](Add-RamMenuItem -Menu $m -Text (Get-RamText -Text 'Проверить этот вход') -Tag $id -OnClick {
         Invoke-RamRecheckOne -Id ([string]$this.Tag)
     })
 
     [void](Add-RamMenuItem -Menu $m -Separator)
 
-    [void](Add-RamMenuItem -Menu $m -Text 'Скопировать приглашение (для переноса себе)' -Tag $id -OnClick {
+    [void](Add-RamMenuItem -Menu $m -Text (Get-RamText -Text 'Скопировать приглашение (для переноса себе)') -Tag $id -OnClick {
         $acc2 = Get-RamAccountById -Id ([string]$this.Tag)
         if ($null -eq $acc2) { return }
-        if ([string]::IsNullOrWhiteSpace($acc2.Cookie)) { Show-RamInfo 'У этого аккаунта нет сохранённого входа.'; return }
+        if ([string]::IsNullOrWhiteSpace($acc2.Cookie)) { Show-RamInfo (Get-RamText -Text 'У этого аккаунта нет сохранённого входа.'); return }
         $code = ConvertTo-RamInviteCode -Account $acc2
         try { [System.Windows.Forms.Clipboard]::SetText($code) } catch { }
-        Show-RamInfo ("Приглашение скопировано в буфер обмена.`n`nВнутри — доступ к аккаунту, поэтому это для переноса СЕБЕ на другой компьютер, а не для раздачи. " +
-                      "На другом компьютере открой «Добавить» -> «Ещё способы» -> «Вставить пачкой» и вставь его.")
-        Write-RamLog "Создано приглашение для «$($acc2.Alias)» (в буфер обмена)." 'info'
+        Show-RamInfo ((Get-RamText -Text 'Приглашение скопировано в буфер обмена.
+
+Внутри — доступ к аккаунту, поэтому это для переноса СЕБЕ на другой компьютер, а не для раздачи. ') +
+                      (Get-RamText -Text 'На другом компьютере открой «Добавить» -> «Ещё способы» -> «Вставить пачкой» и вставь его.'))
+        Write-RamLog (Get-RamText -Text 'Создано приглашение для «{0}» (в буфер обмена).' -Arguments @([string]($($acc2.Alias)))) 'info'
     })
 
     [void](Add-RamMenuItem -Menu $m -Separator)
 
-    [void](Add-RamMenuItem -Menu $m -Text 'Убрать из менеджера' -Tag $id -Color $t.Danger -OnClick {
+    [void](Add-RamMenuItem -Menu $m -Text (Get-RamText -Text 'Убрать из менеджера') -Tag $id -Color $t.Danger -OnClick {
         Invoke-RamDeleteSelected -Accounts @((Get-RamAccountById -Id ([string]$this.Tag)))
     })
 
@@ -1621,7 +1631,7 @@ function Show-RamQuickSetup {
     )
 
     if (@($script:Accounts).Count -lt 2) {
-        Show-RamInfo 'Для быстрой настройки нужно хотя бы два аккаунта: основной и твин.'
+        Show-RamInfo (Get-RamText -Text 'Для быстрой настройки нужно хотя бы два аккаунта: основной и твин.')
         return
     }
 
@@ -1632,11 +1642,11 @@ function Show-RamQuickSetup {
     # числом: раньше окно было 690x470 на любом масштабе, и при 150% полоска
     # сверху обрывалась, а кнопки прижимались к краю.
     $hintLines = @(
-        'Одним играешь, остальные стоят на приватном сервере.',
-        '  основному — графика на максимум, звук включён',
-        '  твинам    — графика 1, звук 0, 30 кадров, общая игра',
-        '  окна      — основной крупно слева, твины мелко справа',
-        '  профиль   — «Твины на випку», одной кнопкой'
+        (Get-RamText -Text 'Одним играешь, остальные стоят на приватном сервере.'),
+        (Get-RamText -Text '  основному — графика на максимум, звук включён'),
+        (Get-RamText -Text '  твинам    — графика 1, звук 0, 30 кадров, общая игра'),
+        (Get-RamText -Text '  окна      — основной крупно слева, твины мелко справа'),
+        (Get-RamText -Text '  профиль   — «Твины на випку», одной кнопкой')
     )
     $wide = 0
     foreach ($l in $hintLines) {
@@ -1646,7 +1656,7 @@ function Show-RamQuickSetup {
     $pageW = [Math]::Max($wide + $m.GapLg, [int][Math]::Round(560 * $m.Scale))
 
     $dlg = New-RamForm
-    $dlg.Text            = 'Быстрая настройка'
+    $dlg.Text            = (Get-RamText -Text 'Быстрая настройка')
     $dlg.FormBorderStyle = 'FixedDialog'
     $dlg.StartPosition   = 'CenterParent'
     $dlg.MaximizeBox     = $false; $dlg.MinimizeBox = $false
@@ -1667,7 +1677,7 @@ function Show-RamQuickSetup {
 
     $titleH = (Measure-RamText -Text 'Ay' -Font $t.FontBig).Height + 2
     [void](Add-RamRow -Layout $lay -Height $titleH -Gap $m.GapSm -Items @(
-        @{ Control = (New-RamLabel -Text 'Быстрая настройка' -X 0 -Y 0 -Width 10 -Height $titleH -Font $t.FontBig)
+        @{ Control = (New-RamLabel -Text (Get-RamText -Text 'Быстрая настройка') -X 0 -Y 0 -Width 10 -Height $titleH -Font $t.FontBig)
            Width   = $lay.Width }
     ))
 
@@ -1688,7 +1698,7 @@ function Show-RamQuickSetup {
         ))
     }
 
-    & $addCap 'ОСНОВНОЙ АККАУНТ — ИМ ТЫ ИГРАЕШЬ'
+    & $addCap (Get-RamText -Text 'ОСНОВНОЙ АККАУНТ — ИМ ТЫ ИГРАЕШЬ')
     $accItems = @()
     foreach ($a in (Get-RamOrderedAccounts)) {
         $lbl = $a.Alias
@@ -1698,13 +1708,13 @@ function Show-RamQuickSetup {
     $cbMain = New-RamCombo -X 0 -Y 0 -Width $lay.Width -Items $accItems -Value $accItems[0].Value
     [void](Add-RamRow -Layout $lay -Items @(@{ Control = $cbMain; Width = $lay.Width }))
 
-    & $addCap 'ИГРА ДЛЯ ТВИНОВ'
-    $gameItems = @([pscustomobject]@{ Text = '— оставить как есть —'; Value = '' })
+    & $addCap (Get-RamText -Text 'ИГРА ДЛЯ ТВИНОВ')
+    $gameItems = @([pscustomobject]@{ Text = (Get-RamText -Text '— оставить как есть —'); Value = '' })
     foreach ($g in (Get-RamGameSuggestions)) { $gameItems += $g }
     $cbGame = New-RamCombo -X 0 -Y 0 -Width $lay.Width -Items $gameItems -Value ''
     [void](Add-RamRow -Layout $lay -Items @(@{ Control = $cbGame; Width = $lay.Width }))
 
-    $btnPaste = New-RamButton -Text 'Вставить' -Width 1 -Height $m.RowHSm -OnClick {
+    $btnPaste = New-RamButton -Text (Get-RamText -Text 'Вставить') -Width 1 -Height $m.RowHSm -OnClick {
         try {
             if ([System.Windows.Forms.Clipboard]::ContainsText()) {
                 $tbGame.Tag.Text = [System.Windows.Forms.Clipboard]::GetText().Trim()
@@ -1718,16 +1728,16 @@ function Show-RamQuickSetup {
         @{ Control = $btnPaste; Width = $pasteW }
     ))
 
-    $noteH = (Measure-RamText -Text 'Поле важнее списка: если вставишь сюда ссылку, возьмётся она.' -Font $t.FontSmall -MaxWidth $lay.Width).Height + 2
+    $noteH = (Measure-RamText -Text (Get-RamText -Text 'Поле важнее списка: если вставишь сюда ссылку, возьмётся она.') -Font $t.FontSmall -MaxWidth $lay.Width).Height + 2
     [void](Add-RamRow -Layout $lay -Height $noteH -Gap $m.GapSm -Items @(
-        @{ Control = (New-RamLabel -Text 'Поле важнее списка: если вставишь сюда ссылку, возьмётся она.' `
+        @{ Control = (New-RamLabel -Text (Get-RamText -Text 'Поле важнее списка: если вставишь сюда ссылку, возьмётся она.') `
                                    -X 0 -Y 0 -Width 10 -Height $noteH -Font $t.FontSmall -Color $t.Muted)
            Width   = $lay.Width }
     ))
 
     $cbSameGame = New-RamCheckBox -X 0 -Y 0
-    $sameH = (Measure-RamText -Text 'Основному поставить ту же игру' -Font $t.FontBody).Height + 2
-    $lblSame = New-RamLabel -Text 'Основному поставить ту же игру' -X 0 -Y 0 -Width 10 -Height $sameH
+    $sameH = (Measure-RamText -Text (Get-RamText -Text 'Основному поставить ту же игру') -Font $t.FontBody).Height + 2
+    $lblSame = New-RamLabel -Text (Get-RamText -Text 'Основному поставить ту же игру') -X 0 -Y 0 -Width 10 -Height $sameH
     $lblSame.Cursor = [System.Windows.Forms.Cursors]::Hand
     $lblSame.Tag = $cbSameGame
     $lblSame.Add_Click({ $this.Tag.Tag.Checked = -not $this.Tag.Tag.Checked; $this.Tag.Invalidate() })
@@ -1737,10 +1747,10 @@ function Show-RamQuickSetup {
     ))
 
     [void](Add-RamGap -Layout $lay -Height $m.Gap)
-    $btnGo = New-RamButton -Text 'Настроить' -Width 1 -Height $m.RowHLg -Kind 'primary' -OnClick {
+    $btnGo = New-RamButton -Text (Get-RamText -Text 'Настроить') -Width 1 -Height $m.RowHLg -Kind 'primary' -OnClick {
         $this.FindForm().Tag = $true; $this.FindForm().Close()
     }
-    $btnNo = New-RamButton -Text 'Отмена' -Width 1 -Height $m.RowHLg -OnClick {
+    $btnNo = New-RamButton -Text (Get-RamText -Text 'Отмена') -Width 1 -Height $m.RowHLg -OnClick {
         $this.FindForm().Tag = $false; $this.FindForm().Close()
     }
     [void](Add-RamButtonBar -Layout $lay -Primary $btnGo -Secondary @($btnNo))
@@ -1770,11 +1780,11 @@ function Show-RamQuickSetup {
         finally { $script:UI.Form.Cursor = [System.Windows.Forms.Cursors]::Default }
     }
 
-    Push-RamUndo -Label 'быстрая настройка' -IncludeLayout
+    Push-RamUndo -Label (Get-RamText -Text 'быстрая настройка') -IncludeLayout
     $main   = Get-RamAccountById -Id $mainId
     $twinks = @($script:Accounts | Where-Object { $_.Id -ne $mainId })
 
-    if ($null -eq $main) { Show-RamError 'Основной аккаунт не найден.'; return }
+    if ($null -eq $main) { Show-RamError (Get-RamText -Text 'Основной аккаунт не найден.'); return }
     $script:Settings.MainAccountId = [string]$main.Id
 
     # --- основной
@@ -1828,7 +1838,7 @@ function Show-RamQuickSetup {
                          -Title $(if ($game.GameName) { $game.GameName } else { "ID $($game.PlaceId)" })
 
         $prof = [pscustomobject]@{
-            Name     = 'Твины на випку'
+            Name     = (Get-RamText -Text 'Твины на випку')
             Group    = 'Твины'
             PlaceId  = $game.PlaceId
             GameName = $game.GameName
@@ -1845,14 +1855,20 @@ function Show-RamQuickSetup {
 
     $what = if ($null -ne $game -and $game.GameName) { $game.GameName }
             elseif ($null -ne $game -and $game.PlaceId) { "ID $($game.PlaceId)" }
-            else { 'игра не менялась' }
+            else { (Get-RamText -Text 'игра не менялась') }
 
-    Write-RamLog "Быстрая настройка: основной «$($main.Alias)», твинов $($twinks.Count), игра — $what." 'ok'
-    Show-RamInfo ("Готово.`n`nОсновной: $($main.Alias) — графика 10, звук 80%.`n" +
-                  "Твины ($($twinks.Count)): графика 1, звук 0, 30 кадров.`n" +
-                  "Игра: $what`n`n" +
-                  'Окна теперь раскладываются «основной крупно, твины мелко». ' +
-                  'В разделе «Профили» появился «Твины на випку».')
+    Write-RamLog (Get-RamText -Text 'Быстрая настройка: основной «{0}», твинов {1}, игра — {2}.' -Arguments @([string]($($main.Alias)),[string]($($twinks.Count)),[string]($what))) 'ok'
+    Show-RamInfo ((Get-RamText -Text 'Готово.
+
+Основной: {0} — графика 10, звук 80%.
+' -Arguments @([string]($($main.Alias)))) +
+                  (Get-RamText -Text 'Твины ({0}): графика 1, звук 0, 30 кадров.
+' -Arguments @([string]($($twinks.Count)))) +
+                  (Get-RamText -Text 'Игра: {0}
+
+' -Arguments @([string]($what))) +
+                  (Get-RamText -Text 'Окна теперь раскладываются «основной крупно, твины мелко». ') +
+                  (Get-RamText -Text 'В разделе «Профили» появился «Твины на випку».'))
 }
 
 function Invoke-RamScheduleCheck {
@@ -1881,12 +1897,12 @@ function Invoke-RamScheduleCheck {
                else { @($script:Accounts | Where-Object { [string]$_.Group -eq $group }) }
 
     if ($targets.Count -eq 0) {
-        Write-RamLog "Расписание ${time} сработало, но запускать нечего." 'warn'
-        Set-RamStatus "Расписание ${time} сработало, но в наборе нет аккаунтов."
+        Write-RamLog (Get-RamText -Text 'Расписание {0} сработало, но запускать нечего.' -Arguments @([string](${time}))) 'warn'
+        Set-RamStatus (Get-RamText -Text 'Расписание {0} сработало, но в наборе нет аккаунтов.' -Arguments @([string](${time})))
         return
     }
 
-    Write-RamLog "Расписание ${time}: поднимаю $($targets.Count) аккаунтов$(if($group){" из набора «$group»"})." 'ok'
+    Write-RamLog (Get-RamText -Text 'Расписание {0}: поднимаю {1} аккаунтов{2}.' -Arguments @([string](${time}),[string]($($targets.Count)),[string]($(if($group){(Get-RamText -Text ' из набора «{0}»' -Arguments @([string]($group)))})))) 'ok'
     Add-RamToLaunchQueue -Accounts $targets -Unattended
 }
 
@@ -1894,11 +1910,11 @@ function Invoke-RamScheduleCheck {
 
 function Get-RamSections {
     @(
-        [pscustomobject]@{ Key = 'accounts'; Text = 'Аккаунты';   Icon = 'user' },
-        [pscustomobject]@{ Key = 'games';    Text = 'Игры';       Icon = 'gamepad' },
-        [pscustomobject]@{ Key = 'profiles'; Text = 'Сценарии';   Icon = 'profile' },
-        [pscustomobject]@{ Key = 'stats';    Text = 'Статистика'; Icon = 'chart' },
-        [pscustomobject]@{ Key = 'log';      Text = 'Журнал';     Icon = 'history' }
+        [pscustomobject]@{ Key = 'accounts'; Text = (Get-RamText -Text 'Аккаунты');   Icon = 'user' },
+        [pscustomobject]@{ Key = 'games';    Text = (Get-RamText -Text 'Игры');       Icon = 'gamepad' },
+        [pscustomobject]@{ Key = 'profiles'; Text = (Get-RamText -Text 'Сценарии');   Icon = 'profile' },
+        [pscustomobject]@{ Key = 'stats';    Text = (Get-RamText -Text 'Статистика'); Icon = 'chart' },
+        [pscustomobject]@{ Key = 'log';      Text = (Get-RamText -Text 'Журнал');     Icon = 'history' }
     )
 }
 
@@ -2009,9 +2025,9 @@ function Show-RamSection {
     # висеть на отступе, посчитанном для «Аккаунтов» (где отступ больше —
     # там «Все» и «С отмеченными» в две кнопки), и создавала пустую полосу
     # сверху ровно на высоту недостающей кнопки.
-    Invoke-RamSafe -What 'раскладка верхней строки при смене раздела' -Body { Update-RamTopBarLayout }
+    Invoke-RamSafe -What (Get-RamText -Text 'раскладка верхней строки при смене раздела') -Body { Update-RamTopBarLayout }
     if ($script:UI.ContainsKey('Modern') -or $script:UI.ContainsKey('Pulse')) {
-        Invoke-RamSafe -What 'раскладка окна при смене раздела' -Body { Update-RamShellLayout }
+        Invoke-RamSafe -What (Get-RamText -Text 'раскладка окна при смене раздела') -Body { Update-RamShellLayout }
     }
 
     if ($Key -eq 'stats')    { Update-RamStatsPanel }
@@ -2087,7 +2103,7 @@ function Update-RamAccountsBar {
         if ($script:LastCardW -ne $w) {
             $script:LastCardW = $w
             if ($script:UI.ContainsKey('Cards') -and $null -ne $script:Accounts) {
-                Invoke-RamSafe -What 'пересборка карточек по ширине' -Body { Build-RamCards }
+                Invoke-RamSafe -What (Get-RamText -Text 'пересборка карточек по ширине') -Body { Build-RamCards }
             }
         }
     }
@@ -2107,14 +2123,14 @@ function Get-RamBridgeStatusText {
     #>
     if ($null -eq $script:Settings) { return '' }
     if (-not [bool]$script:Settings.BridgeEnabled) { return '' }
-    if ((Get-RamBridgePort) -le 0) { return 'вход из браузера: порт занять не вышло' }
+    if ((Get-RamBridgePort) -le 0) { return (Get-RamText -Text 'вход из браузера: порт занять не вышло') }
     # Показываем клавишу, которую Windows РЕАЛЬНО отдала. Настройка говорит,
     # чего человек хочет; она не говорит, получилось ли. Раньше здесь стояла
     # именно настройка — и строка обещала F10, которой у программы нет.
     $key = Get-RamBridgeHotkey
-    if (-not $key) { return 'вход из браузера: клавиша занята — жми значок AltHub в браузере' }
-    if (Test-RamBridgeExtensionSeen) { return "вход из браузера: $key" }
-    return "вход из браузера: жду на $key, расширение не отзывалось"
+    if (-not $key) { return (Get-RamText -Text 'вход из браузера: клавиша занята — жми значок AltHub в браузере') }
+    if (Test-RamBridgeExtensionSeen) { return (Get-RamText -Text 'вход из браузера: {0}' -Arguments @([string]($key))) }
+    return (Get-RamText -Text 'вход из браузера: жду на {0}, расширение не отзывалось' -Arguments @([string]($key)))
 }
 
 function Update-RamGroupBar {
@@ -2128,7 +2144,7 @@ function Update-RamGroupBar {
     try {
         $bar.Controls.Clear()
 
-        $items = @([pscustomobject]@{ Key = ''; Text = 'Все' })
+        $items = @([pscustomobject]@{ Key = ''; Text = (Get-RamText -Text 'Все') })
         foreach ($g in Get-RamGroups) { $items += [pscustomobject]@{ Key = $g; Text = $g } }
 
         # Показана ли полоска, помним отдельно: Visible у элемента скрытого раздела
@@ -2180,7 +2196,7 @@ function Get-RamTextRowH {
     <# Высота строки подписи этим шрифтом — с запасом в две точки масштаба.
        Подпись ниже строки своего шрифта WinForms не рисует вовсе. #>
     param($Font)
-    return (Measure-RamText -Text 'Ау' -Font $Font).Height + [int][Math]::Round(2 * $Global:RamTheme.M.Scale)
+    return (Measure-RamText -Text (Get-RamText -Text 'Ау') -Font $Font).Height + [int][Math]::Round(2 * $Global:RamTheme.M.Scale)
 }
 
 function Get-RamListWidth {
@@ -2258,14 +2274,14 @@ function Add-RamStatsRows {
         $totalSec    += [int]$a.PlaySeconds
     }
     $head = New-RamCard -Width $W -Height ($padY * 2 + $smallH + $titleH)
-    $head.Controls.Add((New-RamLabel -Text 'Всего' -X $pad -Y $padY -Width ($W - $pad * 2) -Height $smallH -Font $t.FontSmall -Color $t.Muted))
-    $head.Controls.Add((New-RamLabel -Text ("запусков: $totalLaunch    ·    вылетов: $totalCrash    ·    наиграно: " + (Format-RamDuration $totalSec)) `
+    $head.Controls.Add((New-RamLabel -Text (Get-RamText -Text 'Всего') -X $pad -Y $padY -Width ($W - $pad * 2) -Height $smallH -Font $t.FontSmall -Color $t.Muted))
+    $head.Controls.Add((New-RamLabel -Text ((Get-RamText -Text 'запусков: {0}    ·    вылетов: {1}    ·    наиграно: ' -Arguments @([string]($totalLaunch),[string]($totalCrash))) + (Format-RamDuration $totalSec)) `
                                      -X $pad -Y ($padY + $smallH) -Width ($W - $pad * 2) -Height $titleH -Font $t.FontTitle -Truncatable))
     $Panel.Controls.Add($head)
 
     $nameW    = [Math]::Max((& $k 220), [int](($W - $pad * 2) * 0.28))
     $restW    = [Math]::Max(1, $W - $pad * 2 - $nameW)
-    $minColW  = (Measure-RamText -Text 'ПОСЛЕДНИЙ ЗАПУСК' -Font $t.FontSmall).Width + (& $k 8)
+    $minColW  = (Measure-RamText -Text (Get-RamText -Text 'ПОСЛЕДНИЙ ЗАПУСК') -Font $t.FontSmall).Width + (& $k 8)
     $grid2x2  = ([int]($restW / 4)) -lt $minColW
     $perRow   = if ($grid2x2) { 2 } else { 4 }
     $colW     = [int]($restW / $perRow)
@@ -2295,17 +2311,17 @@ function Add-RamStatsRows {
 
         $nameY = [int](($rowH - $titleH - $smallH) / 2)
         $row.Controls.Add((New-RamLabel -Text $a.Alias -X $pad -Y $nameY -Width ($nameW - $m.Gap) -Height $titleH -Font $t.FontTitle -Truncatable))
-        $sub = if ($a.Username) { "@$($a.Username)" } else { 'вход не проверен' }
+        $sub = if ($a.Username) { "@$($a.Username)" } else { (Get-RamText -Text 'вход не проверен') }
         $row.Controls.Add((New-RamLabel -Text $sub -X $pad -Y ($nameY + $titleH) -Width ($nameW - $m.Gap) -Height $smallH -Font $t.FontSmall -Color $t.Muted -Truncatable))
 
         $last = if ($a.LastUsed) {
             try { ([datetime]$a.LastUsed).ToString('dd.MM HH:mm') } catch { [string]$a.LastUsed }
-        } else { 'ни разу' }
+        } else { (Get-RamText -Text 'ни разу') }
         $cols = @(
-            @{ Cap = 'ЗАПУСКОВ';         Val = [string][int]$a.LaunchCount; Color = $t.Text },
-            @{ Cap = 'ВЫЛЕТОВ';          Val = [string][int]$a.CrashCount; Color = $(if ([int]$a.CrashCount -gt 0) { $t.Warn } else { $t.Text }) },
-            @{ Cap = 'НАИГРАНО';         Val = (Format-RamDuration ([int]$a.PlaySeconds)); Color = $t.Text },
-            @{ Cap = 'ПОСЛЕДНИЙ ЗАПУСК'; Val = $last; Color = $t.Text }
+            @{ Cap = (Get-RamText -Text 'ЗАПУСКОВ');         Val = [string][int]$a.LaunchCount; Color = $t.Text },
+            @{ Cap = (Get-RamText -Text 'ВЫЛЕТОВ');          Val = [string][int]$a.CrashCount; Color = $(if ([int]$a.CrashCount -gt 0) { $t.Warn } else { $t.Text }) },
+            @{ Cap = (Get-RamText -Text 'НАИГРАНО');         Val = (Format-RamDuration ([int]$a.PlaySeconds)); Color = $t.Text },
+            @{ Cap = (Get-RamText -Text 'ПОСЛЕДНИЙ ЗАПУСК'); Val = $last; Color = $t.Text }
         )
         $gridTop = [int](($rowH - $cellsH) / 2)
         for ($i = 0; $i -lt $cols.Count; $i++) {
@@ -2322,9 +2338,9 @@ function Format-RamDuration {
     param([int]$Seconds)
     if ($Seconds -le 0) { return '—' }
     $ts = [TimeSpan]::FromSeconds($Seconds)
-    if ($ts.TotalHours -ge 1) { return ('{0} ч {1} мин' -f [int]$ts.TotalHours, $ts.Minutes) }
-    if ($ts.TotalMinutes -ge 1) { return ('{0} мин' -f [int]$ts.TotalMinutes) }
-    return ('{0} с' -f $ts.Seconds)
+    if ($ts.TotalHours -ge 1) { return ((Get-RamText -Text '{0} ч {1} мин') -f [int]$ts.TotalHours, $ts.Minutes) }
+    if ($ts.TotalMinutes -ge 1) { return ((Get-RamText -Text '{0} мин') -f [int]$ts.TotalMinutes) }
+    return ((Get-RamText -Text '{0} с') -f $ts.Seconds)
 }
 
 function Show-RamPopularGamesDialog {
@@ -2337,10 +2353,10 @@ function Show-RamPopularGamesDialog {
 
     $t = $Global:RamTheme; $m = $t.M
     $k = { param($n) [int][Math]::Round($n * $m.Scale) }
-    $shell = New-RamDialogShell -WindowText 'Популярные игры Roblox' -Caption 'Популярные сейчас' -Width (& $k 560)
+    $shell = New-RamDialogShell -WindowText (Get-RamText -Text 'Популярные игры Roblox') -Caption (Get-RamText -Text 'Популярные сейчас') -Width (& $k 560)
     $dlg = $shell.Form
     $lay = $shell.Layout
-    [void](Add-RamTextBlock -Layout $lay -Text 'Список берётся прямо из Roblox. Отметь нужные и добавь.' -Font $t.FontSmall -Color $t.Muted)
+    [void](Add-RamTextBlock -Layout $lay -Text (Get-RamText -Text 'Список берётся прямо из Roblox. Отметь нужные и добавь.') -Font $t.FontSmall -Color $t.Muted)
 
     # Высота списка — не больше половины экрана, чтобы кнопки внизу не уехали.
     $listH = & $k 400
@@ -2361,7 +2377,7 @@ function Show-RamPopularGamesDialog {
 
         $rowW = Get-RamListWidth -Panel $listHost
         if ($games.Count -eq 0) {
-            $listHost.Controls.Add((New-RamNoticeCard -Width $rowW -Title 'Roblox не ответил' -Text 'Проверь интернет и нажми «Обновить».'))
+            $listHost.Controls.Add((New-RamNoticeCard -Width $rowW -Title (Get-RamText -Text 'Roblox не ответил') -Text (Get-RamText -Text 'Проверь интернет и нажми «Обновить».')))
             return
         }
         $pad    = & $k 14
@@ -2377,24 +2393,24 @@ function Show-RamPopularGamesDialog {
             $textW = [Math]::Max(1, $rowW - $textX - $pad)
             $textY = [int](($rowH - $titleH - $smallH) / 2)
             $card.Controls.Add((New-RamLabel -Text ([string]$g.Title) -X $textX -Y $textY -Width $textW -Height $titleH -Font $t.FontTitle -Truncatable))
-            $players = if ($g.Players -ge 1000) { "$([math]::Round($g.Players/1000.0,1))K играют" } else { "$($g.Players) играют" }
+            $players = if ($g.Players -ge 1000) { (Get-RamText -Text '{0}K играют' -Arguments @([string]($([math]::Round($g.Players/1000.0,1))))) } else { (Get-RamText -Text '{0} играют' -Arguments @([string]($($g.Players)))) }
             $card.Controls.Add((New-RamLabel -Text "$players   ·   ID $($g.PlaceId)" -X $textX -Y ($textY + $titleH) -Width $textW -Height $smallH -Font $t.FontSmall -Color $t.Muted -Truncatable))
             $listHost.Controls.Add($card)
             $rowChecks[$g.PlaceId] = [pscustomobject]@{ Check = $chk; Game = $g }
         }
     }.GetNewClosure()
 
-    $btnRefresh = New-RamButton -Text 'Обновить' -Width 1 -Height $m.RowH -Kind 'ghost' -OnClick ({ & $fill }.GetNewClosure())
-    $btnAdd = New-RamButton -Text 'Добавить отмеченные' -Width $m.BtnMinW -Height $m.RowH -Kind 'primary' -OnClick ({
+    $btnRefresh = New-RamButton -Text (Get-RamText -Text 'Обновить') -Width 1 -Height $m.RowH -Kind 'ghost' -OnClick ({ & $fill }.GetNewClosure())
+    $btnAdd = New-RamButton -Text (Get-RamText -Text 'Добавить отмеченные') -Width $m.BtnMinW -Height $m.RowH -Kind 'primary' -OnClick ({
         $picked = @($rowChecks.Values | Where-Object { $_.Check.Tag.Checked })
-        if ($picked.Count -eq 0) { Show-RamInfo 'Отметь галочками нужные игры.'; return }
+        if ($picked.Count -eq 0) { Show-RamInfo (Get-RamText -Text 'Отметь галочками нужные игры.'); return }
         foreach ($row in $picked) { Add-RamSavedGame -PlaceId $row.Game.PlaceId -LinkCode '' -Title $row.Game.Title }
         Save-RamSettingsNow
-        Write-RamLog "В «Мои игры» добавлено из популярных: $($picked.Count)." 'ok'
-        Show-RamInfo "Добавлено игр: $($picked.Count). Они теперь в разделе «Игры» и в списке при назначении."
+        Write-RamLog (Get-RamText -Text 'В «Мои игры» добавлено из популярных: {0}.' -Arguments @([string]($($picked.Count)))) 'ok'
+        Show-RamInfo (Get-RamText -Text 'Добавлено игр: {0}. Они теперь в разделе «Игры» и в списке при назначении.' -Arguments @([string]($($picked.Count))))
         $this.FindForm().Close()
     }.GetNewClosure())
-    $btnClose = New-RamButton -Text 'Закрыть' -Width $m.BtnMinW -Height $m.RowH -OnClick { $this.FindForm().Close() }
+    $btnClose = New-RamButton -Text (Get-RamText -Text 'Закрыть') -Width $m.BtnMinW -Height $m.RowH -OnClick { $this.FindForm().Close() }
     [void](Add-RamGap -Layout $lay -Height $m.Gap)
     [void](Add-RamButtonBar -Layout $lay -Primary $btnAdd -Secondary @($btnClose) -Extra @($btnRefresh))
     [void](Complete-RamDialogShell -Shell $shell)
@@ -2419,15 +2435,15 @@ function Update-RamGamesPanelWater {
         Clear-RamPanelControls -Panel $h
         $games = @($script:Settings.Games | Where-Object { $null -ne $_ })
         if ($games.Count -eq 0) {
-            $h.Controls.Add((New-RamNoticeCard -Width $W -Title 'Список пуст' `
-                -Text 'Нажми «＋ Своя игра» и вставь ссылку — или возьми готовую из популярных. Игры также попадают сюда сами, когда назначаешь их аккаунтам.'))
+            $h.Controls.Add((New-RamNoticeCard -Width $W -Title (Get-RamText -Text 'Список пуст') `
+                -Text (Get-RamText -Text 'Нажми «＋ Своя игра» и вставь ссылку — или возьми готовую из популярных. Игры также попадают сюда сами, когда назначаешь их аккаунтам.')))
             return
         }
         foreach ($g in $games) {
             # Квадратные значки вида H₂O: подпись — в подсказке при наведении.
-            $bSet = New-RamButton -Text '' -Icon 'assign' -IconOnly -Width $t.M.RowH -Height $t.M.RowH -Fixed -Kind 'primary' -Tooltip 'Назначить отмеченным' -OnClick {
+            $bSet = New-RamButton -Text '' -Icon 'assign' -IconOnly -Width $t.M.RowH -Height $t.M.RowH -Fixed -Kind 'primary' -Tooltip (Get-RamText -Text 'Назначить отмеченным') -OnClick {
                 $targets = @(Get-RamTargetAccounts)
-                if ($targets.Count -eq 0) { Show-RamInfo 'Сначала отметь аккаунты в разделе «Аккаунты».'; return }
+                if ($targets.Count -eq 0) { Show-RamInfo (Get-RamText -Text 'Сначала отметь аккаунты в разделе «Аккаунты».'); return }
                 $g2 = $this.Tag.Game
                 foreach ($a in $targets) {
                     $a.PlaceId  = [string]$g2.PlaceId
@@ -2436,24 +2452,24 @@ function Update-RamGamesPanelWater {
                 }
                 Save-RamState
                 Build-RamCards
-                Write-RamLog "«$($g2.Title)» назначена аккаунтам: $($targets.Count)." 'ok'
+                Write-RamLog (Get-RamText -Text '«{0}» назначена аккаунтам: {1}.' -Arguments @([string]($($g2.Title)),[string]($($targets.Count)))) 'ok'
             }
-            $bDel = New-RamButton -Text '' -Icon 'trash' -IconOnly -Width $t.M.RowH -Height $t.M.RowH -Fixed -Tooltip 'Удалить' -OnClick {
+            $bDel = New-RamButton -Text '' -Icon 'trash' -IconOnly -Width $t.M.RowH -Height $t.M.RowH -Fixed -Tooltip (Get-RamText -Text 'Удалить') -OnClick {
                 $g2 = $this.Tag.Game
                 $script:Settings.Games = @(@($script:Settings.Games) | Where-Object {
                     -not ($_.PlaceId -eq $g2.PlaceId -and [string]$_.LinkCode -eq [string]$g2.LinkCode)
                 })
                 Save-RamSettings -Settings $script:Settings
                 Update-RamGamesPanel
-                Write-RamLog "«$($g2.Title)» убрана из списка игр." 'ok'
+                Write-RamLog (Get-RamText -Text '«{0}» убрана из списка игр.' -Arguments @([string]($($g2.Title)))) 'ok'
             }
             $bSet.Tag | Add-Member -NotePropertyName Game -NotePropertyValue $g -Force
             $bDel.Tag | Add-Member -NotePropertyName Game -NotePropertyValue $g -Force
             $hasTitle = (-not [string]::IsNullOrWhiteSpace([string]$g.Title)) -and ([string]$g.Title -notmatch '^ID \d+$')
             $title = if ($hasTitle) { [string]$g.Title } else { "ID $($g.PlaceId)" }
             $metaParts = @()
-            if ($hasTitle) { $metaParts += "ID $($g.PlaceId)" } else { $metaParts += 'название ещё не подтянулось' }
-            if ($g.LinkCode) { $metaParts += 'приватный сервер' }
+            if ($hasTitle) { $metaParts += "ID $($g.PlaceId)" } else { $metaParts += (Get-RamText -Text 'название ещё не подтянулось') }
+            if ($g.LinkCode) { $metaParts += (Get-RamText -Text 'приватный сервер') }
             $h.Controls.Add((New-RamRowCard -Width $W -Title $title -Meta ($metaParts -join '   ·   ') -Buttons @($bSet, $bDel)))
         }
     } finally {
@@ -2471,13 +2487,13 @@ function Get-RamStarterProfiles {
       который дальше можно править и удалять как свой.
     #>
     @(
-        [pscustomobject]@{ Name = 'Все в Blox Fruits';       Group = ''; PlaceId = '2753915549'; GameName = 'Blox Fruits';       LinkCode = '' }
-        [pscustomobject]@{ Name = 'Все в Brookhaven';        Group = ''; PlaceId = '4924922222'; GameName = 'Brookhaven RP';     LinkCode = '' }
-        [pscustomobject]@{ Name = 'Все в Adopt Me!';         Group = ''; PlaceId = '920587237';  GameName = 'Adopt Me!';         LinkCode = '' }
-        [pscustomobject]@{ Name = 'Все в Murder Mystery 2';  Group = ''; PlaceId = '142823291';  GameName = 'Murder Mystery 2';  LinkCode = '' }
-        [pscustomobject]@{ Name = 'Все в Pet Simulator 99';  Group = ''; PlaceId = '8737899170'; GameName = 'Pet Simulator 99';  LinkCode = '' }
-        [pscustomobject]@{ Name = 'Все в Grow a Garden';     Group = ''; PlaceId = '126884695634066'; GameName = 'Grow a Garden'; LinkCode = '' }
-        [pscustomobject]@{ Name = 'Все просто в Roblox';     Group = ''; PlaceId = '';           GameName = '';                  LinkCode = '' }
+        [pscustomobject]@{ Name = (Get-RamText -Text 'Все в Blox Fruits');       Group = ''; PlaceId = '2753915549'; GameName = 'Blox Fruits';       LinkCode = '' }
+        [pscustomobject]@{ Name = (Get-RamText -Text 'Все в Brookhaven');        Group = ''; PlaceId = '4924922222'; GameName = 'Brookhaven RP';     LinkCode = '' }
+        [pscustomobject]@{ Name = (Get-RamText -Text 'Все в Adopt Me!');         Group = ''; PlaceId = '920587237';  GameName = 'Adopt Me!';         LinkCode = '' }
+        [pscustomobject]@{ Name = (Get-RamText -Text 'Все в Murder Mystery 2');  Group = ''; PlaceId = '142823291';  GameName = 'Murder Mystery 2';  LinkCode = '' }
+        [pscustomobject]@{ Name = (Get-RamText -Text 'Все в Pet Simulator 99');  Group = ''; PlaceId = '8737899170'; GameName = 'Pet Simulator 99';  LinkCode = '' }
+        [pscustomobject]@{ Name = (Get-RamText -Text 'Все в Grow a Garden');     Group = ''; PlaceId = '126884695634066'; GameName = 'Grow a Garden'; LinkCode = '' }
+        [pscustomobject]@{ Name = (Get-RamText -Text 'Все просто в Roblox');     Group = ''; PlaceId = '';           GameName = '';                  LinkCode = '' }
     )
 }
 
@@ -2495,7 +2511,7 @@ function Add-RamStarterProfile {
     $rest = @(Get-RamProfiles | Where-Object { $_.Name -ne $entry.Name })
     $script:Settings.Profiles = @(@($entry) + $rest | Select-Object -First 20)
     Save-RamSettings -Settings $script:Settings
-    Write-RamLog "Готовый профиль «$($entry.Name)» добавлен." 'ok'
+    Write-RamLog (Get-RamText -Text 'Готовый профиль «{0}» добавлен.' -Arguments @([string]($($entry.Name)))) 'ok'
 }
 
 function Update-RamProfilesPanelWater {
@@ -2511,20 +2527,20 @@ function Update-RamProfilesPanelWater {
         Clear-RamPanelControls -Panel $h
         $profiles = @(Get-RamProfiles)
         if ($profiles.Count -eq 0) {
-            $h.Controls.Add((New-RamNoticeCard -Width $W -Title 'Сценариев пока нет' `
-                -Text 'Отметь нужные аккаунты в разделе «Аккаунты», задай им игру, потом сохрани текущее как профиль. Дальше весь набор запускается одной кнопкой.'))
+            $h.Controls.Add((New-RamNoticeCard -Width $W -Title (Get-RamText -Text 'Сценариев пока нет') `
+                -Text (Get-RamText -Text 'Отметь нужные аккаунты в разделе «Аккаунты», задай им игру, потом сохрани текущее как профиль. Дальше весь набор запускается одной кнопкой.')))
             return
         }
         foreach ($pr in $profiles) {
-            $bRun = New-RamButton -Text '' -Icon 'play' -IconOnly -Width $t.M.RowH -Height $t.M.RowH -Fixed -Kind 'primary' -Tooltip 'Запустить сценарий' -OnClick {
+            $bRun = New-RamButton -Text '' -Icon 'play' -IconOnly -Width $t.M.RowH -Height $t.M.RowH -Fixed -Kind 'primary' -Tooltip (Get-RamText -Text 'Запустить сценарий') -OnClick {
                 Invoke-RamRunProfile -Profile $this.Tag.Profile
             }
-            $bDel = New-RamButton -Text '' -Icon 'trash' -IconOnly -Width $t.M.RowH -Height $t.M.RowH -Fixed -Tooltip 'Убрать' -OnClick {
+            $bDel = New-RamButton -Text '' -Icon 'trash' -IconOnly -Width $t.M.RowH -Height $t.M.RowH -Fixed -Tooltip (Get-RamText -Text 'Убрать') -OnClick {
                 $nm = $this.Tag.Profile.Name
                 $script:Settings.Profiles = @(Get-RamProfiles | Where-Object { $_.Name -ne $nm })
                 Save-RamSettings -Settings $script:Settings
                 Update-RamProfilesPanel
-                Write-RamLog "Профиль «$nm» убран." 'ok'
+                Write-RamLog (Get-RamText -Text 'Профиль «{0}» убран.' -Arguments @([string]($nm))) 'ok'
             }
             $bRun.Tag | Add-Member -NotePropertyName Profile -NotePropertyValue $pr -Force
             $bDel.Tag | Add-Member -NotePropertyName Profile -NotePropertyValue $pr -Force
@@ -2543,7 +2559,7 @@ function Update-RamTrayMenu {
     $m = $script:UI.TrayMenu
     $m.Items.Clear()
 
-    $mShow = New-Object System.Windows.Forms.ToolStripMenuItem('Открыть AltHub')
+    $mShow = New-Object System.Windows.Forms.ToolStripMenuItem((Get-RamText -Text 'Открыть AltHub'))
     # Жирным: это действие, за которым в меню значка приходят в 9 случаях из 10.
     $mShow.Font = New-Object System.Drawing.Font($mShow.Font, [System.Drawing.FontStyle]::Bold)
     $mShow.Add_Click({ Show-RamMainWindow })
@@ -2551,14 +2567,14 @@ function Update-RamTrayMenu {
     [void]$m.Items.Add((New-Object System.Windows.Forms.ToolStripSeparator))
 
     foreach ($pr in (Get-RamProfiles)) {
-        $mi = New-Object System.Windows.Forms.ToolStripMenuItem("Профиль: $($pr.Name)")
+        $mi = New-Object System.Windows.Forms.ToolStripMenuItem((Get-RamText -Text 'Профиль: {0}' -Arguments @([string]($($pr.Name)))))
         $mi.Tag = $pr
         $mi.Add_Click({ Invoke-RamRunProfile -Profile $this.Tag })
         [void]$m.Items.Add($mi)
     }
 
     foreach ($g in (Get-RamGroups)) {
-        $mi = New-Object System.Windows.Forms.ToolStripMenuItem("Набор: $g")
+        $mi = New-Object System.Windows.Forms.ToolStripMenuItem((Get-RamText -Text 'Набор: {0}' -Arguments @([string]($g))))
         $mi.Tag = $g
         $mi.Add_Click({
             $gr = $this.Tag
@@ -2569,7 +2585,7 @@ function Update-RamTrayMenu {
 
     if ($m.Items.Count -gt 2) { [void]$m.Items.Add((New-Object System.Windows.Forms.ToolStripSeparator)) }
 
-    $mStop = New-Object System.Windows.Forms.ToolStripMenuItem('Закрыть все окна Roblox')
+    $mStop = New-Object System.Windows.Forms.ToolStripMenuItem((Get-RamText -Text 'Закрыть все окна Roblox'))
     $mStop.Add_Click({
         foreach ($pr in (Get-RamRobloxProcesses)) { [void](Stop-RamRobloxInstance -ProcessId $pr.Id) }
         $script:Instances.Clear()
@@ -2577,7 +2593,7 @@ function Update-RamTrayMenu {
     })
     [void]$m.Items.Add($mStop)
 
-    $mExit = New-Object System.Windows.Forms.ToolStripMenuItem('Выход')
+    $mExit = New-Object System.Windows.Forms.ToolStripMenuItem((Get-RamText -Text 'Выход'))
     $mExit.Add_Click({ $script:UI.Form.Close() })
     [void]$m.Items.Add($mExit)
 }
@@ -2594,38 +2610,38 @@ function Get-RamCheckableWindows {
       Правило: появилось новое окно с -BuildOnly — добавь его сюда.
     #>
     @(
-        @{ Name = 'главное';       Main = $true
+        @{ Name = (Get-RamText -Text 'главное');       Main = $true
            Sections = @('accounts','games','profiles','stats','log')
            Build = { New-RamMainForm } }
-        @{ Name = 'мастер';        Build = { Show-RamAddWizard -BuildOnly } }
-        @{ Name = 'аккаунт';       Build = { Show-RamAccountDialog -Account $script:Accounts[0] -BuildOnly } }
-        @{ Name = 'настройки';     Build = { Show-RamSettingsDialog -BuildOnly } }
-        @{ Name = 'центр запуска'; Build = { Show-RamLaunchCenter -BuildOnly } }
-        @{ Name = 'конструктор';   Build = { Show-RamThemeConstructor -BuildOnly } }
-        @{ Name = 'пачкой';        Build = { Show-RamBatchAddDialog -BuildOnly } }
-        @{ Name = 'из браузера';   Build = { Show-RamBrowserGuide -BuildOnly } }
-        @{ Name = 'выбор способа'; Build = { Show-RamAddChooser -BuildOnly } }
-        @{ Name = 'расширение';    Build = { Show-RamExtensionGuide -BuildOnly } }
-        @{ Name = 'согласие CfT';  Build = { Show-RamChromeForTestingConsent -BuildOnly } }
-        @{ Name = 'популярные';    Build = { Show-RamPopularGamesDialog -BuildOnly } }
-        @{ Name = 'быстрая';       Build = { Show-RamQuickSetup -BuildOnly } }
-        @{ Name = 'мастер1';       Build = { Show-RamFirstRun -StartStep 0 -BuildOnly }; Pages = $true }
-        @{ Name = 'мастер1/тема';  Build = { Show-RamFirstRun -StartStep 1 -BuildOnly }; Pages = $true }
-        @{ Name = 'мастер1/акк';   Build = { Show-RamFirstRun -StartStep 2 -BuildOnly }; Pages = $true }
-        @{ Name = 'мастер1/осн';   Build = { Show-RamFirstRun -StartStep 3 -BuildOnly }; Pages = $true }
-        @{ Name = 'мастер1/готово';Build = { Show-RamFirstRun -StartStep 4 -BuildOnly }; Pages = $true }
-        @{ Name = 'сообщение';     Build = { Show-RamMessage -Message 'Короткое сообщение для проверки вёрстки.' -BuildOnly } }
-        @{ Name = 'сообщение/дл';  Build = { Show-RamMessage -Message ('Длинное сообщение. ' * 12) -Kind 'warn' -BuildOnly } }
-        @{ Name = 'сообщение/да';  Build = { Show-RamMessage -Message 'Вопрос с двумя кнопками?' -YesNo -BuildOnly } }
-        @{ Name = 'сообщение/4';   Build = { Show-RamMessage -Message 'Выбор из нескольких действий.' -Buttons @(
-                                                @{ Text = 'Забрать вход';    Value = 'take';   Kind = 'primary' },
-                                                @{ Text = 'Сменить аккаунт'; Value = 'switch' },
-                                                @{ Text = 'Пропустить';      Value = 'skip'   },
-                                                @{ Text = 'Хватит';          Value = 'stop'   }) -BuildOnly } }
-        @{ Name = 'ввод';          Build = { Show-RamInputDialog -Title 'Ввод' -Prompt 'Вставь ссылку на игру или её номер.' -BuildOnly } }
-        @{ Name = 'ввод/список';   Build = { Show-RamInputDialog -Title 'Игра' -Prompt 'Выбери из сохранённых или вставь свою.' -Suggestions @(
+        @{ Name = (Get-RamText -Text 'мастер');        Build = { Show-RamAddWizard -BuildOnly } }
+        @{ Name = (Get-RamText -Text 'аккаунт');       Build = { Show-RamAccountDialog -Account $script:Accounts[0] -BuildOnly } }
+        @{ Name = (Get-RamText -Text 'настройки');     Build = { Show-RamSettingsDialog -BuildOnly } }
+        @{ Name = (Get-RamText -Text 'центр запуска'); Build = { Show-RamLaunchCenter -BuildOnly } }
+        @{ Name = (Get-RamText -Text 'конструктор');   Build = { Show-RamThemeConstructor -BuildOnly } }
+        @{ Name = (Get-RamText -Text 'пачкой');        Build = { Show-RamBatchAddDialog -BuildOnly } }
+        @{ Name = (Get-RamText -Text 'из браузера');   Build = { Show-RamBrowserGuide -BuildOnly } }
+        @{ Name = (Get-RamText -Text 'выбор способа'); Build = { Show-RamAddChooser -BuildOnly } }
+        @{ Name = (Get-RamText -Text 'расширение');    Build = { Show-RamExtensionGuide -BuildOnly } }
+        @{ Name = (Get-RamText -Text 'согласие CfT');  Build = { Show-RamChromeForTestingConsent -BuildOnly } }
+        @{ Name = (Get-RamText -Text 'популярные');    Build = { Show-RamPopularGamesDialog -BuildOnly } }
+        @{ Name = (Get-RamText -Text 'быстрая');       Build = { Show-RamQuickSetup -BuildOnly } }
+        @{ Name = (Get-RamText -Text 'мастер1');       Build = { Show-RamFirstRun -StartStep 0 -BuildOnly }; Pages = $true }
+        @{ Name = (Get-RamText -Text 'мастер1/тема');  Build = { Show-RamFirstRun -StartStep 1 -BuildOnly }; Pages = $true }
+        @{ Name = (Get-RamText -Text 'мастер1/акк');   Build = { Show-RamFirstRun -StartStep 2 -BuildOnly }; Pages = $true }
+        @{ Name = (Get-RamText -Text 'мастер1/осн');   Build = { Show-RamFirstRun -StartStep 3 -BuildOnly }; Pages = $true }
+        @{ Name = (Get-RamText -Text 'мастер1/готово');Build = { Show-RamFirstRun -StartStep 4 -BuildOnly }; Pages = $true }
+        @{ Name = (Get-RamText -Text 'сообщение');     Build = { Show-RamMessage -Message (Get-RamText -Text 'Короткое сообщение для проверки вёрстки.') -BuildOnly } }
+        @{ Name = (Get-RamText -Text 'сообщение/дл');  Build = { Show-RamMessage -Message ((Get-RamText -Text 'Длинное сообщение. ') * 12) -Kind 'warn' -BuildOnly } }
+        @{ Name = (Get-RamText -Text 'сообщение/да');  Build = { Show-RamMessage -Message (Get-RamText -Text 'Вопрос с двумя кнопками?') -YesNo -BuildOnly } }
+        @{ Name = (Get-RamText -Text 'сообщение/4');   Build = { Show-RamMessage -Message (Get-RamText -Text 'Выбор из нескольких действий.') -Buttons @(
+                                                @{ Text = (Get-RamText -Text 'Забрать вход');    Value = 'take';   Kind = 'primary' },
+                                                @{ Text = (Get-RamText -Text 'Сменить аккаунт'); Value = 'switch' },
+                                                @{ Text = (Get-RamText -Text 'Пропустить');      Value = 'skip'   },
+                                                @{ Text = (Get-RamText -Text 'Хватит');          Value = 'stop'   }) -BuildOnly } }
+        @{ Name = (Get-RamText -Text 'ввод');          Build = { Show-RamInputDialog -Title (Get-RamText -Text 'Ввод') -Prompt (Get-RamText -Text 'Вставь ссылку на игру или её номер.') -BuildOnly } }
+        @{ Name = (Get-RamText -Text 'ввод/список');   Build = { Show-RamInputDialog -Title (Get-RamText -Text 'Игра') -Prompt (Get-RamText -Text 'Выбери из сохранённых или вставь свою.') -Suggestions @(
                                                 [pscustomobject]@{ Text = 'Blox Fruits'; Value = '1' },
-                                                [pscustomobject]@{ Text = 'Очень длинное название игры для проверки'; Value = '2' }) -BuildOnly } }
+                                                [pscustomobject]@{ Text = (Get-RamText -Text 'Очень длинное название игры для проверки'); Value = '2' }) -BuildOnly } }
     )
 }
 
@@ -2676,9 +2692,9 @@ function New-RamMainFormWater {
     $iconSlotW0 = [int][Math]::Round(28 * $metrics.Scale)
     $navTexts = @()
     foreach ($sec in Get-RamSections) { $navTexts += ('  ' + $sec.Text) }
-    $navTexts += @('  Фаст-настройка', '  Настройки', '  Справка',
-                   '  Запустить', '  Закрыть', '  Окна', '  Проверить входы',
-                   '  Починить входы (99)')
+    $navTexts += @((Get-RamText -Text '  Фаст-настройка'), (Get-RamText -Text '  Настройки'), (Get-RamText -Text '  Справка'),
+                   (Get-RamText -Text '  Запустить'), (Get-RamText -Text '  Закрыть'), (Get-RamText -Text '  Окна'), (Get-RamText -Text '  Проверить входы'),
+                   (Get-RamText -Text '  Починить входы (99)'))
 
     $navW = 0
     foreach ($tx in $navTexts) {
@@ -2711,7 +2727,7 @@ function New-RamMainFormWater {
     $nameH0 = (Measure-RamText -Text 'Ay' -Font $t.FontBig).Height + 4
     $verH0  = (Measure-RamText -Text 'Ay' -Font $t.FontSmall).Height + 2
     $authH0 = (Measure-RamText -Text 'Ay' -Font $t.FontSmall).Height + 2
-    $navH0  = [Math]::Max((Get-RamScaled 38), ((Measure-RamText -Text 'Ау' -Font $t.FontBody).Height + (Get-RamScaled 12)))
+    $navH0  = [Math]::Max((Get-RamScaled 38), ((Measure-RamText -Text (Get-RamText -Text 'Ау') -Font $t.FontBody).Height + (Get-RamScaled 12)))
     $navGap0 = Get-RamScaled 4
     $sideTopH = (Get-RamScaled 20) + $nameH0 + $verH0 + (Get-RamScaled 2) + $authH0 + (Get-RamScaled 34)
     $sideRowsCount = (Get-RamSections).Count + 1 + 4  # разделы + фаст-настройка + запустить/закрыть/окна/входы
@@ -2873,14 +2889,15 @@ function New-RamMainFormWater {
         # кнопкой в шапке страницы — теперь это «Создать профиль» здесь.
         if ($isAcc -or $isGames -or $isProf) {
             $addOverlayW = $navH - (Get-RamScaled 8)
-            $addTooltip  = if ($isAcc) { 'Все способы добавить аккаунт' } elseif ($isGames) { 'Добавить свою игру' } else { 'Создать профиль' }
+            $addTooltip  = if ($isAcc) { (Get-RamText -Text 'Все способы добавить аккаунт') } elseif ($isGames) { (Get-RamText -Text 'Добавить свою игру') } else { (Get-RamText -Text 'Создать профиль') }
             $addAction   = if ($isAcc) {
                 { Show-RamAddChooser }
             } elseif ($isGames) {
                 {
-                    $val = Show-RamInputDialog -Title 'Своя игра' `
-                             -Prompt ("Вставь ссылку на игру, приглашение на приватный сервер или просто её номер.`n" +
-                                      'Название подтянется само.')
+                    $val = Show-RamInputDialog -Title (Get-RamText -Text 'Своя игра') `
+                             -Prompt ((Get-RamText -Text 'Вставь ссылку на игру, приглашение на приватный сервер или просто её номер.
+') +
+                                      (Get-RamText -Text 'Название подтянется само.'))
                     if ([string]::IsNullOrWhiteSpace($val)) { return }
 
                     $script:UI.Form.Cursor = [System.Windows.Forms.Cursors]::WaitCursor
@@ -2889,13 +2906,13 @@ function New-RamMainFormWater {
                     finally { $script:UI.Form.Cursor = [System.Windows.Forms.Cursors]::Default }
 
                     if ($null -eq $g -or -not $g.PlaceId) {
-                        Show-RamError 'Не удалось понять, что это за игра. Нужна ссылка на игру, приглашение на приватный сервер или номер игры.'
+                        Show-RamError (Get-RamText -Text 'Не удалось понять, что это за игра. Нужна ссылка на игру, приглашение на приватный сервер или номер игры.')
                         return
                     }
                     $title = if ($g.GameName) { $g.GameName } else { "ID $($g.PlaceId)" }
                     Add-RamSavedGame -PlaceId $g.PlaceId -LinkCode $g.LinkCode -Title $title
                     Update-RamGamesPanel
-                    Write-RamLog "В список игр добавлена «$title»." 'ok'
+                    Write-RamLog (Get-RamText -Text 'В список игр добавлена «{0}».' -Arguments @([string]($title))) 'ok'
                 }
             } else {
                 { Invoke-RamSaveProfile }
@@ -2913,8 +2930,8 @@ function New-RamMainFormWater {
     # «Фаст-настройка» — под «Журналом», того же стиля, что и разделы выше
     # (не приглушённая, как «Настройки»/«Справка» ниже): по сути это ещё
     # один быстрый переход, а не второстепенное действие.
-    $bQuick = New-RamButton -Text '  Фаст-настройка' -Icon 'bolt' -Width $navBtnW -Height $navH -Radius 10 `
-                            -Tooltip 'Разложить всё под расклад «основной + твины на випке»' -OnClick {
+    $bQuick = New-RamButton -Text (Get-RamText -Text '  Фаст-настройка') -Icon 'bolt' -Width $navBtnW -Height $navH -Radius 10 `
+                            -Tooltip (Get-RamText -Text 'Разложить всё под расклад «основной + твины на випке»') -OnClick {
         Show-RamQuickSetup
     }
     $bQuick.Tag.Border = $null
@@ -2939,8 +2956,8 @@ function New-RamMainFormWater {
     # правильные Y она посчитает следом, при первом вызове после сборки
     # (Add_Shown) и на каждом Resize (переход в развёрнутый режим и обратно).
 
-    $bFix = New-RamButton -Text '  Проверить входы' -Icon 'key' -Width $navBtnW -Height $navH -Radius 10 -Fixed `
-                          -Tooltip 'Проверить, живы ли входы. Если есть мёртвые — пройтись по ним и взять заново из приложения Roblox' `
+    $bFix = New-RamButton -Text (Get-RamText -Text '  Проверить входы') -Icon 'key' -Width $navBtnW -Height $navH -Radius 10 -Fixed `
+                          -Tooltip (Get-RamText -Text 'Проверить, живы ли входы. Если есть мёртвые — пройтись по ним и взять заново из приложения Roblox') `
                           -OnClick {
                               if ([string]$this.Tag.Mode -like 'fix*') { Invoke-RamRepairAll }
                               else { Invoke-RamCheckCookies }
@@ -2951,21 +2968,23 @@ function New-RamMainFormWater {
     $side.Controls.Add($bFix)
     $script:UI.FixAll = $bFix
 
-    $bSettings = New-RamButton -Text '  Настройки' -Icon 'gear' -Width $navBtnW -Height $navH -Radius 10 -OnClick {
+    $bSettings = New-RamButton -Text (Get-RamText -Text '  Настройки') -Icon 'gear' -Width $navBtnW -Height $navH -Radius 10 -OnClick {
         Show-RamSettingsDialog
     }
     $bSettings.Tag.Border = $null
     $bSettings.Anchor   = 'Left,Bottom'
     $side.Controls.Add($bSettings)
 
-    $bHelp = New-RamButton -Text '  Справка' -Icon 'help' -Width $navBtnW -Height $navH -Radius 10 -OnClick {
-        $ans = Show-RamMessage -Title 'Справка' -Kind 'info' -Message (
-            "Пройти настройку заново — тот самый мастер первого запуска: железо, тема, аккаунты, наборы.`n`n" +
-            "Открыть README — подробное описание всего, что умеет AltHub."
+    $bHelp = New-RamButton -Text (Get-RamText -Text '  Справка') -Icon 'help' -Width $navBtnW -Height $navH -Radius 10 -OnClick {
+        $ans = Show-RamMessage -Title (Get-RamText -Text 'Справка') -Kind 'info' -Message (
+            (Get-RamText -Text 'Пройти настройку заново — тот самый мастер первого запуска: железо, тема, аккаунты, наборы.
+
+') +
+            (Get-RamText -Text 'Открыть README — подробное описание всего, что умеет AltHub.')
         ) -Buttons @(
-            @{ Text = 'Пройти настройку заново'; Value = 'wizard'; Kind = 'primary' },
-            @{ Text = 'Открыть README';          Value = 'readme' },
-            @{ Text = 'Закрыть';                 Value = 'no'     }
+            @{ Text = (Get-RamText -Text 'Пройти настройку заново'); Value = 'wizard'; Kind = 'primary' },
+            @{ Text = (Get-RamText -Text 'Открыть README');          Value = 'readme' },
+            @{ Text = (Get-RamText -Text 'Закрыть');                 Value = 'no'     }
         )
         switch ([string]$ans) {
             'wizard' {
@@ -2975,7 +2994,7 @@ function New-RamMainFormWater {
             'readme' {
                 $readme = Join-Path $script:Root 'README.md'
                 if (Test-Path -LiteralPath $readme) { Start-Process notepad.exe $readme }
-                else { Show-RamInfo 'README.md не найден рядом со скриптом.' }
+                else { Show-RamInfo (Get-RamText -Text 'README.md не найден рядом со скриптом.') }
             }
         }
     }
@@ -3005,7 +3024,7 @@ function New-RamMainFormWater {
     # осмысленного (нет карточек аккаунтов на экране, некого «отмечать»),
     # поэтому там просто прячется, оставляя под собой пустое место —
     # см. Show-RamSection ($script:UI.NavGroupAcc).
-    $bLaunch = New-RamButton -Text '  Запустить' -Icon 'play' -Width $navBtnW -Height $navH -Radius 10 -Kind 'primary' -OnClick {
+    $bLaunch = New-RamButton -Text (Get-RamText -Text '  Запустить') -Icon 'play' -Width $navBtnW -Height $navH -Radius 10 -Kind 'primary' -OnClick {
         $targets = @(Get-RamTargetAccounts)
         if ($targets.Count -eq 0) { $targets = @(Get-RamVisibleAccounts) }
         Add-RamToLaunchQueue -Accounts $targets
@@ -3013,12 +3032,12 @@ function New-RamMainFormWater {
     $side.Controls.Add($bLaunch)
     $script:UI.BtnLaunch = $bLaunch
 
-    $bCloseAll = New-RamButton -Text '  Закрыть' -Icon 'stop' -Width $navBtnW -Height $navH -Radius 10 -Kind 'ghost' `
-                               -Tooltip 'Закрыть окна отмеченных' -OnClick { Invoke-RamStopSelected }
+    $bCloseAll = New-RamButton -Text (Get-RamText -Text '  Закрыть') -Icon 'stop' -Width $navBtnW -Height $navH -Radius 10 -Kind 'ghost' `
+                               -Tooltip (Get-RamText -Text 'Закрыть окна отмеченных') -OnClick { Invoke-RamStopSelected }
     $side.Controls.Add($bCloseAll)
 
-    $bTile = New-RamButton -Text '  Окна' -Icon 'windows' -Width $navBtnW -Height $navH -Radius 10 -Kind 'ghost' `
-                           -Tooltip 'Левый клик — разложить, правый — выбрать раскладку' -OnClick { Invoke-RamTileWindows }
+    $bTile = New-RamButton -Text (Get-RamText -Text '  Окна') -Icon 'windows' -Width $navBtnW -Height $navH -Radius 10 -Kind 'ghost' `
+                           -Tooltip (Get-RamText -Text 'Левый клик — разложить, правый — выбрать раскладку') -OnClick { Invoke-RamTileWindows }
     $side.Controls.Add($bTile)
     $script:UI.BtnTile = $bTile
 
@@ -3087,7 +3106,7 @@ function New-RamMainFormWater {
     $topBtnY = (Get-RamScaled 16) - [int][Math]::Round(($topBtnH - $search.Height) / 2)
     $topBtnX = $search.Right + $metrics.Gap
 
-    $bAll = New-RamButton -Text 'Все' -Width (& $bw 70) -Height $topBtnH -Tooltip 'Отметить или снять отметку со всех' -OnClick {
+    $bAll = New-RamButton -Text (Get-RamText -Text 'Все') -Width (& $bw 70) -Height $topBtnH -Tooltip (Get-RamText -Text 'Отметить или снять отметку со всех') -OnClick {
         $any = $false
         foreach ($id in $script:Cards.Keys) { if (-not $script:Cards[$id].Check.Tag.Checked) { $any = $true } }
         Set-RamAllChecked $any
@@ -3108,15 +3127,15 @@ function New-RamMainFormWater {
     #
     # Смысл группировки тот же, что у кнопки: все четыре действия работают
     # над ОТМЕЧЕННЫМИ аккаунтами, и в меню это наконец написано словами.
-    $bSel = New-RamButton -Text 'Действия  ▾' -Width (& $bw 190) -Height $topBtnH `
-                          -Tooltip 'Игра, набор, метка, удаление — для отмеченных аккаунтов'
+    $bSel = New-RamButton -Text (Get-RamText -Text 'Действия  ▾') -Width (& $bw 190) -Height $topBtnH `
+                          -Tooltip (Get-RamText -Text 'Игра, набор, метка, удаление — для отмеченных аккаунтов')
     $selMenu = New-RamContextMenu
     $script:UI.ActionMenu = $selMenu
-    [void](Add-RamMenuItem -Menu $selMenu -Text 'Назначить игру'      -OnClick { Invoke-RamAssignGame })
-    [void](Add-RamMenuItem -Menu $selMenu -Text 'Собрать в набор'     -OnClick { Invoke-RamAssignGroup })
-    [void](Add-RamMenuItem -Menu $selMenu -Text 'Поставить метку'     -OnClick { Invoke-RamAssignColor })
+    [void](Add-RamMenuItem -Menu $selMenu -Text (Get-RamText -Text 'Назначить игру')      -OnClick { Invoke-RamAssignGame })
+    [void](Add-RamMenuItem -Menu $selMenu -Text (Get-RamText -Text 'Собрать в набор')     -OnClick { Invoke-RamAssignGroup })
+    [void](Add-RamMenuItem -Menu $selMenu -Text (Get-RamText -Text 'Поставить метку')     -OnClick { Invoke-RamAssignColor })
     [void](Add-RamMenuItem -Menu $selMenu -Separator)
-    [void](Add-RamMenuItem -Menu $selMenu -Text 'Убрать из менеджера' -OnClick { Invoke-RamDeleteSelected })
+    [void](Add-RamMenuItem -Menu $selMenu -Text (Get-RamText -Text 'Убрать из менеджера') -OnClick { Invoke-RamDeleteSelected })
     $bSel.Add_Click({ $selMenu.Show($this, (New-Object System.Drawing.Point(0, $this.Height))) }.GetNewClosure())
     $bSel.Location = New-Object System.Drawing.Point($topBtnX, $topBtnY)
     $bSel.Anchor   = 'Top,Left'
@@ -3128,8 +3147,8 @@ function New-RamMainFormWater {
     # та же высота ($topBtnH) и тот же Y ($topBtnY), поэтому центр кнопки
     # совпадает с центром поля поиска, как и у соседей. Видна только на
     # «Играх» — Show-RamSection переключает Visible при смене раздела.
-    $bGamesPopular = New-RamButton -Text '  Популярные из Roblox' -Icon 'gamepad' -Width (& $bw 210) -Height $topBtnH -Kind 'primary' `
-                                   -Tooltip 'Показать игры, в которые сейчас играют больше всего, и добавить их в список' -OnClick {
+    $bGamesPopular = New-RamButton -Text (Get-RamText -Text '  Популярные из Roblox') -Icon 'gamepad' -Width (& $bw 210) -Height $topBtnH -Kind 'primary' `
+                                   -Tooltip (Get-RamText -Text 'Показать игры, в которые сейчас играют больше всего, и добавить их в список') -OnClick {
         Show-RamPopularGamesDialog
         Update-RamGamesPanel
     }
@@ -3144,8 +3163,8 @@ function New-RamMainFormWater {
     # переехала на оверлей «+» кнопки «Профили» в боковом меню). Те же
     # пропорции ($topBtnH, ширина через $bw), тот же Y — центр совпадает с
     # центром поля поиска. Видна только на «Профилях».
-    $bProfiles = New-RamButton -Text '  Готовые сценарии  ▾' -Icon 'profile' -Width (& $bw 210) -Height $topBtnH -Kind 'primary' `
-                               -Tooltip 'Добавить готовый профиль с популярной игрой — работает сразу'
+    $bProfiles = New-RamButton -Text (Get-RamText -Text '  Готовые сценарии  ▾') -Icon 'profile' -Width (& $bw 210) -Height $topBtnH -Kind 'primary' `
+                               -Tooltip (Get-RamText -Text 'Добавить готовый профиль с популярной игрой — работает сразу')
     $profMenu = New-RamContextMenu
     foreach ($sp in Get-RamStarterProfiles) {
         [void](Add-RamMenuItem -Menu $profMenu -Text $sp.Name -Tag $sp -OnClick {
@@ -3166,12 +3185,12 @@ function New-RamMainFormWater {
     # общую верхнюю строку, правее поиска — те же $topBtnH/$topBtnY, что и
     # у «Готовых профилей», поэтому высота и вертикальное выравнивание
     # совпадают. Видна только на «Статистике».
-    $bStatsReset = New-RamButton -Text 'Обнулить' -Width (& $bw 120) -Height $topBtnH -Kind 'ghost' -OnClick {
-        if (-not (Confirm-Ram 'Обнулить всю статистику? Сами аккаунты и игры останутся на месте.')) { return }
+    $bStatsReset = New-RamButton -Text (Get-RamText -Text 'Обнулить') -Width (& $bw 120) -Height $topBtnH -Kind 'ghost' -OnClick {
+        if (-not (Confirm-Ram (Get-RamText -Text 'Обнулить всю статистику? Сами аккаунты и игры останутся на месте.'))) { return }
         foreach ($a in $script:Accounts) { $a.LaunchCount = 0; $a.CrashCount = 0; $a.PlaySeconds = 0 }
         Save-RamState
         Update-RamStatsPanel
-        Write-RamLog 'Статистика обнулена.' 'ok'
+        Write-RamLog (Get-RamText -Text 'Статистика обнулена.') 'ok'
     }
     $bStatsReset.Location = New-Object System.Drawing.Point(($search.Right + $metrics.Gap), $topBtnY)
     $bStatsReset.Anchor   = 'Top,Left'
@@ -3185,14 +3204,16 @@ function New-RamMainFormWater {
     # строку правее поиска — та же высота/Y ($topBtnH/$topBtnY), поэтому
     # центр совпадает с центром поля поиска, как у соседних кнопок. Видна
     # только на «Журнале».
-    $bCopyLog = New-RamButton -Text 'Скопировать' -Width (& $bw 130) -Height $topBtnH -Kind 'ghost' -OnClick {
+    $bCopyLog = New-RamButton -Text (Get-RamText -Text 'Скопировать') -Width (& $bw 130) -Height $topBtnH -Kind 'ghost' -OnClick {
         try {
             [System.Windows.Forms.Clipboard]::SetText($script:UI.Log.Text)
-            Set-RamStatus 'Журнал скопирован в буфер обмена.'
+            Set-RamStatus (Get-RamText -Text 'Журнал скопирован в буфер обмена.')
         } catch {
             # Буфер обмена бывает занят другой программой. Раньше ошибку
             # глотал пустой catch, и кнопка выглядела сломанной.
-            Show-RamMessage -Kind 'warn' -Message "Скопировать журнал не вышло: буфер обмена сейчас занят другой программой.`n`nПопробуй ещё раз через секунду."
+            Show-RamMessage -Kind 'warn' -Message (Get-RamText -Text 'Скопировать журнал не вышло: буфер обмена сейчас занят другой программой.
+
+Попробуй ещё раз через секунду.')
         }
     }
     $bCopyLog.Location = New-Object System.Drawing.Point(($search.Right + $metrics.Gap), $topBtnY)
@@ -3200,10 +3221,10 @@ function New-RamMainFormWater {
     $bCopyLog.Visible  = ($script:Section -eq 'log')
     $form.Controls.Add($bCopyLog)
 
-    $bClearLog = New-RamButton -Text 'Очистить' -Width (& $bw 120) -Height $topBtnH -Kind 'ghost' -OnClick {
+    $bClearLog = New-RamButton -Text (Get-RamText -Text 'Очистить') -Width (& $bw 120) -Height $topBtnH -Kind 'ghost' -OnClick {
         $script:UI.Log.Clear()
         [void]$script:LogLines.Clear()
-        Set-RamStatus 'Журнал в окне очищен. Файлы журнала в data\logs не тронуты.'
+        Set-RamStatus (Get-RamText -Text 'Журнал в окне очищен. Файлы журнала в data\logs не тронуты.')
     }
     $bClearLog.Location = New-Object System.Drawing.Point(($bCopyLog.Right + $metrics.GapSm), $topBtnY)
     $bClearLog.Anchor   = 'Top,Left'
@@ -3224,7 +3245,7 @@ function New-RamMainFormWater {
     # пустой строкой, из-за чего подсказка в пустом поле пропала молча
     # (сам механизм подсказки ниже работал исправно, просто показывать
     # было нечего). Возвращаю текст на место.
-    $script:SearchPlaceholder = 'поиск: имя, ник, игра, заметка'
+    $script:SearchPlaceholder = (Get-RamText -Text 'поиск: имя, ник, игра, заметка')
 
     $sTb = $search.Tag
     $sTb.Text      = $script:SearchPlaceholder
@@ -3256,7 +3277,7 @@ function New-RamMainFormWater {
     $searchTimer.Interval = 250
     $searchTimer.Add_Tick({
         $this.Stop()
-        Invoke-RamSafe -What 'поиск' -Body { Build-RamCards }
+        Invoke-RamSafe -What (Get-RamText -Text 'поиск') -Body { Build-RamCards }
     })
     $script:UI.SearchTimer = $searchTimer
 
@@ -3291,11 +3312,11 @@ function New-RamMainFormWater {
     # наведения оставались системными. Обёртка делает и то, и другое.
     $tileMenu = New-RamContextMenu
     foreach ($m in @(
-        @{ K = 'main';    T = 'Основной крупно, твины мелко' },
-        @{ K = 'grid';    T = 'Сеткой' },
-        @{ K = 'cascade'; T = 'Каскадом' },
-        @{ K = 'columns'; T = 'Колонками' },
-        @{ K = 'rows';    T = 'Строками' })) {
+        @{ K = 'main';    T = (Get-RamText -Text 'Основной крупно, твины мелко') },
+        @{ K = 'grid';    T = (Get-RamText -Text 'Сеткой') },
+        @{ K = 'cascade'; T = (Get-RamText -Text 'Каскадом') },
+        @{ K = 'columns'; T = (Get-RamText -Text 'Колонками') },
+        @{ K = 'rows';    T = (Get-RamText -Text 'Строками') })) {
         # $m — элемент списка выше. Когда-то по файлу прошлись заменой
         # «$m.» на «$metrics.», и здесь она сработала не по адресу: все пять
         # пунктов получали пустое имя и Tag = $null, то есть меню выбора
@@ -3310,7 +3331,7 @@ function New-RamMainFormWater {
         })
         [void]$tileMenu.Items.Add($mi)
     }
-    $miSave = New-Object System.Windows.Forms.ToolStripMenuItem('Запомнить места окон')
+    $miSave = New-Object System.Windows.Forms.ToolStripMenuItem((Get-RamText -Text 'Запомнить места окон'))
     $miSave.Add_Click({ Save-RamWindowPositions })
     [void]$tileMenu.Items.Add((New-Object System.Windows.Forms.ToolStripSeparator))
     [void]$tileMenu.Items.Add($miSave)
@@ -3491,25 +3512,25 @@ function New-RamMainFormWater {
     # =================================================== таймеры ============
     $lt = New-Object System.Windows.Forms.Timer
     $lt.Interval = 500
-    $lt.Add_Tick({ Invoke-RamSafe -What 'очередь запуска' -Body { Invoke-RamNextLaunch } })
+    $lt.Add_Tick({ Invoke-RamSafe -What (Get-RamText -Text 'очередь запуска') -Body { Invoke-RamNextLaunch } })
     $script:UI.LaunchTimer = $lt
     $script:UI.FreshFocusTimer = New-RamFreshWindowTimer
 
     $ut = New-Object System.Windows.Forms.Timer
     $ut.Interval = 2000
-    $ut.Add_Tick({ Invoke-RamSafe -What 'обновление состояния' -Body { Update-RamInstances } })
+    $ut.Add_Tick({ Invoke-RamSafe -What (Get-RamText -Text 'обновление состояния') -Body { Update-RamInstances } })
     $ut.Start()
     $script:UI.UpdateTimer = $ut
 
     $sch = New-Object System.Windows.Forms.Timer
     $sch.Interval = 30000
-    $sch.Add_Tick({ Invoke-RamSafe -What 'расписание и присмотр' -Body { Invoke-RamScheduleCheck; Invoke-RamWatchCheck } })
+    $sch.Add_Tick({ Invoke-RamSafe -What (Get-RamText -Text 'расписание и присмотр') -Body { Invoke-RamScheduleCheck; Invoke-RamWatchCheck } })
     $sch.Start()
     $script:UI.ScheduleTimer = $sch
 
     $form.Add_ResizeEnd({
-        Invoke-RamSafe -What 'перестройка после изменения размера' -Body { Update-RamAfterResize }
-        Invoke-RamSafe -What 'запоминание размера окна' -Body { Save-RamMainWindowGeometry -Form $this }
+        Invoke-RamSafe -What (Get-RamText -Text 'перестройка после изменения размера') -Body { Update-RamAfterResize }
+        Invoke-RamSafe -What (Get-RamText -Text 'запоминание размера окна') -Body { Save-RamMainWindowGeometry -Form $this }
     })
 
     # =================================================== горячие клавиши ====
@@ -3536,7 +3557,7 @@ function New-RamMainFormWater {
         if ($inText -or ($sender.ActiveControl -is [System.Windows.Forms.Button] -and $e.KeyCode -eq 'Return')) { return }
 
         switch ($e.KeyCode) {
-            'F5'     { Build-RamCards; Update-RamStatsPanel; Write-RamLog 'Обновлено.' 'info'; $e.Handled = $true }
+            'F5'     { Build-RamCards; Update-RamStatsPanel; Write-RamLog (Get-RamText -Text 'Обновлено.') 'info'; $e.Handled = $true }
             'Delete' { Invoke-RamDeleteSelected; $e.Handled = $true }
             'A'      { if ($e.Control) { Set-RamAllChecked $true; $e.Handled = $true } }
             'T'      { if ($e.Control) { Invoke-RamTileWindows; $e.Handled = $true } }
@@ -3575,7 +3596,7 @@ function New-RamMainFormWater {
 
             if (Confirm-RamTrayVisible) {
                 $e.Cancel = $true
-                Invoke-RamSafe -What 'запоминание размера окна' -Body { Save-RamMainWindowGeometry -Form $sender }
+                Invoke-RamSafe -What (Get-RamText -Text 'запоминание размера окна') -Body { Save-RamMainWindowGeometry -Form $sender }
                 $sender.Hide()
                 Show-RamTrayHint
                 return
@@ -3585,19 +3606,21 @@ function New-RamMainFormWater {
         }
 
         if (-not $internalClose -and $script:Settings.ConfirmOnExit -and $script:Instances.Count -gt 0) {
-            if (-not (Confirm-Ram "Запущено клиентов: $($script:Instances.Count).`n`nЗакрыть менеджер? Сами окна Roblox продолжат работать, но новые аккаунты запустить будет нельзя, пока менеджер закрыт.")) {
+            if (-not (Confirm-Ram (Get-RamText -Text 'Запущено клиентов: {0}.
+
+Закрыть менеджер? Сами окна Roblox продолжат работать, но новые аккаунты запустить будет нельзя, пока менеджер закрыт.' -Arguments @([string]($($script:Instances.Count)))))) {
                 $e.Cancel = $true
                 return
             }
         }
-        Invoke-RamSafe -What 'запоминание размера окна' -Body { Save-RamMainWindowGeometry -Form $sender }
+        Invoke-RamSafe -What (Get-RamText -Text 'запоминание размера окна') -Body { Save-RamMainWindowGeometry -Form $sender }
         Dispose-RamFormRuntime
         if ($script:RebuildUi) { return }
 
-        Invoke-RamSafe -What 'сохранение при закрытии' -Body { Save-RamState }
-        Invoke-RamSafe -What 'снятие замков'          -Body { Disable-RamMultiInstance }
-        Invoke-RamSafe -What 'снятие горячих клавиш'  -Body { Unregister-RamHotkeys }
-        Invoke-RamSafe -What 'снятие замка копии'     -Body { Clear-RamSingleInstance }
+        Invoke-RamSafe -What (Get-RamText -Text 'сохранение при закрытии') -Body { Save-RamState }
+        Invoke-RamSafe -What (Get-RamText -Text 'снятие замков')          -Body { Disable-RamMultiInstance }
+        Invoke-RamSafe -What (Get-RamText -Text 'снятие горячих клавиш')  -Body { Unregister-RamHotkeys }
+        Invoke-RamSafe -What (Get-RamText -Text 'снятие замка копии')     -Body { Clear-RamSingleInstance }
         if ($null -ne $script:UI.Tray) {
             $script:UI.Tray.Visible = $false
             $script:UI.Tray.Dispose()
@@ -3608,7 +3631,7 @@ function New-RamMainFormWater {
     # Значок нужен, когда в часы уводит крестик. Минус в часы не уводит
     # никогда — см. Add_Resize.
     $script:UI.TrayOk = $false
-    if ($script:Settings.OnClose -eq 'tray') {
+    if ($script:Settings.OnClose -eq 'tray' -and -not $script:ReadOnly) {
         $ni = New-Object System.Windows.Forms.NotifyIcon
         # ЗДЕСЬ БЫЛ catch { } — и это дорого стоило. Если значок не создавался,
         # NotifyIcon оставался с Icon = $null, Windows такой значок не рисует,
@@ -3629,7 +3652,7 @@ function New-RamMainFormWater {
             # МОЛЧА ЭТО ГЛОТАТЬ НЕЛЬЗЯ. Если значка нет, крестик обязан просто
             # закрывать программу — иначе окно спрячется в никуда.
             $script:UI.TrayOk = $false
-            Write-RamLog "Значок в часах не создался ($($_.Exception.Message)) — крестик будет просто закрывать программу." 'warn'
+            Write-RamLog (Get-RamText -Text 'Значок в часах не создался ({0}) — крестик будет просто закрывать программу.' -Arguments @([string]((Get-RamErrorText -Text ($($_.Exception.Message)))))) 'warn'
         }
         $script:UI.Tray = $ni
 
@@ -3650,6 +3673,13 @@ function New-RamMainFormWater {
         $trayMenu = New-RamContextMenu
         $ni.ContextMenuStrip = $trayMenu
         $script:UI.TrayMenu = $trayMenu
+
+        # Dispose can bypass FormClosing; release this form's icon, not the new UI's.
+        $ownedTray=$ni;$ownedTrayMenu=$trayMenu
+        $form.Add_Disposed({
+            try {$ownedTray.Visible=$false;$ownedTray.Dispose()} catch {}
+            $ownedTrayMenu.Dispose()
+        }.GetNewClosure())
 
         $ni.Add_MouseUp({
             param($sender, $e)
@@ -3672,7 +3702,7 @@ function New-RamMainFormWater {
         $this.Stop()
         # Пересобираем, только если ширина карточки действительно поменялась:
         # раньше список пересоздавался на каждый тик, даже при движении окна.
-        Invoke-RamSafe -What 'пересборка карточек при перетаскивании края' -Body { Update-RamAfterResize }
+        Invoke-RamSafe -What (Get-RamText -Text 'пересборка карточек при перетаскивании края') -Body { Update-RamAfterResize }
     })
     $script:UI.ResizeLiveTimer = $resizeLiveTimer
 
@@ -3691,8 +3721,8 @@ function New-RamMainFormWater {
         # её сразу, не дожидаясь таймера ниже (тот ждёт 30мс и вдобавок
         # пересобирает карточки целиком, а тут двигать нужно только две
         # кнопки).
-        Invoke-RamSafe -What 'раскладка верхней строки' -Body { Update-RamTopBarLayout }
-        Invoke-RamSafe -What 'раскладка бокового меню' -Body { Update-RamSideBarLayout }
+        Invoke-RamSafe -What (Get-RamText -Text 'раскладка верхней строки') -Body { Update-RamTopBarLayout }
+        Invoke-RamSafe -What (Get-RamText -Text 'раскладка бокового меню') -Body { Update-RamSideBarLayout }
 
         if ($null -ne $script:UI.ResizeLiveTimer) {
             $script:UI.ResizeLiveTimer.Stop()
@@ -3707,8 +3737,8 @@ function New-RamMainFormWater {
         if ($script:LastWindowState -ne $this.WindowState) {
             $script:LastWindowState = $this.WindowState
             if ($this.WindowState -ne 'Minimized') {
-                Invoke-RamSafe -What 'перестройка после разворота' -Body { Update-RamAfterResize -Force }
-                Invoke-RamSafe -What 'запоминание размера окна' -Body { Save-RamMainWindowGeometry -Form $this }
+                Invoke-RamSafe -What (Get-RamText -Text 'перестройка после разворота') -Body { Update-RamAfterResize -Force }
+                Invoke-RamSafe -What (Get-RamText -Text 'запоминание размера окна') -Body { Save-RamMainWindowGeometry -Form $this }
             }
         }
     })
@@ -3736,13 +3766,13 @@ function New-RamMainFormWater {
         # без явного действия пользователя. Add_Shown срабатывает уже после
         # того, как все панели созданы — здесь можно пересчитать раскладку
         # ещё раз и получить верный результат сразу, без ожидания ресайза.
-        Invoke-RamSafe -What 'раскладка верхней строки при показе окна' -Body { Update-RamTopBarLayout }
+        Invoke-RamSafe -What (Get-RamText -Text 'раскладка верхней строки при показе окна') -Body { Update-RamTopBarLayout }
         # То же самое для бокового меню: если окно стартует уже развёрнутым
         # (Maximized запомнен с прошлого раза), $side.Height в момент сборки
         # ещё не настоящий (см. разбор в Update-RamSideBarLayout) — Shown
         # срабатывает уже после того, как WinForms применил реальные границы.
-        Invoke-RamSafe -What 'раскладка бокового меню при показе окна' -Body { Update-RamSideBarLayout }
-        Invoke-RamSafe -What 'минимальный размер окна' -Body { Update-RamMinimumWindowSize }
+        Invoke-RamSafe -What (Get-RamText -Text 'раскладка бокового меню при показе окна') -Body { Update-RamSideBarLayout }
+        Invoke-RamSafe -What (Get-RamText -Text 'минимальный размер окна') -Body { Update-RamMinimumWindowSize }
 
         # ПОДСТРАХОВКА ОТ НЕВИДИМОГО ОКНА.
         # Если процессу досталось SW_HIDE в STARTUPINFO (так бывает, когда
@@ -3758,7 +3788,7 @@ function New-RamMainFormWater {
             if ($h -ne [IntPtr]::Zero -and -not [Ram.Native]::IsWindowVisible($h)) {
                 [void][Ram.Native]::ShowWindow($h, 1)   # SW_SHOWNORMAL
                 [void][Ram.Native]::SetForegroundWindow($h)
-                Write-RamLog 'Окно было скрыто способом запуска — показал его принудительно.' 'warn'
+                Write-RamLog (Get-RamText -Text 'Окно было скрыто способом запуска — показал его принудительно.') 'warn'
             }
         } catch { }
 
@@ -3809,15 +3839,15 @@ function Update-RamCardPrimaryButton {
             elseif ([string]$Account.CookieOk -eq 'no') { 'dead' } else { 'start' }
     if ($button.Tag.PSObject.Properties.Name -contains 'PrimaryMode' -and $button.Tag.PrimaryMode -eq $mode) { return }
     $button.Tag | Add-Member -NotePropertyName PrimaryMode -NotePropertyValue $mode -Force
-    $caption = switch ($mode) { 'show' {'Показать'} 'closing' {'Выход'} 'loading' {'Загрузка'} 'paused' {'Пауза'} 'queued' {'Очередь'} 'dead' {'Войти'} default {'Запустить'} }
-    $tip = switch ($mode) { 'show' {'Показать окно этого аккаунта'} 'closing' {'Окно закрывается'} 'loading' {'Roblox создаёт окно'} 'paused' {'Очередь на паузе: открыть центр запуска'} 'queued' {'Открыть центр запуска'} 'dead' {'Войти в аккаунт заново'} default {'Запустить этот аккаунт'} }
+    $caption = switch ($mode) { 'show' {(Get-RamText -Text 'Показать')} 'closing' {(Get-RamText -Text 'Выход')} 'loading' {(Get-RamText -Text 'Загрузка')} 'paused' {(Get-RamText -Text 'Пауза')} 'queued' {(Get-RamText -Text 'Очередь')} 'dead' {(Get-RamText -Text 'Войти')} default {(Get-RamText -Text 'Запустить')} }
+    $tip = switch ($mode) { 'show' {(Get-RamText -Text 'Показать окно этого аккаунта')} 'closing' {(Get-RamText -Text 'Окно закрывается')} 'loading' {(Get-RamText -Text 'Roblox создаёт окно')} 'paused' {(Get-RamText -Text 'Очередь на паузе: открыть центр запуска')} 'queued' {(Get-RamText -Text 'Открыть центр запуска')} 'dead' {(Get-RamText -Text 'Войти в аккаунт заново')} default {(Get-RamText -Text 'Запустить этот аккаунт')} }
     $layout = Get-RamActiveMenuLayout
     if ($layout -eq 'water') {
         $button.Tag.Icon = switch ($mode) { 'show' {'windows'} 'closing' {'stop'} 'loading' {'history'} 'paused' {'history'} 'queued' {'history'} 'dead' {''} default {'play'} }
         $button.Tag.IconOnly = ($mode -ne 'dead')
         Set-RamButtonText -Button $button -Text $(if ($mode -eq 'dead') {'↻'} else {''}) -KeepWidth
     } else {
-        if ($layout -eq 'classic') { $caption = switch ($mode) { 'show' {'Окно'} 'loading' {'Ждёт'} 'queued' {'Ждёт'} 'start' {'Пуск'} default {$caption} } }
+        if ($layout -eq 'classic') { $caption = switch ($mode) { 'show' {(Get-RamText -Text 'Окно')} 'loading' {(Get-RamText -Text 'Ждёт')} 'queued' {(Get-RamText -Text 'Ждёт')} 'start' {(Get-RamText -Text 'Пуск')} default {$caption} } }
         Set-RamButtonText -Button $button -Text $caption -KeepWidth
     }
     Set-RamButtonKind -Button $button -Kind $(if ($mode -eq 'dead') {'danger'} elseif ($mode -eq 'start') {'primary'} elseif ($mode -eq 'show') {'normal'} else {'ghost'})
@@ -3837,7 +3867,7 @@ function New-RamMainForm {
         default   { New-RamMainFormWater }
     }
     [void](Add-RamMenuItem -Menu $script:UI.ActionMenu -Separator)
-    [void](Add-RamMenuItem -Menu $script:UI.ActionMenu -Text 'Центр запуска  ·  Ctrl+L' -OnClick { Show-RamLaunchCenter })
+    [void](Add-RamMenuItem -Menu $script:UI.ActionMenu -Text (Get-RamText -Text 'Центр запуска  ·  Ctrl+L') -OnClick { Show-RamLaunchCenter })
     $form.Add_KeyDown({ param($sender,$e)
         if ($e.Control -and $e.KeyCode -eq 'L') { $e.Handled=$true; $e.SuppressKeyPress=$true; Show-RamLaunchCenter }
     })
@@ -4016,14 +4046,14 @@ function Update-RamGamesPanelClassic {
         Clear-RamPanelControls -Panel $h
         $games = @($script:Settings.Games | Where-Object { $null -ne $_ })
         if ($games.Count -eq 0) {
-            $h.Controls.Add((New-RamNoticeCard -Width $W -Title 'Список пуст' `
-                -Text 'Нажми «Добавить игру» и вставь ссылку — или возьми готовую из популярных. Игры также попадают сюда сами, когда назначаешь их аккаунтам.'))
+            $h.Controls.Add((New-RamNoticeCard -Width $W -Title (Get-RamText -Text 'Список пуст') `
+                -Text (Get-RamText -Text 'Нажми «Добавить игру» и вставь ссылку — или возьми готовую из популярных. Игры также попадают сюда сами, когда назначаешь их аккаунтам.')))
             return
         }
         foreach ($g in $games) {
-            $bSet = New-RamButton -Text 'Назначить отмеченным' -Width 1 -Height $t.M.RowHSm -Kind 'primary' -OnClick {
+            $bSet = New-RamButton -Text (Get-RamText -Text 'Назначить отмеченным') -Width 1 -Height $t.M.RowHSm -Kind 'primary' -OnClick {
                 $targets = @(Get-RamTargetAccounts)
-                if ($targets.Count -eq 0) { Show-RamInfo 'Сначала отметь аккаунты в разделе «Аккаунты».'; return }
+                if ($targets.Count -eq 0) { Show-RamInfo (Get-RamText -Text 'Сначала отметь аккаунты в разделе «Аккаунты».'); return }
                 $g2 = $this.Tag.Game
                 foreach ($a in $targets) {
                     $a.PlaceId  = [string]$g2.PlaceId
@@ -4032,24 +4062,24 @@ function Update-RamGamesPanelClassic {
                 }
                 Save-RamState
                 Build-RamCards
-                Write-RamLog "«$($g2.Title)» назначена аккаунтам: $($targets.Count)." 'ok'
+                Write-RamLog (Get-RamText -Text '«{0}» назначена аккаунтам: {1}.' -Arguments @([string]($($g2.Title)),[string]($($targets.Count)))) 'ok'
             }
-            $bDel = New-RamButton -Text 'Убрать' -Width 1 -Height $t.M.RowHSm -OnClick {
+            $bDel = New-RamButton -Text (Get-RamText -Text 'Убрать') -Width 1 -Height $t.M.RowHSm -OnClick {
                 $g2 = $this.Tag.Game
                 $script:Settings.Games = @(@($script:Settings.Games) | Where-Object {
                     -not ($_.PlaceId -eq $g2.PlaceId -and [string]$_.LinkCode -eq [string]$g2.LinkCode)
                 })
                 Save-RamSettings -Settings $script:Settings
                 Update-RamGamesPanel
-                Write-RamLog "«$($g2.Title)» убрана из списка игр." 'ok'
+                Write-RamLog (Get-RamText -Text '«{0}» убрана из списка игр.' -Arguments @([string]($($g2.Title)))) 'ok'
             }
             $bSet.Tag | Add-Member -NotePropertyName Game -NotePropertyValue $g -Force
             $bDel.Tag | Add-Member -NotePropertyName Game -NotePropertyValue $g -Force
             $hasTitle = (-not [string]::IsNullOrWhiteSpace([string]$g.Title)) -and ([string]$g.Title -notmatch '^ID \d+$')
             $title = if ($hasTitle) { [string]$g.Title } else { "ID $($g.PlaceId)" }
             $metaParts = @()
-            if ($hasTitle) { $metaParts += "ID $($g.PlaceId)" } else { $metaParts += 'название ещё не подтянулось' }
-            if ($g.LinkCode) { $metaParts += 'приватный сервер' }
+            if ($hasTitle) { $metaParts += "ID $($g.PlaceId)" } else { $metaParts += (Get-RamText -Text 'название ещё не подтянулось') }
+            if ($g.LinkCode) { $metaParts += (Get-RamText -Text 'приватный сервер') }
             $h.Controls.Add((New-RamRowCard -Width $W -Title $title -Meta ($metaParts -join '   ·   ') -Buttons @($bSet, $bDel)))
         }
     } finally {
@@ -4070,20 +4100,20 @@ function Update-RamProfilesPanelClassic {
         Clear-RamPanelControls -Panel $h
         $profiles = @(Get-RamProfiles)
         if ($profiles.Count -eq 0) {
-            $h.Controls.Add((New-RamNoticeCard -Width $W -Title 'Сценариев пока нет' `
-                -Text 'Отметь нужные аккаунты в разделе «Аккаунты», задай им игру, потом сохрани текущее как профиль. Дальше весь набор запускается одной кнопкой.'))
+            $h.Controls.Add((New-RamNoticeCard -Width $W -Title (Get-RamText -Text 'Сценариев пока нет') `
+                -Text (Get-RamText -Text 'Отметь нужные аккаунты в разделе «Аккаунты», задай им игру, потом сохрани текущее как профиль. Дальше весь набор запускается одной кнопкой.')))
             return
         }
         foreach ($pr in $profiles) {
-            $bRun = New-RamButton -Text 'Запустить' -Width 1 -Height $t.M.RowHSm -Kind 'primary' -OnClick {
+            $bRun = New-RamButton -Text (Get-RamText -Text 'Запустить') -Width 1 -Height $t.M.RowHSm -Kind 'primary' -OnClick {
                 Invoke-RamRunProfile -Profile $this.Tag.Profile
             }
-            $bDel = New-RamButton -Text 'Убрать' -Width 1 -Height $t.M.RowHSm -OnClick {
+            $bDel = New-RamButton -Text (Get-RamText -Text 'Убрать') -Width 1 -Height $t.M.RowHSm -OnClick {
                 $nm = $this.Tag.Profile.Name
                 $script:Settings.Profiles = @(Get-RamProfiles | Where-Object { $_.Name -ne $nm })
                 Save-RamSettings -Settings $script:Settings
                 Update-RamProfilesPanel
-                Write-RamLog "Профиль «$nm» убран." 'ok'
+                Write-RamLog (Get-RamText -Text 'Профиль «{0}» убран.' -Arguments @([string]($nm))) 'ok'
             }
             $bRun.Tag | Add-Member -NotePropertyName Profile -NotePropertyValue $pr -Force
             $bDel.Tag | Add-Member -NotePropertyName Profile -NotePropertyValue $pr -Force

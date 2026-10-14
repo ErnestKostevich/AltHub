@@ -18,11 +18,11 @@ function Get-RamWizardSteps {
     <# Порядок шагов. Отдельной функцией: и мастер, и Самопроверка должны
        видеть один и тот же список. #>
     @(
-        [pscustomobject]@{ Key = 'hello';    Title = 'Знакомство'      },
-        [pscustomobject]@{ Key = 'theme';    Title = 'Оформление'      },
-        [pscustomobject]@{ Key = 'accounts'; Title = 'Аккаунты'        },
-        [pscustomobject]@{ Key = 'main';     Title = 'Основной'        },
-        [pscustomobject]@{ Key = 'done';     Title = 'Готово'          }
+        [pscustomobject]@{ Key = 'hello';    Title = (Get-RamText -Text 'Знакомство')      },
+        [pscustomobject]@{ Key = 'theme';    Title = (Get-RamText -Text 'Оформление')      },
+        [pscustomobject]@{ Key = 'accounts'; Title = (Get-RamText -Text 'Аккаунты')        },
+        [pscustomobject]@{ Key = 'main';     Title = (Get-RamText -Text 'Основной')        },
+        [pscustomobject]@{ Key = 'done';     Title = (Get-RamText -Text 'Готово')          }
     )
 }
 
@@ -44,7 +44,7 @@ function Invoke-RamFirstRun {
         if (@($script:Accounts).Count -gt 0) {
             $script:Settings.FirstRunDone = $true
             Save-RamSettings -Settings $script:Settings
-            Write-RamLog 'Мастер настройки доступен в «Справке» — «Пройти настройку заново».' 'info'
+            Write-RamLog (Get-RamText -Text 'Мастер настройки доступен в «Справке» — «Пройти настройку заново».') 'info'
             return
         }
     }
@@ -86,9 +86,9 @@ function Show-RamFirstRun {
     # ---------------------------------------------------------------- размеры
     # Ширина — по самой длинной строке, которую нельзя переносить.
     $widest = 0
-    foreach ($s in @('Менеджер прочитает вход из приложения Roblox',
-                     'Окно браузера  —  войти руками, как на сайте',
-                     'Все способы  —  вставить пачкой, из своего браузера, из файла')) {
+    foreach ($s in @((Get-RamText -Text 'Менеджер прочитает вход из приложения Roblox'),
+                     (Get-RamText -Text 'Окно браузера  —  войти руками, как на сайте'),
+                     (Get-RamText -Text 'Все способы  —  вставить пачкой, из своего браузера, из файла'))) {
         $w = (Measure-RamText -Text $s -Font $t.FontBody).Width
         if ($w -gt $widest) { $widest = $w }
     }
@@ -96,7 +96,7 @@ function Show-RamFirstRun {
 
     # ------------------------------------------------------------------ форма
     $dlg = New-RamForm
-    $dlg.Text            = 'Настройка AltHub'
+    $dlg.Text            = (Get-RamText -Text 'Настройка AltHub')
     $dlg.FormBorderStyle = 'FixedDialog'
     $dlg.StartPosition   = 'CenterScreen'
     $dlg.MaximizeBox     = $false; $dlg.MinimizeBox = $false
@@ -116,7 +116,7 @@ function Show-RamFirstRun {
     [void](Add-RamGap -Layout $root -Height $m.StripeH)
 
     $titleH = (Measure-RamText -Text 'Ay' -Font $t.FontBig).Height + 2
-    $lblTitle = New-RamLabel -Text 'Настройка AltHub' -X 0 -Y 0 -Width 10 -Height $titleH -Font $t.FontBig
+    $lblTitle = New-RamLabel -Text (Get-RamText -Text 'Настройка AltHub') -X 0 -Y 0 -Width 10 -Height $titleH -Font $t.FontBig
     $lblTitle.Name = 'ramWizTitle'
     [void](Add-RamRow -Layout $root -Height $titleH -Gap $m.GapSm -Items @(@{ Control = $lblTitle; Width = $root.Width }))
 
@@ -177,26 +177,26 @@ function Show-RamFirstRun {
 
     # ============================================================ 1. знакомство
     $p1 = & $newPage 'hello'
-    [void](& $addText $p1 'AltHub держит несколько аккаунтов Roblox открытыми одновременно и раскладывает их окна по экрану. Пароли ему не нужны — он работает с уже выполненным входом.' $t.FontBody $t.Text)
+    [void](& $addText $p1 (Get-RamText -Text 'AltHub держит несколько аккаунтов Roblox открытыми одновременно и раскладывает их окна по экрану. Пароли ему не нужны — он работает с уже выполненным входом.') $t.FontBody $t.Text)
     [void](Add-RamGap -Layout $p1 -Height $m.Gap)
 
     $adv = Get-RamHardwareAdvice
-    [void](& $addText $p1 'ТВОЙ КОМПЬЮТЕР' $t.FontSmall $t.Muted)
+    [void](& $addText $p1 (Get-RamText -Text 'ТВОЙ КОМПЬЮТЕР') $t.FontSmall $t.Muted)
     [void](& $addText $p1 (Get-RamHardwareSummary) $t.FontBody $t.Text)
     [void](& $addText $p1 $adv.Text $t.FontSmall $t.Muted)
     [void](Add-RamGap -Layout $p1 -Height $m.Gap)
-    [void](& $addText $p1 'Дальше выберем оформление, добавим аккаунты и разберёмся, какой из них основной. Любой шаг можно пропустить и вернуться к нему позже — «Справка» -> «Пройти настройку заново».' $t.FontSmall $t.Muted)
+    [void](& $addText $p1 (Get-RamText -Text 'Дальше выберем оформление, добавим аккаунты и разберёмся, какой из них основной. Любой шаг можно пропустить и вернуться к нему позже — «Справка» -> «Пройти настройку заново».') $t.FontSmall $t.Muted)
 
     # =============================================================== 2. тема
     $p2 = & $newPage 'theme'
-    [void](& $addText $p2 'Выбери, как AltHub будет выглядеть. Тему видно сразу: окно перерисуется целиком.' $t.FontSmall $t.Muted)
+    [void](& $addText $p2 (Get-RamText -Text 'Выбери, как AltHub будет выглядеть. Тему видно сразу: окно перерисуется целиком.') $t.FontSmall $t.Muted)
     [void](Add-RamGap -Layout $p2 -Height $m.GapSm)
 
     $cbTheme = New-RamCombo -X 0 -Y 0 -Width $p2.Width -Items (Get-RamThemeItems) -Value ([string]$script:Settings.Theme)
     $cbTheme.Name = 'ramWizTheme'
     [void](Add-RamRow -Layout $p2 -Items @(@{ Control = $cbTheme; Width = $p2.Width }))
 
-    $btnApply = New-RamButton -Text 'Показать эту тему' -Width 1 -Height $m.RowHSm -Kind 'primary' -OnClick {
+    $btnApply = New-RamButton -Text (Get-RamText -Text 'Показать эту тему') -Width 1 -Height $m.RowHSm -Kind 'primary' -OnClick {
         $form = $this.FindForm()
         $cb   = $form.Controls.Find('ramWizTheme', $true) | Select-Object -First 1
         if ($null -eq $cb) { return }
@@ -207,7 +207,7 @@ function Show-RamFirstRun {
         $form.Tag = [pscustomobject]@{ Action = 'restyle'; Step = [int]$form.Controls.Find('ramWizStep', $true)[0].Tag; ThemeKey = $key }
         $form.Close()
     }
-    $btnOwn = New-RamButton -Text 'Собрать свою' -Width 1 -Height $m.RowHSm -Kind 'ghost' -OnClick {
+    $btnOwn = New-RamButton -Text (Get-RamText -Text 'Собрать свою') -Width 1 -Height $m.RowHSm -Kind 'ghost' -OnClick {
         $key = Show-RamThemeConstructor
         if (-not $key) { return }
         $form = $this.FindForm()
@@ -215,7 +215,7 @@ function Show-RamFirstRun {
         if ($null -ne $cb) { Set-RamComboItems -Combo $cb -Items (Get-RamThemeItems) -Value $key }
     }
     [void](Add-RamRow -Layout $p2 -Items @($btnApply, $btnOwn) -Gap $m.Gap)
-    [void](& $addText $p2 'В конструкторе можно взять любую основу и любой цвет акцента — остальные цвета подберутся сами.' $t.FontSmall $t.Muted)
+    [void](& $addText $p2 (Get-RamText -Text 'В конструкторе можно взять любую основу и любой цвет акцента — остальные цвета подберутся сами.') $t.FontSmall $t.Muted)
 
     # =========================================================== 3. аккаунты
     $p3 = & $newPage 'accounts'
@@ -225,20 +225,20 @@ function Show-RamFirstRun {
     # программе. Человек проходил мастер, не находил обещанного способа и
     # делал единственный возможный вывод — что его нет. Самопроверка теперь
     # сверяет эти два места между собой.
-    [void](& $addText $p3 'Способов много, но начать проще всего с первых двух. Остальные — на экране «Добавить».' $t.FontSmall $t.Muted)
+    [void](& $addText $p3 (Get-RamText -Text 'Способов много, но начать проще всего с первых двух. Остальные — на экране «Добавить».') $t.FontSmall $t.Muted)
     [void](Add-RamGap -Layout $p3 -Height $m.GapSm)
 
-    $bApp = New-RamButton -Text 'Из приложения Roblox  —  проще всего' -Width 1 -Height $m.RowH -Kind 'primary' -OnClick {
+    $bApp = New-RamButton -Text (Get-RamText -Text 'Из приложения Roblox  —  проще всего') -Width 1 -Height $m.RowH -Kind 'primary' -OnClick {
         [void](Show-RamAddWizard)
         Update-RamWizardAccountCount -Form $this.FindForm()
     }
-    $bWindow = New-RamButton -Text 'Окно браузера  —  войти руками, как на сайте' -Width 1 -Height $m.RowH -Kind 'ghost' -OnClick {
+    $bWindow = New-RamButton -Text (Get-RamText -Text 'Окно браузера  —  войти руками, как на сайте') -Width 1 -Height $m.RowH -Kind 'ghost' -OnClick {
         $f = $this.FindForm()
         $cookie = $null
         try { $cookie = Show-RamExternalBrowserLoginWindow }
         catch {
-            Write-RamLog "Окно входа: $($_.Exception.Message)" 'err'
-            Show-RamError -Text ('Не удалось открыть окно входа:' + [Environment]::NewLine + [Environment]::NewLine + $_.Exception.Message)
+            Write-RamLog (Get-RamText -Text 'Окно входа: {0}' -Arguments @([string]((Get-RamErrorText -Text ($($_.Exception.Message)))))) 'err'
+            Show-RamError -Text ((Get-RamText -Text 'Не удалось открыть окно входа:') + [Environment]::NewLine + [Environment]::NewLine + $_.Exception.Message)
         }
         # ЗДЕСЬ БЫЛО ХУЖЕ ВСЕГО: ни ветки на закрытое окно, ни ветки на
         # отвергнутую Roblox куку. И провал, и отказ проходили совсем без
@@ -247,33 +247,33 @@ function Show-RamFirstRun {
             $r = Import-RamAccountLine -Line $cookie
             if ($r -and $r.Ok) {
                 Save-RamState
-                Write-RamLog "Через окно браузера добавлен аккаунт: $($r.Alias)" 'ok'
-                Show-RamMessage -Kind 'ok' -Message ('Добавлен аккаунт:' + [Environment]::NewLine + [Environment]::NewLine + $r.Alias)
+                Write-RamLog (Get-RamText -Text 'Через окно браузера добавлен аккаунт: {0}' -Arguments @([string]($($r.Alias)))) 'ok'
+                Show-RamMessage -Kind 'ok' -Message ((Get-RamText -Text 'Добавлен аккаунт:') + [Environment]::NewLine + [Environment]::NewLine + $r.Alias)
             } else {
-                $why = if ($r -and $r.Error) { $r.Error } else { 'Roblox не подтвердил вход' }
-                Write-RamLog "Окно браузера: вход не принят — $why" 'err'
-                Show-RamError -Text ('Вход прошёл, но аккаунт не добавился:' + [Environment]::NewLine +
+                $why = if ($r -and $r.Error) { $r.Error } else { (Get-RamText -Text 'Roblox не подтвердил вход') }
+                Write-RamLog (Get-RamText -Text 'Окно браузера: вход не принят — {0}' -Arguments @([string]($why))) 'err'
+                Show-RamError -Text ((Get-RamText -Text 'Вход прошёл, но аккаунт не добавился:') + [Environment]::NewLine +
                                      [Environment]::NewLine + $why)
             }
         } else {
-            Write-RamLog 'Окно браузера: закрыто без получения входа.' 'warn'
+            Write-RamLog (Get-RamText -Text 'Окно браузера: закрыто без получения входа.') 'warn'
             Show-RamMessage -Kind 'warn' -Message (
-                'Аккаунт не добавлен: окно браузера закрылось раньше, чем вход прошёл.' +
+                (Get-RamText -Text 'Аккаунт не добавлен: окно браузера закрылось раньше, чем вход прошёл.') +
                 [Environment]::NewLine + [Environment]::NewLine +
-                'Либо ты закрыл его сам, либо истекло время ожидания. Можно попробовать ещё раз.')
+                (Get-RamText -Text 'Либо ты закрыл его сам, либо истекло время ожидания. Можно попробовать ещё раз.'))
         }
         Update-RamWizardAccountCount -Form $f
     }
-    $bAll = New-RamButton -Text 'Все способы  —  вставить пачкой, из своего браузера, из файла' -Width 1 -Height $m.RowH -Kind 'ghost' -OnClick {
+    $bAll = New-RamButton -Text (Get-RamText -Text 'Все способы  —  вставить пачкой, из своего браузера, из файла') -Width 1 -Height $m.RowH -Kind 'ghost' -OnClick {
         Show-RamAddChooser
         Update-RamWizardAccountCount -Form $this.FindForm()
     }
-    $bManual = New-RamButton -Text 'Вручную  —  вставить куку самому' -Width 1 -Height $m.RowH -Kind 'ghost' -OnClick {
+    $bManual = New-RamButton -Text (Get-RamText -Text 'Вручную  —  вставить куку самому') -Width 1 -Height $m.RowH -Kind 'ghost' -OnClick {
         $new = Show-RamAccountDialog
         if ($null -ne $new) {
             $script:Accounts = @(@($script:Accounts) + $new)
             Save-RamState
-            Write-RamLog "Добавлен аккаунт '$($new.Alias)'." 'ok'
+            Write-RamLog (Get-RamText -Text 'Добавлен аккаунт ''{0}''.' -Arguments @([string]($($new.Alias)))) 'ok'
         }
         Update-RamWizardAccountCount -Form $this.FindForm()
     }
@@ -286,18 +286,18 @@ function Show-RamFirstRun {
 
     # ========================================================== 4. основной
     $p4 = & $newPage 'main'
-    [void](& $addText $p4 'Основной — тот, которым ты играешь сам. Ему поставим максимум графики и звук, остальным — минимальную нагрузку, чтобы не съедали машину.' $t.FontSmall $t.Muted)
+    [void](& $addText $p4 (Get-RamText -Text 'Основной — тот, которым ты играешь сам. Ему поставим максимум графики и звук, остальным — минимальную нагрузку, чтобы не съедали машину.') $t.FontSmall $t.Muted)
     [void](Add-RamGap -Layout $p4 -Height $m.GapSm)
 
-    $cbMain = New-RamCombo -X 0 -Y 0 -Width $p4.Width -Items @([pscustomobject]@{ Text = '— выберу позже —'; Value = '' }) -Value ''
+    $cbMain = New-RamCombo -X 0 -Y 0 -Width $p4.Width -Items @([pscustomobject]@{ Text = (Get-RamText -Text '— выберу позже —'); Value = '' }) -Value ''
     $cbMain.Name = 'ramWizMain'
-    [void](Add-RamField -Layout $p4 -Caption 'Основной аккаунт' -Control $cbMain)
+    [void](Add-RamField -Layout $p4 -Caption (Get-RamText -Text 'Основной аккаунт') -Control $cbMain)
 
-    $bAssign = New-RamButton -Text 'Расставить наборы' -Width 1 -Height $m.RowH -Kind 'primary' -OnClick {
+    $bAssign = New-RamButton -Text (Get-RamText -Text 'Расставить наборы') -Width 1 -Height $m.RowH -Kind 'primary' -OnClick {
         $form = $this.FindForm()
         $cb   = $form.Controls.Find('ramWizMain', $true) | Select-Object -First 1
         $id   = Get-RamComboValue $cb
-        if (-not $id) { Show-RamInfo 'Сначала выбери основной аккаунт в списке.'; return }
+        if (-not $id) { Show-RamInfo (Get-RamText -Text 'Сначала выбери основной аккаунт в списке.'); return }
 
         $n = 0
         foreach ($a in @($script:Accounts)) {
@@ -306,34 +306,42 @@ function Show-RamFirstRun {
         }
         Save-RamState
         Build-RamCards
-        Write-RamLog "Наборы расставлены на $n аккаунтов." 'ok'
-        Show-RamInfo "Готово. Основному — максимум графики, остальным ($($n - 1)) — «Твинк, легко тянет».`n`nЛюбой аккаунт можно перенастроить: правый клик по карточке."
+        Write-RamLog (Get-RamText -Text 'Наборы расставлены на {0} аккаунтов.' -Arguments @([string]($n))) 'ok'
+        Show-RamInfo (Get-RamText -Text 'Готово. Основному — максимум графики, остальным ({0}) — «Твинк, легко тянет».
+
+Любой аккаунт можно перенастроить: правый клик по карточке.' -Arguments @([string]($($n - 1))))
     }
     [void](Add-RamRow -Layout $p4 -Items @($bAssign))
-    [void](& $addText $p4 'Если аккаунтов ещё нет — вернись на шаг назад или пропусти: наборы можно расставить в любой момент.' $t.FontSmall $t.Muted)
+    [void](& $addText $p4 (Get-RamText -Text 'Если аккаунтов ещё нет — вернись на шаг назад или пропусти: наборы можно расставить в любой момент.') $t.FontSmall $t.Muted)
 
     # ============================================================== 5. готово
     $p5 = & $newPage 'done'
-    [void](& $addText $p5 'Всё, можно работать.' $t.FontBody $t.Text)
+    [void](& $addText $p5 (Get-RamText -Text 'Всё, можно работать.') $t.FontBody $t.Text)
     [void](Add-RamGap -Layout $p5 -Height $m.GapSm)
-    [void](& $addText $p5 ("Отметь галочками нужные аккаунты и нажми «Запустить» — окна поднимутся по очереди и разложатся по экрану.`n`n" +
-                           "Правый клик по карточке — игра, наборы настроек, починка входа.`n`n" +
-                           "Пройти эту настройку заново можно из «Справки».") $t.FontSmall $t.Muted)
+    [void](& $addText $p5 ((Get-RamText -Text 'Отметь галочками нужные аккаунты и нажми «Запустить» — окна поднимутся по очереди и разложатся по экрану.
+
+') +
+                           (Get-RamText -Text 'Правый клик по карточке — игра, наборы настроек, починка входа.
+
+') +
+                           (Get-RamText -Text 'Пройти эту настройку заново можно из «Справки».')) $t.FontSmall $t.Muted)
     [void](Add-RamGap -Layout $p5 -Height $m.Gap)
 
-    $btnShortcut = New-RamButton -Text 'Сделать ярлык на рабочем столе' -Width 1 -Height $m.RowH -Kind 'ghost' `
-                                 -Tooltip 'Запуск одним кликом, без чёрного окна консоли' -OnClick {
+    $btnShortcut = New-RamButton -Text (Get-RamText -Text 'Сделать ярлык на рабочем столе') -Width 1 -Height $m.RowH -Kind 'ghost' `
+                                 -Tooltip (Get-RamText -Text 'Запуск одним кликом, без чёрного окна консоли') -OnClick {
         $r = New-RamDesktopShortcut
         if ($r.Ok) {
-            Set-RamButtonText -Button $this -Text 'Ярлык создан ✓'
+            Set-RamButtonText -Button $this -Text (Get-RamText -Text 'Ярлык создан ✓')
             Set-RamButtonEnabled -Button $this -Enabled $false
-            Write-RamLog "Ярлык создан: $($r.Path)" 'ok'
+            Write-RamLog (Get-RamText -Text 'Ярлык создан: {0}' -Arguments @([string]($($r.Path)))) 'ok'
         } else {
-            Show-RamError "Не вышло создать ярлык.`n`n$($r.Error)"
+            Show-RamError (Get-RamText -Text 'Не вышло создать ярлык.
+
+{0}' -Arguments @([string]($($r.Error))))
         }
     }
     [void](Add-RamRow -Layout $p5 -Items @($btnShortcut))
-    [void](& $addText $p5 'Ярлык запускает AltHub без чёрного окна консоли и со своей иконкой.' $t.FontSmall $t.Muted)
+    [void](& $addText $p5 (Get-RamText -Text 'Ярлык запускает AltHub без чёрного окна консоли и со своей иконкой.') $t.FontSmall $t.Muted)
 
     # --------------------------------------------------- выравнивание страниц
     $pageH = 0
@@ -353,17 +361,17 @@ function Show-RamFirstRun {
     [void](Add-RamRow -Layout $root -Items @(@{ Control = $line; Width = $root.Width }) -Height 1)
 
     # ------------------------------------------------------------------- низ
-    $btnSkip = New-RamButton -Text 'Пропустить настройку' -Width 1 -Height $m.RowH -Kind 'ghost' -OnClick {
+    $btnSkip = New-RamButton -Text (Get-RamText -Text 'Пропустить настройку') -Width 1 -Height $m.RowH -Kind 'ghost' -OnClick {
         $this.FindForm().Close()
     }
-    $btnBack = New-RamButton -Text 'Назад' -Width 1 -Height $m.RowH -OnClick {
+    $btnBack = New-RamButton -Text (Get-RamText -Text 'Назад') -Width 1 -Height $m.RowH -OnClick {
         Step-RamWizard -Form $this.FindForm() -Delta -1
     }
     # Ширина сразу под самую длинную надпись, какую эта кнопка когда-либо
     # получит. Иначе на последнем шаге «Далее» превращается в «Начать работу»,
     # кнопка расширяется вправо от своего места и вылезает за край окна.
-    $nextW = (Measure-RamText -Text 'Начать работу' -Font $t.FontBody).Width + $m.BtnPadX
-    $btnNext = New-RamButton -Text 'Далее' -Width $nextW -Height $m.RowH -Kind 'primary' -OnClick {
+    $nextW = (Measure-RamText -Text (Get-RamText -Text 'Начать работу') -Font $t.FontBody).Width + $m.BtnPadX
+    $btnNext = New-RamButton -Text (Get-RamText -Text 'Далее') -Width $nextW -Height $m.RowH -Kind 'primary' -OnClick {
         Step-RamWizard -Form $this.FindForm() -Delta 1
     }
     $btnBack.Name = 'ramWizBack'
@@ -413,7 +421,7 @@ function Set-RamWizardStep {
     $lblStep = $Form.Controls.Find('ramWizStep', $true) | Select-Object -First 1
     if ($null -ne $lblStep) {
         $lblStep.Tag  = $Index
-        $lblStep.Text = ('Шаг {0} из {1}  ·  {2}' -f ($Index + 1), $steps.Count, $steps[$Index].Title)
+        $lblStep.Text = ((Get-RamText -Text 'Шаг {0} из {1}  ·  {2}') -f ($Index + 1), $steps.Count, $steps[$Index].Title)
     }
 
     $bar = $Form.Controls.Find('ramWizBar', $true) | Select-Object -First 1
@@ -428,8 +436,8 @@ function Set-RamWizardStep {
 
     $next = $Form.Controls.Find('ramWizNext', $true) | Select-Object -First 1
     if ($null -ne $next) {
-        if ($Index -eq $steps.Count - 1) { Set-RamButtonText -Button $next -Text 'Начать работу' }
-        else                             { Set-RamButtonText -Button $next -Text 'Далее' }
+        if ($Index -eq $steps.Count - 1) { Set-RamButtonText -Button $next -Text (Get-RamText -Text 'Начать работу') }
+        else                             { Set-RamButtonText -Button $next -Text (Get-RamText -Text 'Далее') }
     }
 
     if ($key -eq 'accounts') { Update-RamWizardAccountCount -Form $Form }
@@ -460,9 +468,9 @@ function Update-RamWizardAccountCount {
 
     $n = @($script:Accounts).Count
     if ($n -eq 0) {
-        $lbl.Text = 'Пока не добавлено ни одного аккаунта.'
+        $lbl.Text = (Get-RamText -Text 'Пока не добавлено ни одного аккаунта.')
     } else {
-        $lbl.Text = "Добавлено аккаунтов: $n"
+        $lbl.Text = (Get-RamText -Text 'Добавлено аккаунтов: {0}' -Arguments @([string]($n)))
     }
 }
 
@@ -473,7 +481,7 @@ function Update-RamWizardMainList {
     $cb = $Form.Controls.Find('ramWizMain', $true) | Select-Object -First 1
     if ($null -eq $cb) { return }
 
-    $items = @([pscustomobject]@{ Text = '— выберу позже —'; Value = '' })
+    $items = @([pscustomobject]@{ Text = (Get-RamText -Text '— выберу позже —'); Value = '' })
     foreach ($a in @($script:Accounts)) {
         $items += [pscustomobject]@{ Text = [string]$a.Alias; Value = [string]$a.Id }
     }

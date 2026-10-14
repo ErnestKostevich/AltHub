@@ -4,7 +4,10 @@
   Использует только выдуманные аккаунты и режим -NoAutoStart, поэтому не читает
   куки, не пишет настройки и не запускает Roblox.
 #>
-param([string]$OutputDir = (Join-Path (Split-Path -Parent $PSScriptRoot) 'docs'))
+param(
+    [string]$OutputDir = (Join-Path (Split-Path -Parent $PSScriptRoot) 'docs'),
+    [ValidateSet('ru','en')][string]$UiLanguage='ru'
+)
 
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
@@ -70,6 +73,7 @@ function Find-RamDocsButton {
 
 # Полностью искусственная витрина: ни одного настоящего имени или входа.
 $script:Settings = Get-RamDefaultSettings
+$script:Settings.UiLanguage=$UiLanguage
 $script:Settings.OnClose = 'exit'
 $script:Settings.ConfirmOnExit = $false
 $script:Settings.Theme = 'dark'
@@ -164,8 +168,8 @@ Save-RamDocsForm -Form (Show-RamFirstRun -BuildOnly) -Name 'wizard.png'
 Save-RamDocsForm -Form (Show-RamAccountDialog -Account $a1 -BuildOnly) -Name 'account.png'
 Save-RamDocsForm -Form (Show-RamThemeConstructor -BuildOnly) -Name 'constructor.png'
 
-$settings = Show-RamSettingsDialog -BuildOnly
-Save-RamDocsForm -Form $settings -Name 'settings.png'
+$settingsForm = Show-RamSettingsDialog -BuildOnly
+Save-RamDocsForm -Form $settingsForm -Name 'settings.png'
 
 # Закрытие окна настроек прогоняет тот же обработчик, что и обычная кнопка
 # «Сохранить». Для второго кадра гарантируем допустимую задержку даже при

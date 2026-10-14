@@ -176,7 +176,7 @@ function Invoke-RamVisibleDownload {
     $pct = New-Object System.Windows.Forms.Label
     $pct.Location = New-Object System.Drawing.Point(16, 90)
     $pct.Size     = New-Object System.Drawing.Size(438, 22)
-    $pct.Text     = 'подключаюсь...'
+    $pct.Text     = (Get-RamText -Text 'подключаюсь...')
     $form.Controls.Add($pct)
 
     $form.Show()
@@ -191,9 +191,9 @@ function Invoke-RamVisibleDownload {
                 if ($p -ge 0 -and $p -le 100) { $bar.Value = $p }
                 $mbGot = [Math]::Round($got / 1MB, 1)
                 $mbTot = [Math]::Round($total / 1MB, 1)
-                $pct.Text = "$p %    $mbGot из $mbTot МБ"
+                $pct.Text = (Get-RamText -Text '{0} %    {1} из {2} МБ' -Arguments @([string]($p),[string]($mbGot),[string]($mbTot)))
             } else {
-                $pct.Text = ('скачано {0} МБ' -f [Math]::Round($got / 1MB, 1))
+                $pct.Text = ((Get-RamText -Text 'скачано {0} МБ') -f [Math]::Round($got / 1MB, 1))
             }
             [System.Windows.Forms.Application]::DoEvents()
         }
@@ -216,7 +216,7 @@ function Install-RamChromeForTesting {
     }
 
     $jsonUrl = 'https://googlechromelabs.github.io/chrome-for-testing/last-known-good-versions-with-downloads.json'
-    Write-RamLog 'Chrome for Testing: спрашиваю у Google свежую сборку Stable/win64.' 'info'
+    Write-RamLog (Get-RamText -Text 'Chrome for Testing: спрашиваю у Google свежую сборку Stable/win64.') 'info'
 
     $meta = $null
     try {
@@ -236,14 +236,14 @@ function Install-RamChromeForTesting {
     }
     if ([string]::IsNullOrWhiteSpace($ver)) { $ver = 'unknown' }
 
-    Write-RamLog "Chrome for Testing: качаю $ver (один раз, потом лежит в data\chrome-for-testing)." 'info'
+    Write-RamLog (Get-RamText -Text 'Chrome for Testing: качаю {0} (один раз, потом лежит в data\chrome-for-testing).' -Arguments @([string]($ver))) 'info'
 
     $zip = Join-Path $env:TEMP ('althub-cft-' + [guid]::NewGuid().ToString('N') + '.zip')
     $unpack = Join-Path $dir '_unpack'
     try {
         Invoke-RamVisibleDownload `
             -Title 'AltHub — Chrome for Testing' `
-            -Hint 'Один раз скачивается официальный Chromium от Google (~150 МБ). Это тот же браузер, которым пользуется RAM. Твой обычный Chrome/Edge не затрагивается.' `
+            -Hint (Get-RamText -Text 'Один раз скачивается официальный Chromium от Google (~150 МБ). Это тот же браузер, которым пользуется RAM. Твой обычный Chrome/Edge не затрагивается.') `
             -Url $zipUrl `
             -OutFile $zip
 
@@ -252,7 +252,7 @@ function Install-RamChromeForTesting {
         }
         [void](New-Item -ItemType Directory -Path $unpack -Force)
 
-        Write-RamLog 'Chrome for Testing: распаковываю архив.' 'info'
+        Write-RamLog (Get-RamText -Text 'Chrome for Testing: распаковываю архив.') 'info'
         [System.IO.Compression.ZipFile]::ExtractToDirectory($zip, $unpack)
 
         $exe = Get-ChildItem -LiteralPath $unpack -Filter 'chrome.exe' -Recurse -File -ErrorAction SilentlyContinue |
@@ -279,7 +279,7 @@ function Install-RamChromeForTesting {
         }
 
         Set-Content -LiteralPath (Join-Path $dir 'version.txt') -Value $ver -Encoding ASCII
-        Write-RamLog "Chrome for Testing $ver готов: $final" 'ok'
+        Write-RamLog (Get-RamText -Text 'Chrome for Testing {0} готов: {1}' -Arguments @([string]($ver),[string]($final))) 'ok'
         return $final
     } finally {
         if (Test-Path -LiteralPath $zip) {
@@ -310,7 +310,7 @@ function Get-RamChromeForTestingPath {
     try {
         $ageDays = ((Get-Date) - (Get-Item -LiteralPath $existing).LastWriteTime).TotalDays
         if ($ageDays -gt 45) {
-            Write-RamLog 'Chrome for Testing старше 45 дней. Обновить можно кнопкой в настройках — сам он не качается.' 'info'
+            Write-RamLog (Get-RamText -Text 'Chrome for Testing старше 45 дней. Обновить можно кнопкой в настройках — сам он не качается.') 'info'
         }
     } catch { }
     return $existing
@@ -396,11 +396,11 @@ function Get-RamExternalBrowserProfileDir {
         if (Test-Path -LiteralPath $legacy) {
             try {
                 Move-Item -LiteralPath $legacy -Destination $dir -ErrorAction Stop
-                Write-RamLog "Профиль окна входа перенесён из externalbrowserprofile в $name — прогрев сохранён." 'info'
+                Write-RamLog (Get-RamText -Text 'Профиль окна входа перенесён из externalbrowserprofile в {0} — прогрев сохранён.' -Arguments @([string]($name))) 'info'
             } catch {
                 # Папку держит работающий браузер. Пользуемся ею под старым
                 # именем: пустой профиль хуже некрасивого имени папки.
-                Write-RamLog "Старый профиль окна входа занят, пользуюсь им без переноса: $($_.Exception.Message)" 'warn'
+                Write-RamLog (Get-RamText -Text 'Старый профиль окна входа занят, пользуюсь им без переноса: {0}' -Arguments @([string]((Get-RamErrorText -Text ($($_.Exception.Message)))))) 'warn'
                 return $legacy
             }
         }
@@ -472,13 +472,13 @@ function Clear-RamExternalBrowserProfileState {
         Get-ChildItem -LiteralPath $default -Filter $pat -File -ErrorAction SilentlyContinue |
             ForEach-Object {
                 try { Remove-Item -LiteralPath $_.FullName -Force -ErrorAction Stop }
-                catch { Write-RamLog "Профиль: не удалось удалить $($_.Name): $($_.Exception.Message)" 'warn' }
+                catch { Write-RamLog (Get-RamText -Text 'Профиль: не удалось удалить {0}: {1}' -Arguments @([string]($($_.Name)),[string]((Get-RamErrorText -Text ($($_.Exception.Message)))))) 'warn' }
             }
     }
     $sessionsDir = Join-Path $default 'Sessions'
     if (Test-Path -LiteralPath $sessionsDir) {
         try { Remove-Item -LiteralPath $sessionsDir -Recurse -Force -ErrorAction Stop }
-        catch { Write-RamLog "Профиль: не удалось очистить Sessions\: $($_.Exception.Message)" 'warn' }
+        catch { Write-RamLog (Get-RamText -Text 'Профиль: не удалось очистить Sessions\: {0}' -Arguments @([string]((Get-RamErrorText -Text ($($_.Exception.Message)))))) 'warn' }
     }
 
     $prefsPath = Join-Path $default 'Preferences'
@@ -494,7 +494,7 @@ function Clear-RamExternalBrowserProfileState {
             ($prefs | ConvertTo-Json -Depth 100 -Compress) |
                 Set-Content -LiteralPath $prefsPath -Encoding UTF8 -NoNewline
         } catch {
-            Write-RamLog "Профиль: не удалось поправить Preferences: $($_.Exception.Message)" 'warn'
+            Write-RamLog (Get-RamText -Text 'Профиль: не удалось поправить Preferences: {0}' -Arguments @([string]((Get-RamErrorText -Text ($($_.Exception.Message)))))) 'warn'
         }
     }
 }
@@ -518,7 +518,7 @@ function Invoke-RamBrowserWarmup {
 
     if (Test-Path -LiteralPath (Join-Path $ProfileDir 'Default')) { return }
 
-    Write-RamLog 'Первый запуск браузера: прогреваю профиль, чтобы окно входа открылось сразу.' 'info'
+    Write-RamLog (Get-RamText -Text 'Первый запуск браузера: прогреваю профиль, чтобы окно входа открылось сразу.') 'info'
     $warmProc = $null
     try {
         $warmArgs = @(
@@ -545,7 +545,7 @@ function Invoke-RamBrowserWarmup {
             Start-Sleep -Milliseconds 200
         }
     } catch {
-        Write-RamLog "Прогрев профиля не удался (не критично): $($_.Exception.Message)" 'warn'
+        Write-RamLog (Get-RamText -Text 'Прогрев профиля не удался (не критично): {0}' -Arguments @([string]((Get-RamErrorText -Text ($($_.Exception.Message)))))) 'warn'
     } finally {
         if ($null -ne $warmProc -and -not $warmProc.HasExited) {
             try { $warmProc.CloseMainWindow() | Out-Null } catch { }
@@ -607,7 +607,7 @@ function Show-RamExternalBrowserLoginWindow {
             $browserKind = 'chrome'
         }
         if ($browserExe) {
-            Write-RamLog "Chrome for Testing недоступен — открываю системный браузер ($browserKind). Капча может быть злее, чем в RAM." 'warn'
+            Write-RamLog (Get-RamText -Text 'Chrome for Testing недоступен — открываю системный браузер ({0}). Капча может быть злее, чем в RAM.' -Arguments @([string]($browserKind))) 'warn'
         }
     }
     if (-not $browserExe) {
@@ -657,7 +657,7 @@ function Show-RamExternalBrowserLoginWindow {
         # Чистим следы прошлого входа (пароли/автозаполнение/история/сессии),
         # но сохраняем Cookies и Local Storage — там метки устройства.
         try { Clear-RamExternalBrowserProfileState -ProfileDir $profileDir } catch {
-            Write-RamLog "Профиль: уборка не удалась: $($_.Exception.Message)" 'warn'
+            Write-RamLog (Get-RamText -Text 'Профиль: уборка не удалась: {0}' -Arguments @([string]((Get-RamErrorText -Text ($($_.Exception.Message)))))) 'warn'
         }
         [void](Stop-RamProfileBrowsers -ProfileDir $profileDir)
 
@@ -698,9 +698,9 @@ function Show-RamExternalBrowserLoginWindow {
         # в RAM. Обязательно ПОСЛЕДНИМ аргументом и вместо позиционного URL.
         $procArgs += ('--app={0}' -f $loginUrl)
 
-        Write-RamLog "Внешний браузер: $browserKind  $browserExe  (порт моста $port)" 'info'
-        Write-RamLog "Внешний браузер: профиль $profileDir" 'info'
-        Write-RamLog "Внешний браузер: расширение $extensionDir" 'info'
+        Write-RamLog (Get-RamText -Text 'Внешний браузер: {0}  {1}  (порт моста {2})' -Arguments @([string]($browserKind),[string]($browserExe),[string]($port))) 'info'
+        Write-RamLog (Get-RamText -Text 'Внешний браузер: профиль {0}' -Arguments @([string]($profileDir))) 'info'
+        Write-RamLog (Get-RamText -Text 'Внешний браузер: расширение {0}' -Arguments @([string]($extensionDir))) 'info'
  
          # Прогрев холодного профиля: без него первая навигация стартует
         # раньше готовности браузера и окно виснет на сером экране.
@@ -819,7 +819,7 @@ function Show-RamExternalBrowserLoginWindow {
                 # сам, а не что человек закрыл окно.
                 if ($null -eq $goneSince) { $goneSince = Get-Date }
                 if (((Get-Date) - $goneSince).TotalSeconds -ge 3) {
-                    Write-RamLog 'Внешний браузер: процесс закрыт пользователем до получения куки.' 'info'
+                    Write-RamLog (Get-RamText -Text 'Внешний браузер: процесс закрыт пользователем до получения куки.') 'info'
                     break
                 }
             } else {
@@ -835,7 +835,7 @@ function Show-RamExternalBrowserLoginWindow {
             if (-not $sawHello -and -not $restartedOnce -and (Get-Date) -gt $stuckDue -and
                 $null -ne $browserProc -and -not $browserProc.HasExited -and
                 (Test-RamLoginWindowStuck -Proc $browserProc)) {
-                Write-RamLog 'Окно входа не загрузилось за 20 секунд — перезапускаю его один раз.' 'warn'
+                Write-RamLog (Get-RamText -Text 'Окно входа не загрузилось за 20 секунд — перезапускаю его один раз.') 'warn'
                 $restartedOnce = $true
                 try { $browserProc.CloseMainWindow() | Out-Null } catch { }
                 Start-Sleep -Milliseconds 600
@@ -858,13 +858,13 @@ function Show-RamExternalBrowserLoginWindow {
 
             if (-not $sawHello -and (Get-Date) -gt $helloDue) {
                 # Обещание из шапки этого файла, наконец выполненное.
-                Write-RamLog 'Внешний браузер: расширение не загрузилось — этот браузер игнорирует --load-extension.' 'err'
+                Write-RamLog (Get-RamText -Text 'Внешний браузер: расширение не загрузилось — этот браузер игнорирует --load-extension.') 'err'
                 $noExtension = $true
                 break
             }
 
             if ((Get-Date) -gt $deadline) {
-                Write-RamLog 'Внешний браузер: истёк таймаут ожидания входа.' 'warn'
+                Write-RamLog (Get-RamText -Text 'Внешний браузер: истёк таймаут ожидания входа.') 'warn'
                 break
             }
 
@@ -873,7 +873,7 @@ function Show-RamExternalBrowserLoginWindow {
             Start-Sleep -Milliseconds 50
         }
     } catch {
-        Write-RamLog "Внешний браузер: ошибка во время входа: $($_.Exception.Message)" 'err'
+        Write-RamLog (Get-RamText -Text 'Внешний браузер: ошибка во время входа: {0}' -Arguments @([string]((Get-RamErrorText -Text ($($_.Exception.Message)))))) 'err'
     } finally {
         try { $listener.Stop() } catch { }
         try { $listener.Close() } catch { }
@@ -890,11 +890,11 @@ function Show-RamExternalBrowserLoginWindow {
 
     if ($noExtension) {
         Show-RamMessage -Kind 'warn' -Message (
-            'В этом браузере расширение-мост не загрузилось, поэтому забрать вход из него нечем.' +
+            (Get-RamText -Text 'В этом браузере расширение-мост не загрузилось, поэтому забрать вход из него нечем.') +
             [Environment]::NewLine + [Environment]::NewLine +
-            'Так ведёт себя обычный Chrome 137 и новее: он намеренно игнорирует загрузку расширений из командной строки.' +
+            (Get-RamText -Text 'Так ведёт себя обычный Chrome 137 и новее: он намеренно игнорирует загрузку расширений из командной строки.') +
             [Environment]::NewLine + [Environment]::NewLine +
-            'Что делать: скачать Chrome for Testing кнопкой в настройках, разделе «Из браузера» — там этот способ работает всегда. Либо пользоваться другими способами добавить аккаунт.')
+            (Get-RamText -Text 'Что делать: скачать Chrome for Testing кнопкой в настройках, разделе «Из браузера» — там этот способ работает всегда. Либо пользоваться другими способами добавить аккаунт.'))
     }
     return $resultCookie
 }
@@ -911,15 +911,15 @@ function Request-RamChromeForTesting {
     try {
         $exe = Install-RamChromeForTesting
         if ($exe) {
-            Show-RamMessage -Message ('Chrome for Testing скачан и готов.' + [Environment]::NewLine + [Environment]::NewLine +
-                                      'Теперь вход через окно браузера будет открываться в нём — капча в нём попадается реже всего.')
+            Show-RamMessage -Message ((Get-RamText -Text 'Chrome for Testing скачан и готов.') + [Environment]::NewLine + [Environment]::NewLine +
+                                      (Get-RamText -Text 'Теперь вход через окно браузера будет открываться в нём — капча в нём попадается реже всего.'))
             return $true
         }
     } catch {
-        Write-RamLog "Chrome for Testing скачать не вышло: $($_.Exception.Message)" 'err'
-        Show-RamError -Text ('Скачать не получилось:' + [Environment]::NewLine + [Environment]::NewLine +
+        Write-RamLog (Get-RamText -Text 'Chrome for Testing скачать не вышло: {0}' -Arguments @([string]((Get-RamErrorText -Text ($($_.Exception.Message)))))) 'err'
+        Show-RamError -Text ((Get-RamText -Text 'Скачать не получилось:') + [Environment]::NewLine + [Environment]::NewLine +
                              $_.Exception.Message + [Environment]::NewLine + [Environment]::NewLine +
-                             'Ничего страшного: вход через окно браузера работает и на Edge или Chrome, которые уже стоят.')
+                             (Get-RamText -Text 'Ничего страшного: вход через окно браузера работает и на Edge или Chrome, которые уже стоят.'))
     }
     return $false
 }
