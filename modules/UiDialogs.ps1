@@ -1937,7 +1937,7 @@ function Show-RamSettingsDialog {
 
     & $addHead $pl (Get-RamText -Text 'ПОВЕДЕНИЕ')
     $cbRename  = & $addCheck $pl (Get-RamText -Text 'Писать имя аккаунта в заголовок окна') ([bool]$s.RenameWindows) `
-                 (Get-RamText -Text 'Окно подписывается «Roblox — Имя». Так их видно в панели задач, и менеджер узнаёт свои клиенты после перезапуска. Советуем включить.')
+                 (Get-RamText -Text 'Окно подписывается «Roblox — Имя». Для макроса с точным заголовком «Roblox» выключи эту опцию: обычные заголовки вернутся без перезапуска клиентов.')
     $cbRestart = & $addCheck $pl (Get-RamText -Text 'Поднимать аккаунт заново, если клиент вылетел') ([bool]$s.AutoRestart) `
                  (Get-RamText -Text 'Если Roblox закрылся сам, менеджер запустит его снова — до трёх раз подряд. По умолчанию выключено: при проблемах со связью даёт лишние попытки входа.')
         $cbCheck   = & $addCheck $pl (Get-RamText -Text 'Проверять входы при открытии менеджера') ([bool]$s.CheckOnStart) `
@@ -2192,15 +2192,18 @@ function Show-RamSettingsDialog {
     [void](Add-RamRow -Layout $pb -Items @(@{ Control = $bHow; Width = (Measure-RamControl -Control $bHow).Width }))
 
     & $addHead $pb (Get-RamText -Text 'ОКНО БРАУЗЕРА ДЛЯ ВХОДА')
-    [void](& $addNote $pb ((Get-RamText -Text 'Отдельное окно настоящего Chrome, где ты входишь руками. Капчу, если она ') +
-                           (Get-RamText -Text 'вылезет, проходишь сам — за тебя её никто не разгадывает.')))
+    $browserItems=@(
+        [pscustomobject]@{Text=(Get-RamText -Text 'Системный Chrome / Edge (по умолчанию)');Value='system'},
+        [pscustomobject]@{Text=(Get-RamText -Text 'Chrome for Testing (необязательно)');Value='cft'}
+    )
+    $cbBrowserLogin=New-RamCombo -X 0 -Y 0 -Width $pb.Width -Items $browserItems -Value ([string]$s.BrowserLoginBrowser)
+    $cbBrowserLogin.Name='ramBrowserLoginCombo'
+    [void](Add-RamField -Layout $pb -Caption (Get-RamText -Text 'Браузер для входа') -Control $cbBrowserLogin)
+    [void](& $addNote $pb (Get-RamText -Text 'По умолчанию используется установленный Chrome или Edge с отдельным профилем AltHub, без расширения. Вход и капчу проходишь сам. Личный профиль браузера не меняется.'))
     if (Test-RamChromeForTestingReady) {
-        [void](& $addNote $pb (Get-RamText -Text 'Chrome for Testing уже скачан и используется — капча в нём выпадает реже всего.'))
+        [void](& $addNote $pb (Get-RamText -Text 'Chrome for Testing уже скачан. Он используется только при выборе выше; системный браузер остаётся доступен.'))
     } else {
-        [void](& $addNote $pb ((Get-RamText -Text 'Сейчас берётся Edge или Chrome, которые у тебя уже стоят. Можно скачать ') +
-                               (Get-RamText -Text 'Chrome for Testing — официальную сборку Chromium от Google: у неё чистый ') +
-                               (Get-RamText -Text 'профиль и обычный отпечаток браузера, поэтому Roblox выдаёт самую лёгкую ') +
-                               (Get-RamText -Text 'капчу. Это ~150 МБ, и качается только по кнопке.')))
+        [void](& $addNote $pb (Get-RamText -Text 'Chrome for Testing необязателен: он может помочь, если политики системного браузера блокируют подключение AltHub. Скачивание начинается только по кнопке ниже после подтверждения. Размер зависит от версии; прогресс показывает фактические байты.'))
         $bCft = New-RamButton -Text (Get-RamText -Text 'Скачать Chrome for Testing…') -Height $m.RowH -OnClick {
             Show-RamChromeForTestingConsent
         }
@@ -2312,6 +2315,7 @@ function Show-RamSettingsDialog {
         $numCols.Value         = [int]$def.TileColumns
         Set-RamComboItems -Combo $cbLocale -Items $cbLocale.Tag -Value ([string]$def.Locale)
         Set-RamComboItems -Combo $cbUiLanguage -Items $languageItems -Value ([string]$def.UiLanguage)
+        Set-RamComboItems -Combo $cbBrowserLogin -Items $browserItems -Value ([string]$def.BrowserLoginBrowser)
         $cbRename.Tag.Checked  = [bool]$def.RenameWindows
         $cbRestart.Tag.Checked = [bool]$def.AutoRestart
         $cbCheck.Tag.Checked   = [bool]$def.CheckOnStart
@@ -2358,6 +2362,8 @@ function Show-RamSettingsDialog {
         $oldUiLanguage=Get-RamUiLanguage
         $language=Get-RamComboValue $cbUiLanguage
         if($language -in @('ru','en')){$s.UiLanguage=$language}
+        $browserLogin=Get-RamComboValue $cbBrowserLogin
+        if($browserLogin -in @('system','cft')){$s.BrowserLoginBrowser=$browserLogin}
         $s.LaunchDelaySec   = [int]$numDelay.Value
         $s.Locale           = Get-RamComboValue $cbLocale
         $s.TileColumns      = [int]$numCols.Value
@@ -2555,7 +2561,7 @@ function Show-RamExtensionGuide {
 function Show-RamChromeForTestingConsent {
     <#
       Согласие на скачивание Chrome for Testing. Отдельное окно, а не молчаливая
-      закачка: ~150 МБ чужого исполняемого файла, который программа потом сама
+      закачка исполняемого файла, который программа потом сама
       же и запустит, — это ровно то, о чём человека надо спросить прямо.
 
       Никакого «мы уже скачали, вот кнопка отмены»: до нажатия «Скачать» в сеть
@@ -2567,22 +2573,23 @@ function Show-RamChromeForTestingConsent {
     $m = $t.M
 
     $body = Get-RamText -Text @'
-Зачем. Для способа «окно браузера» AltHub открывает настоящий Chrome, где ты
-входишь руками. Roblox выдаёт капчу тем сложнее, чем подозрительнее ему кажется
-браузер. У Chrome for Testing обычный отпечаток настоящего Chrome и свой чистый
-профиль, поэтому капча выпадает реже всего — а часто и вовсе не выпадает.
+Chrome for Testing необязателен. По умолчанию AltHub использует системный
+Chrome или Edge с отдельным профилем, без расширения. Эта сборка может
+помочь, если политики системного браузера блокируют подключение AltHub.
+Вход и капчу ты проходишь сам; AltHub её не обходит и не решает.
 
 Что качается. Chrome for Testing — официальная сборка Chromium, которую
-выпускает сама Google. Примерно 150 МБ, один раз, в папку data\chrome-for-testing
-рядом с программой. Твой обычный Chrome или Edge при этом не трогаются.
+выпускает сама Google. Размер зависит от версии; прогресс показывает
+фактические байты. Файлы сохраняются в data\chrome-for-testing рядом с
+программой. Твой обычный Chrome или Edge при этом не меняются.
 
 Откуда качается. Список сборок — с googlechromelabs.github.io, сам архив — с
-storage.googleapis.com. Это единственные два адреса за пределами roblox.com, на
-которые AltHub вообще может обратиться, и только по этой кнопке.
+storage.googleapis.com. Скачивание с этих адресов начинается только после
+твоего подтверждения. Другие сетевые запросы AltHub описаны в README.
 
-Можно и не качать. Без него вход через окно браузера тоже работает — возьмётся
-Edge или Chrome, которые у тебя уже стоят. Просто капча будет попадаться чаще.
-Все остальные способы добавить аккаунт от этого не зависят вовсе.
+Можно не качать: выбери системный Chrome / Edge в настройках «Из браузера»
+или другой способ добавления аккаунта. Скачанная сборка используется
+только при выборе Chrome for Testing в настройках.
 '@
 
     $w = 0
@@ -2626,7 +2633,7 @@ Edge или Chrome, которые у тебя уже стоят. Просто �
     ))
 
     [void](Add-RamGap -Layout $lay -Height $m.Gap)
-    $bGo = New-RamButton -Text (Get-RamText -Text 'Скачать (~150 МБ)') -Height $m.RowHLg -Kind 'primary' -OnClick {
+    $bGo = New-RamButton -Text (Get-RamText -Text 'Скачать браузер') -Height $m.RowHLg -Kind 'primary' -OnClick {
         $this.FindForm().Tag = $true; $this.FindForm().Close()
     }
     $bNo = New-RamButton -Text (Get-RamText -Text 'Не надо') -Height $m.RowHLg -OnClick {

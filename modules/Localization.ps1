@@ -1,13 +1,19 @@
 ﻿#requires -Version 5.1
 $script:RamEnglishCatalog=$null
 
+function Get-RamDefaultUiLanguage {
+    param([Globalization.CultureInfo]$Culture=[Globalization.CultureInfo]::CurrentUICulture)
+    if ($null -ne $Culture -and $Culture.TwoLetterISOLanguageName -eq 'ru') { return 'ru' }
+    return 'en'
+}
+
 function Get-RamUiLanguage {
     if ($null -ne $script:Settings) {
-        if ($script:Settings.PSObject.Properties.Name -contains 'UiLanguage' -and $script:Settings.UiLanguage -eq 'en') { return 'en' }
-        return 'ru'
+        if ($script:Settings.PSObject.Properties.Name -contains 'UiLanguage' -and $script:Settings.UiLanguage -in @('ru','en')) { return $script:Settings.UiLanguage }
+        return Get-RamDefaultUiLanguage
     }
-    if($script:RamStartupUiLanguage -eq 'en'){return 'en'}
-    return 'ru'
+    if($script:RamStartupUiLanguage -in @('ru','en')){return $script:RamStartupUiLanguage}
+    return Get-RamDefaultUiLanguage
 }
 
 function Get-RamEnglishCatalog {

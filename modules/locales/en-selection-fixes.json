@@ -1,0 +1,14 @@
+﻿[
+  {
+    "Source": "Отмечено аккаунтов: {0}. Из них скрыто текущим набором или поиском: {1}.\n\nПрименить «{2}» ко всем отмеченным, включая скрытые? Отмена ничего не изменит.",
+    "Translation": "Selected accounts: {0}. Hidden by the current group or search: {1}.\n\nApply “{2}” to all selected accounts, including hidden ones? Cancel leaves everything unchanged."
+  },
+  {
+    "Source": "скрытых отметок: {0}",
+    "Translation": "hidden selections: {0}"
+  },
+  {
+    "Source": "Снять все отметки",
+    "Translation": "Clear all selections"
+  }
+]

@@ -30,6 +30,7 @@ $root = Split-Path -Parent $PSScriptRoot
 
 # Подключаем главный файл в режиме "без запуска окна" — он сам подтянет модули.
 . (Join-Path $root 'AltHub.ps1') -NoAutoStart
+[Threading.Thread]::CurrentThread.CurrentUICulture=[Globalization.CultureInfo]::GetCultureInfo('ru-RU')
 
 # Окно не запускается, поэтому настройки надо поднять руками: часть проверок
 # с ними работает. Запись на диск при этом всё равно заблокирована.
@@ -3215,6 +3216,75 @@ Check 'Русский и английский сохраняются и рабо
     '6 групп: JSON, переводы, CRLF, три меню и диалоги на четырёх DPI, Save/Cancel RU ↔ EN без изменения аккаунтов и очереди'
 }
 
+Check 'Отказ браузерного входа не считается кукой и не ломает импорт' {
+    $runner=Join-Path $PSScriptRoot 'Проверка отказа входа.ps1'
+    $output=@(& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $runner -NoPause 2>&1)
+    if($LASTEXITCODE -ne 0 -or @($output | Where-Object {[string]$_ -like 'PASS:*'}).Count -ne 27){throw ($output -join ' | ')}
+    '27 сценариев входа, отмены, app-режима, backoff, очистки куки, профиля и мягкого закрытия без живой авторизации'
+}
+
+Check 'Язык новой установки выбирается по языку Windows без замены сохранённого выбора' {
+    $output=@(& powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'Проверка языка системы.ps1') -NoPause 2>&1)
+    if($LASTEXITCODE -ne 0 -or @($output | Where-Object {[string]$_ -like 'PASS:*'}).Count -ne 5){throw ($output -join ' | ')}
+    'RU/EN, другие языки, старый JSON, явный выбор и независимый язык Roblox'
+}
+
+Check 'Браузерный протокол ограничен локальным соединением и Roblox' {
+    $output=@(& powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'Проверка протокола браузера.ps1') -NoPause 2>&1)
+    if($LASTEXITCODE -ne 0 -or @($output | Where-Object {[string]$_ -like 'PASS:*'}).Count -ne 12){throw ($output -join ' | ')}
+    '12 групп: WebSocket, границы адресов/размера/времени, app-bootstrap, старый вход и точечная очистка'
+}
+
+Check 'Кнопки H2O перестраиваются в два ряда на узкой карточке' {
+    $output=@(& powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'Проверка кнопок H2O.ps1') -NoPause 2>&1)
+    if($LASTEXITCODE -ne 0 -or @($output | Where-Object {[string]$_ -like 'PASS:*'}).Count -ne 8){throw ($output -join ' | ')}
+    '64 сочетания: RU/EN, четыре DPI, компактность, ширины вокруг порога'
+}
+
+Check 'Первый мастер выбирает язык до настройки аккаунтов' {
+    $runner=Join-Path $PSScriptRoot 'Проверка языка мастера.ps1'
+    $output=@(& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $runner -NoPause 2>&1)
+    if($LASTEXITCODE -ne 0 -or @($output | Where-Object {[string]$_ -like 'PASS:*'}).Count -ne 4){throw ($output -join ' | ')}
+    'RU/EN в первом шаге, четыре DPI, реальные callbacks, сохранение и повторная сборка мастера'
+}
+
+Check 'Выбор браузера сохраняется, отменяется и сбрасывается в RU и EN' {
+    $output=@(& powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'Проверка настроек браузера.ps1') -NoPause 2>&1)
+    if($LASTEXITCODE -ne 0 -or @($output | Where-Object {[string]$_ -like 'PASS:*'}).Count -ne 14){throw ($output -join ' | ')}
+    'RU/EN, четыре DPI, реальные Save/Cancel/Reset в отдельном временном хранилище'
+}
+
+Check 'Скрытые отметки требуют подтверждения массовых действий' {
+    $runner=Join-Path $PSScriptRoot 'Проверка скрытого выбора.ps1'
+    $output=@(& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $runner -NoPause 2>&1)
+    if($LASTEXITCODE -ne 0 -or @($output | Where-Object {[string]$_ -like 'PASS:*'}).Count -ne 5){throw ($output -join ' | ')}
+    'Наборы/поиск, отказ без изменений, сохранение межгруппового выбора и снятие всех отметок'
+}
+
+Check 'Сохранность входов защищает файл и не принимает устаревшие ответы' {
+    $output=@(& powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'Проверка сохранности входов.ps1') -NoPause 2>&1)
+    if($LASTEXITCODE -ne 0 -or @($output | Where-Object {[string]$_ -like 'PASS:*'}).Count -ne 7){throw ($output -join ' | ')}
+    'Атомарная запись, блокировка, зашифрованные копии и устаревшие ответы после смены входа'
+}
+
+Check 'Явный выход из трея не превращается в скрытие окна' {
+    $output=@(& powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'Проверка выхода из трея.ps1') -NoPause 2>&1)
+    if($LASTEXITCODE -ne 0 -or @($output | Where-Object {[string]$_ -like 'PASS:*'}).Count -ne 15){throw ($output -join ' | ')}
+    'Три меню: крестик, Выход, отмена, подтверждение, пересборка и перезапуск'
+}
+
+Check 'Отключение подписи возвращает заголовки окон без перезапуска клиента' {
+    $output=@(& powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'Проверка заголовков окон.ps1') -NoPause 2>&1)
+    if($LASTEXITCODE -ne 0 -or @($output | Where-Object {[string]$_ -like 'PASS:*'}).Count -ne 7){throw ($output -join ' | ')}
+    'Исходные подписи, настройки макросов, чужие изменения, HWND/PID и отказы native API'
+}
+
+Check 'Твинки сворачиваются и возвращаются без изменения основы и чужих окон' {
+    $output=@(& powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'Проверка сворачивания твинков.ps1') -NoPause 2>&1)
+    if($LASTEXITCODE -ne 0 -or @($output | Where-Object {[string]$_ -like 'PASS:*'}).Count -ne 25){throw ($output -join ' | ')}
+    '25 групп: нативные normal/maximized окна, явная основа, ownership и кнопки RU/EN трёх меню'
+}
+
 Check 'README не врёт числом проверок' {
     # Число в README трижды разошлось с кодом и висело устаревшим, пока его
     # не заметил человек. Считаем проверки прямо из этого файла и требуем,
@@ -3227,7 +3297,7 @@ Check 'README не врёт числом проверок' {
     if (-not (Test-Path $readme)) { throw 'README.md рядом нет' }
     $txt = Get-Content -LiteralPath $readme -Raw
 
-    $said = [regex]::Matches($txt, '(\d+)\s+провер(?:ок|ки)')
+    $said = [regex]::Matches($txt, '(\d+)\s+провер(?:ок|ки|ка|ку)')
     if ($said.Count -eq 0) { throw 'в README нет ни одного числа проверок — проверка не сработала' }
     foreach ($m in $said) {
         $n = [int]$m.Groups[1].Value

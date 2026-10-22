@@ -266,7 +266,7 @@ function Invoke-RamHelpMenu {
     switch ([string]$ans) {
         'wizard' {
             Invoke-RamFirstRun -Force
-            Build-RamCards
+            if (-not $script:RebuildUi) { Build-RamCards }
         }
         'readme' {
             $readme = Join-Path $script:Root 'README.md'
@@ -355,6 +355,21 @@ function New-RamTileWindowsMenu {
     $miSave.Add_Click({ Save-RamWindowPositions })
     [void]$tileMenu.Items.Add((New-Object System.Windows.Forms.ToolStripSeparator))
     [void]$tileMenu.Items.Add($miSave)
+    $mainMenu=New-Object System.Windows.Forms.ToolStripMenuItem((Get-RamText -Text 'Основной аккаунт'))
+    $mainMenu.Add_DropDownOpening({
+        $this.DropDownItems.Clear()
+        foreach($account in @($script:Accounts | Sort-Object Order)) {
+            $item=New-Object System.Windows.Forms.ToolStripMenuItem([string]$account.Alias)
+            $item.Tag=[string]$account.Id
+            $item.Checked=([string]$script:Settings.MainAccountId -eq [string]$account.Id)
+            $item.Add_Click({
+                $script:Settings.MainAccountId=[string]$this.Tag
+                Save-RamSettings -Settings $script:Settings
+            })
+            [void]$this.DropDownItems.Add($item)
+        }
+    })
+    [void]$tileMenu.Items.Add($mainMenu)
     return $tileMenu
 }
 
@@ -510,14 +525,14 @@ function New-RamMainFormModern {
     $pAcc = & $newSection 'accounts'
     $bLaunch = New-RamButton -Text (Get-RamText -Text 'Запустить') -Width 1 -Height $mm.BtnH -Kind 'primary' `
                              -Tooltip (Get-RamText -Text 'Запустить отмеченные свёрнутыми. Если ничего не отмечено — все, что сейчас видно в списке') -OnClick {
-        $targets = @(Get-RamTargetAccounts)
-        if ($targets.Count -eq 0) { $targets = @(Get-RamVisibleAccounts) }
-        Add-RamToLaunchQueue -Accounts $targets
+        Invoke-RamLaunchSelected
     }
     $script:UI.BtnLaunch = $bLaunch
     $bClose = New-RamButton -Text (Get-RamText -Text 'Закрыть') -Width 1 -Height $mm.BtnH -Tooltip (Get-RamText -Text 'Закрыть окна отмеченных') -OnClick { Invoke-RamStopSelected }
     $bTile  = New-RamButton -Text (Get-RamText -Text 'Окна') -Width 1 -Height $mm.BtnH -Tooltip (Get-RamText -Text 'Левый клик — разложить окна, правый — выбрать раскладку') -OnClick { Invoke-RamTileWindows }
     $script:UI.BtnTile  = $bTile
+    $bTwinks = New-RamButton -Text (Get-RamText -Text 'Твинки') -Width 1 -Height $mm.BtnH -Tooltip (Get-RamText -Text 'Свернуть остальные окна, не трогая основной аккаунт; повторный клик — вернуть места') -OnClick { Invoke-RamToggleTwinkWindows }
+    $script:UI.BtnTwinks=$bTwinks
     $script:UI.TileMenu = New-RamTileWindowsMenu
     $bTile.Add_MouseUp({
         param($sender, $e)
@@ -535,6 +550,7 @@ function New-RamMainFormModern {
     [void](Add-RamMenuItem -Menu $selMenu -Text (Get-RamText -Text 'Назначить игру')      -OnClick { Invoke-RamAssignGame })
     [void](Add-RamMenuItem -Menu $selMenu -Text (Get-RamText -Text 'Собрать в набор')     -OnClick { Invoke-RamAssignGroup })
     [void](Add-RamMenuItem -Menu $selMenu -Text (Get-RamText -Text 'Поставить метку')     -OnClick { Invoke-RamAssignColor })
+    [void](Add-RamMenuItem -Menu $selMenu -Text (Get-RamText -Text 'Снять все отметки') -OnClick { Clear-RamCheckedAccounts })
     [void](Add-RamMenuItem -Menu $selMenu -Separator)
     [void](Add-RamMenuItem -Menu $selMenu -Text (Get-RamText -Text 'Убрать из менеджера') -OnClick { Invoke-RamDeleteSelected })
     $bSel.Add_Click({ $selMenu.Show($this, (New-Object System.Drawing.Point(0, $this.Height))) }.GetNewClosure())
@@ -543,7 +559,7 @@ function New-RamMainFormModern {
     $search = New-RamModernSearch -Width ([int][Math]::Round(280 * $mm.Scale))
     $script:UI.Search = $search
     $ui.Search = $search
-    foreach ($c in @($bAdd, $search, $bAll, $bSel, $bTile, $bClose, $bLaunch)) { $pAcc.Controls.Add($c) }
+    foreach ($c in @($bAdd, $search, $bAll, $bSel, $bTile, $bTwinks, $bClose, $bLaunch)) { $pAcc.Controls.Add($c) }
 
     # Полоска наборов: кнопки создаёт Update-RamModernChips, ставит — раскладка.
     $chips = New-Object System.Windows.Forms.Panel
@@ -557,7 +573,7 @@ function New-RamMainFormModern {
     $cards.WrapContents  = $true
     $pAcc.Controls.Add($cards)
     $script:UI.Cards = $cards
-    $sections['accounts'] = [pscustomobject]@{ Panel = $pAcc; Left = @($bAdd, $search); Right = @($bAll, $bSel, $bTile, $bClose, $bLaunch); Hint = $null; Chips = $chips; Body = $cards; Search = $search }
+    $sections['accounts'] = [pscustomobject]@{ Panel = $pAcc; Left = @($bAdd, $search); Right = @($bAll, $bSel, $bTile, $bTwinks, $bClose, $bLaunch); Hint = $null; Chips = $chips; Body = $cards; Search = $search }
 
     # ---------------------------------------------------------- игры --------
     $pGames = & $newSection 'games'
@@ -942,9 +958,7 @@ function Register-RamMainFormRuntime {
             'T'      { if ($e.Control) { Invoke-RamTileWindows; $e.Handled = $true } }
             'Z'      { if ($e.Control) { Invoke-RamUndo;         $e.Handled = $true } }
             'Return' {
-                $t2 = @(Get-RamTargetAccounts)
-                if ($t2.Count -eq 0) { $t2 = @(Get-RamVisibleAccounts) }
-                Add-RamToLaunchQueue -Accounts $t2
+                Invoke-RamLaunchSelected
                 $e.Handled = $true
             }
             'D1' { Show-RamSection -Key 'accounts'; $e.Handled = $true }
@@ -958,9 +972,10 @@ function Register-RamMainFormRuntime {
     $Form.Add_FormClosing({
         param($sender, $e)
         $internalClose = ($script:RebuildUi -or $script:RestartRequested)
+        $explicitExit = ($sender.PSObject.Properties.Name -contains 'RamExitRequested' -and $sender.RamExitRequested)
 
         # Крестик уводит в часы, только если человек подтвердил, что значок видит.
-        if (-not $internalClose -and $script:Settings.OnClose -eq 'tray' -and $script:UI.TrayOk -and
+        if (-not $internalClose -and -not $explicitExit -and $script:Settings.OnClose -eq 'tray' -and $script:UI.TrayOk -and
             $e.CloseReason -eq [System.Windows.Forms.CloseReason]::UserClosing) {
             if (Confirm-RamTrayVisible) {
                 $e.Cancel = $true
@@ -1585,6 +1600,7 @@ function Update-RamGamesPanelModern {
                 -PrimaryText (Get-RamText -Text 'Назначить отмеченным') -PrimaryTooltip (Get-RamText -Text 'Поставить эту игру всем отмеченным аккаунтам') -OnPrimary {
                     $targets = @(Get-RamTargetAccounts)
                     if ($targets.Count -eq 0) { Show-RamInfo (Get-RamText -Text 'Сначала отметь аккаунты во вкладке «Аккаунты».'); return }
+                    if (-not (Confirm-RamHiddenSelection -Accounts $targets -What (Get-RamText -Text 'Назначить игру'))) { return }
                     $g2 = $this.Tag.Game
                     foreach ($a in $targets) {
                         $a.PlaceId  = [string]$g2.PlaceId

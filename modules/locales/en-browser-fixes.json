@@ -1,0 +1,15 @@
+[
+  {"Source":"Подключаем расширение AltHub","Translation":"Connecting the AltHub extension"},
+  {"Source":"Дождись перехода на Roblox. Пока вход не получен.","Translation":"Please wait for Roblox to open. No sign-in has been received yet."},
+  {"Source":"Если страница не меняется, расширение ещё не подключилось. Закрой это окно и попробуй Chrome for Testing через настройки AltHub или другой способ добавления аккаунта.","Translation":"If this page does not change, the extension has not connected yet. Close this window and try Chrome for Testing through AltHub settings, or use another way to add an account."},
+  {"Source":"Chrome for Testing не установлен. Можно скачать его с подтверждением или попробовать системный браузер. В системном браузере расширение может быть недоступно из-за версии или политик.","Translation":"Chrome for Testing is not installed. You can download it after confirming, or try your system browser. Its version or policies may prevent the extension from loading."},
+  {"Source":"Системный браузер","Translation":"System browser"},
+  {"Source":"По твоему выбору открываю системный браузер ({0}); подключение расширения не гарантировано.","Translation":"Opening the system browser ({0}) as requested; the extension may not connect."},
+  {"Source":"Внешний браузер ({0}): расширение не подключилось за 45 секунд. Причина пока неизвестна.","Translation":"External browser ({0}): the extension did not connect within 45 seconds. The cause is not yet known."},
+  {"Source":"Обычный Google Chrome 137 и новее не поддерживает этот способ загрузки расширения. Также возможны ограничения политик или ошибка запуска.","Translation":"Regular Google Chrome 137 and later do not support this method of loading the extension. Browser policies or a startup error may also be involved."},
+  {"Source":"Возможны ограничения версии или политик браузера, медленный запуск либо ошибка расширения. Отсутствие ответа не определяет точную причину.","Translation":"Possible causes include browser version or policy restrictions, a slow startup, or an extension error. A missing response does not identify the exact cause."},
+  {"Source":"Расширение AltHub не подключилось в браузере «{0}». Вход не получен.","Translation":"The AltHub extension did not connect in browser '{0}'. No sign-in was received."},
+  {"Source":"Попробуй Chrome for Testing в настройках, разделе «Из браузера», или другой способ добавления аккаунта. Если ошибка повторится, сохрани журнал AltHub.","Translation":"Try Chrome for Testing in Settings, under 'From browser', or use another way to add an account. If the error happens again, save the AltHub log."},
+  {"Source":"Теперь AltHub будет использовать его для входа через окно браузера.","Translation":"AltHub will now use it for sign-in through a browser window."},
+  {"Source":"Можно выбрать системный браузер, но подключение расширения зависит от его версии и политик. Другие способы добавления аккаунта доступны без скачивания.","Translation":"You can choose your system browser, but the extension depends on its version and policies. Other ways to add an account are available without downloading anything."}
+]

@@ -316,10 +316,11 @@ function Update-RamSideBarLayout {
     # оставляла на высоком окне два огромных разрыва.
     $gapAbove = $sb.TopGroupBottom
     $midY     = $gapAbove + $sb.PadLg
+    $midGroupH = 4 * $sb.NavH + 3 * $sb.NavGap
     # Не залезаем выше первой группы и ниже третьей, если окно настолько
     # низкое, что для центрирования просто нет места.
     if ($midY -lt $gapAbove) { $midY = $gapAbove }
-    if (($midY + $groupH) -gt ($bottomY - $sb.Gap)) { $midY = $bottomY - $sb.Gap - $groupH }
+    if (($midY + $midGroupH) -gt ($bottomY - $sb.Gap)) { $midY = $bottomY - $sb.Gap - $midGroupH }
 
     if ($null -ne $sb.BLaunch -and -not $sb.BLaunch.IsDisposed) {
         $sb.BLaunch.Location = New-Object System.Drawing.Point($sb.PadLg, $midY)
@@ -329,6 +330,9 @@ function Update-RamSideBarLayout {
     }
     if ($null -ne $sb.BTile -and -not $sb.BTile.IsDisposed) {
         $sb.BTile.Location = New-Object System.Drawing.Point($sb.PadLg, ($midY + 2 * ($sb.NavH + $sb.NavGap)))
+    }
+    if ($null -ne $sb.BTwinks -and -not $sb.BTwinks.IsDisposed) {
+        $sb.BTwinks.Location = New-Object System.Drawing.Point($sb.PadLg, ($midY + 3 * ($sb.NavH + $sb.NavGap)))
     }
 }
 
@@ -481,7 +485,9 @@ function Build-RamCardsWater {
     $rowNeed = (& $sk0 48) + (& $sk0 52) + (& $sk0 8) +
                (Measure-RamText -Text 'Wwwwwwwwwwww' -Font $t.FontBody).Width +
                (& $sk0 14) + 3 * (& $sk0 32) + 2 * (& $sk0 6) + (& $sk0 22)
-    $narrowBtns = ($W -lt $rowNeed)
+    # Минимальная мерка строки ниже обычной ширины H₂O: без порога 680
+    # готовая двухрядная раскладка не включалась даже на узкой карточке.
+    $narrowBtns = ($W -le [Math]::Max($rowNeed, (& $sk0 680)))
 
     # В широком меню карточки стоят в колонки: зазор справа у каждой.
     $cardCols = Get-RamMenuCardColumns -AvailableWidth (Get-RamCardsAvailableWidth)
@@ -2444,6 +2450,7 @@ function Update-RamGamesPanelWater {
             $bSet = New-RamButton -Text '' -Icon 'assign' -IconOnly -Width $t.M.RowH -Height $t.M.RowH -Fixed -Kind 'primary' -Tooltip (Get-RamText -Text 'Назначить отмеченным') -OnClick {
                 $targets = @(Get-RamTargetAccounts)
                 if ($targets.Count -eq 0) { Show-RamInfo (Get-RamText -Text 'Сначала отметь аккаунты в разделе «Аккаунты».'); return }
+                if (-not (Confirm-RamHiddenSelection -Accounts $targets -What (Get-RamText -Text 'Назначить игру'))) { return }
                 $g2 = $this.Tag.Game
                 foreach ($a in $targets) {
                     $a.PlaceId  = [string]$g2.PlaceId
@@ -2594,7 +2601,12 @@ function Update-RamTrayMenu {
     [void]$m.Items.Add($mStop)
 
     $mExit = New-Object System.Windows.Forms.ToolStripMenuItem((Get-RamText -Text 'Выход'))
-    $mExit.Add_Click({ $script:UI.Form.Close() })
+    $mExit.Add_Click({
+        $form = $script:UI.Form
+        # Close() also reports UserClosing for explicit Exit, not only the X button.
+        $form | Add-Member -NotePropertyName RamExitRequested -NotePropertyValue $true -Force
+        try { $form.Close() } finally { $form.RamExitRequested = $false }
+    })
     [void]$m.Items.Add($mExit)
 }
 
@@ -2693,7 +2705,7 @@ function New-RamMainFormWater {
     $navTexts = @()
     foreach ($sec in Get-RamSections) { $navTexts += ('  ' + $sec.Text) }
     $navTexts += @((Get-RamText -Text '  Фаст-настройка'), (Get-RamText -Text '  Настройки'), (Get-RamText -Text '  Справка'),
-                   (Get-RamText -Text '  Запустить'), (Get-RamText -Text '  Закрыть'), (Get-RamText -Text '  Окна'), (Get-RamText -Text '  Проверить входы'),
+                   (Get-RamText -Text '  Запустить'), (Get-RamText -Text '  Закрыть'), (Get-RamText -Text '  Окна'), (Get-RamText -Text '  Твинки'), (Get-RamText -Text '  Проверить входы'),
                    (Get-RamText -Text '  Починить входы (99)'))
 
     $navW = 0
@@ -2730,7 +2742,7 @@ function New-RamMainFormWater {
     $navH0  = [Math]::Max((Get-RamScaled 38), ((Measure-RamText -Text (Get-RamText -Text 'Ау') -Font $t.FontBody).Height + (Get-RamScaled 12)))
     $navGap0 = Get-RamScaled 4
     $sideTopH = (Get-RamScaled 20) + $nameH0 + $verH0 + (Get-RamScaled 2) + $authH0 + (Get-RamScaled 34)
-    $sideRowsCount = (Get-RamSections).Count + 1 + 4  # разделы + фаст-настройка + запустить/закрыть/окна/входы
+    $sideRowsCount = (Get-RamSections).Count + 1 + 5  # разделы + фаст-настройка + запустить/закрыть/окна/твинки/входы
     $sideBottomCount = 2                              # настройки/справка
     $sideNeededH = $sideTopH + ($sideRowsCount * ($navH0 + $navGap0)) + $metrics.Gap +
                    ($sideBottomCount * ($navH0 + $navGap0)) + $metrics.GapLg
@@ -2989,7 +3001,7 @@ function New-RamMainFormWater {
         switch ([string]$ans) {
             'wizard' {
                 Invoke-RamFirstRun -Force
-                Build-RamCards
+                if (-not $script:RebuildUi) { Build-RamCards }
             }
             'readme' {
                 $readme = Join-Path $script:Root 'README.md'
@@ -3025,9 +3037,7 @@ function New-RamMainFormWater {
     # поэтому там просто прячется, оставляя под собой пустое место —
     # см. Show-RamSection ($script:UI.NavGroupAcc).
     $bLaunch = New-RamButton -Text (Get-RamText -Text '  Запустить') -Icon 'play' -Width $navBtnW -Height $navH -Radius 10 -Kind 'primary' -OnClick {
-        $targets = @(Get-RamTargetAccounts)
-        if ($targets.Count -eq 0) { $targets = @(Get-RamVisibleAccounts) }
-        Add-RamToLaunchQueue -Accounts $targets
+        Invoke-RamLaunchSelected
     }
     $side.Controls.Add($bLaunch)
     $script:UI.BtnLaunch = $bLaunch
@@ -3040,8 +3050,12 @@ function New-RamMainFormWater {
                            -Tooltip (Get-RamText -Text 'Левый клик — разложить, правый — выбрать раскладку') -OnClick { Invoke-RamTileWindows }
     $side.Controls.Add($bTile)
     $script:UI.BtnTile = $bTile
+    $bTwinks = New-RamButton -Text (Get-RamText -Text '  Твинки') -Icon 'windows' -Width $navBtnW -Height $navH -Radius 10 -Kind 'ghost' `
+        -Tooltip (Get-RamText -Text 'Свернуть остальные окна, не трогая основной аккаунт; повторный клик — вернуть места') -OnClick { Invoke-RamToggleTwinkWindows }
+    $side.Controls.Add($bTwinks)
+    $script:UI.BtnTwinks=$bTwinks
 
-    $script:UI.NavGroupAcc = @($bLaunch, $bCloseAll, $bTile)
+    $script:UI.NavGroupAcc = @($bLaunch, $bCloseAll, $bTile, $bTwinks)
 
     # $y на этот момент — низ первой группы (разделы + фаст-настройка).
     # Update-RamSideBarLayout использует его как верхнюю границу свободного
@@ -3051,7 +3065,7 @@ function New-RamMainFormWater {
         Side = $side; NavH = $navH; NavGap = $navGap; PadLg = $metrics.GapLg; Gap = $metrics.Gap
         TopGroupBottom = $y
         BFix = $bFix; BSettings = $bSettings; BHelp = $bHelp
-        BLaunch = $bLaunch; BCloseAll = $bCloseAll; BTile = $bTile
+        BLaunch = $bLaunch; BCloseAll = $bCloseAll; BTile = $bTile; BTwinks = $bTwinks
     }
     Update-RamSideBarLayout
 
@@ -3134,6 +3148,7 @@ function New-RamMainFormWater {
     [void](Add-RamMenuItem -Menu $selMenu -Text (Get-RamText -Text 'Назначить игру')      -OnClick { Invoke-RamAssignGame })
     [void](Add-RamMenuItem -Menu $selMenu -Text (Get-RamText -Text 'Собрать в набор')     -OnClick { Invoke-RamAssignGroup })
     [void](Add-RamMenuItem -Menu $selMenu -Text (Get-RamText -Text 'Поставить метку')     -OnClick { Invoke-RamAssignColor })
+    [void](Add-RamMenuItem -Menu $selMenu -Text (Get-RamText -Text 'Снять все отметки') -OnClick { Clear-RamCheckedAccounts })
     [void](Add-RamMenuItem -Menu $selMenu -Separator)
     [void](Add-RamMenuItem -Menu $selMenu -Text (Get-RamText -Text 'Убрать из менеджера') -OnClick { Invoke-RamDeleteSelected })
     $bSel.Add_Click({ $selMenu.Show($this, (New-Object System.Drawing.Point(0, $this.Height))) }.GetNewClosure())
@@ -3310,31 +3325,7 @@ function New-RamMainFormWater {
 
     # Здесь жёлоб убирали, но отрисовщика темы не ставили: рамка и подсветка
     # наведения оставались системными. Обёртка делает и то, и другое.
-    $tileMenu = New-RamContextMenu
-    foreach ($m in @(
-        @{ K = 'main';    T = (Get-RamText -Text 'Основной крупно, твины мелко') },
-        @{ K = 'grid';    T = (Get-RamText -Text 'Сеткой') },
-        @{ K = 'cascade'; T = (Get-RamText -Text 'Каскадом') },
-        @{ K = 'columns'; T = (Get-RamText -Text 'Колонками') },
-        @{ K = 'rows';    T = (Get-RamText -Text 'Строками') })) {
-        # $m — элемент списка выше. Когда-то по файлу прошлись заменой
-        # «$m.» на «$metrics.», и здесь она сработала не по адресу: все пять
-        # пунктов получали пустое имя и Tag = $null, то есть меню выбора
-        # раскладки состояло из пяти безымянных строк, а клик по любой из них
-        # записывал в настройки пустой режим.
-        $mi = New-Object System.Windows.Forms.ToolStripMenuItem($m.T)
-        $mi.Tag = $m.K
-        $mi.Add_Click({
-            $script:Settings.TileMode = $this.Tag
-            Save-RamSettings -Settings $script:Settings
-            Invoke-RamTileWindows -Mode $this.Tag
-        })
-        [void]$tileMenu.Items.Add($mi)
-    }
-    $miSave = New-Object System.Windows.Forms.ToolStripMenuItem((Get-RamText -Text 'Запомнить места окон'))
-    $miSave.Add_Click({ Save-RamWindowPositions })
-    [void]$tileMenu.Items.Add((New-Object System.Windows.Forms.ToolStripSeparator))
-    [void]$tileMenu.Items.Add($miSave)
+    $tileMenu = New-RamTileWindowsMenu
     $script:UI.TileMenu = $tileMenu
 
     $bTile.Add_MouseUp({
@@ -3563,9 +3554,7 @@ function New-RamMainFormWater {
             'T'      { if ($e.Control) { Invoke-RamTileWindows; $e.Handled = $true } }
             'Z'      { if ($e.Control) { Invoke-RamUndo;         $e.Handled = $true } }
             'Return' {
-                $t2 = @(Get-RamTargetAccounts)
-                if ($t2.Count -eq 0) { $t2 = @(Get-RamVisibleAccounts) }
-                Add-RamToLaunchQueue -Accounts $t2
+                Invoke-RamLaunchSelected
                 $e.Handled = $true
             }
             'D1' { Show-RamSection -Key 'accounts'; $e.Handled = $true }
@@ -3582,6 +3571,7 @@ function New-RamMainFormWater {
         param($sender, $e)
 
         $internalClose = ($script:RebuildUi -or $script:RestartRequested)
+        $explicitExit = ($sender.PSObject.Properties.Name -contains 'RamExitRequested' -and $sender.RamExitRequested)
 
         # Крестик убирает в часы — так делают Discord и Telegram.
         #
@@ -3591,7 +3581,7 @@ function New-RamMainFormWater {
         # стрелку и человеку не виден. Поэтому спрашиваем прямо, один раз.
         # UserClosing — это именно крестик и Alt+F4, а не выключение Windows
         # и не Restart-AltHub.
-        if (-not $internalClose -and $script:Settings.OnClose -eq 'tray' -and $script:UI.TrayOk -and
+        if (-not $internalClose -and -not $explicitExit -and $script:Settings.OnClose -eq 'tray' -and $script:UI.TrayOk -and
             $e.CloseReason -eq [System.Windows.Forms.CloseReason]::UserClosing) {
 
             if (Confirm-RamTrayVisible) {
@@ -4054,6 +4044,7 @@ function Update-RamGamesPanelClassic {
             $bSet = New-RamButton -Text (Get-RamText -Text 'Назначить отмеченным') -Width 1 -Height $t.M.RowHSm -Kind 'primary' -OnClick {
                 $targets = @(Get-RamTargetAccounts)
                 if ($targets.Count -eq 0) { Show-RamInfo (Get-RamText -Text 'Сначала отметь аккаунты в разделе «Аккаунты».'); return }
+                if (-not (Confirm-RamHiddenSelection -Accounts $targets -What (Get-RamText -Text 'Назначить игру'))) { return }
                 $g2 = $this.Tag.Game
                 foreach ($a in $targets) {
                     $a.PlaceId  = [string]$g2.PlaceId

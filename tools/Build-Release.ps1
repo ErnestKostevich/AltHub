@@ -1,6 +1,6 @@
 ﻿#requires -Version 5.1
 param(
-    [string]$Version = '1.5.0-rc1',
+    [string]$Version = '1.5.0',
     [string]$Output = ''
 )
 
@@ -12,7 +12,7 @@ $packageName = "AltHub-$Version"
 $stage = Join-Path $stageRoot $packageName
 
 $rootFiles = @(
-    'AltHub.ps1','AltHub.vbs','LICENSE','README.md','ПРОЧТИ МЕНЯ.txt',
+    'AltHub.ps1','AltHub.vbs','LICENSE','README.md','ПРОЧТИ МЕНЯ.txt','release-notes-1.5.0.md',
     'Запустить AltHub.cmd','Ярлык на рабочий стол.cmd'
 )
 $trees = @('modules','extension','tools','Проверки','docs')
@@ -52,7 +52,19 @@ try {
     foreach ($required in @('extension\icon16.png','extension\icon48.png','extension\icon128.png','modules\UiModern.ps1','modules\menus\Classic.ps1','modules\Localization.ps1','modules\locales\en-common.json','modules\locales\en-help.json','modules\locales\en-part1.json','modules\locales\en-part2.json','modules\locales\en-part3.json','docs\settings.png','docs\launch-center.png','docs\en\themes.png','Проверки\Проверка очереди.ps1','Проверки\Проверка языка.ps1')) {
         if (-not (Test-Path -LiteralPath (Join-Path $stage $required))) { throw "В staging нет $required" }
     }
+    foreach($required in @('modules\locales\en-browser-fixes.json','modules\locales\en-wizard-fixes.json','modules\locales\en-selection-fixes.json','modules\locales\en-consent-fixes.json','Проверки\Проверка отказа входа.ps1','Проверки\Проверка языка мастера.ps1','Проверки\Проверка скрытого выбора.ps1')){
+        if(-not(Test-Path -LiteralPath (Join-Path $stage $required))){throw "В staging нет $required"}
+    }
     $stamp = Join-Path $stage 'docs\screenshots-version.txt'
+    foreach($required in @('modules\locales\en-final15.json','modules\locales\en-window-focus.json','Проверки\Проверка сохранности входов.ps1','Проверки\Проверка выхода из трея.ps1','Проверки\Проверка заголовков окон.ps1','Проверки\Проверка сворачивания твинков.ps1')){
+        if(-not(Test-Path -LiteralPath (Join-Path $stage $required))){throw "В staging нет $required"}
+    }
+    foreach($required in @('docs\browser-login.png','docs\en\browser-login.png')){
+        if(-not(Test-Path -LiteralPath (Join-Path $stage $required))){throw "В staging нет $required"}
+    }
+    foreach($required in @('modules\BrowserLoginCdp.ps1','modules\locales\en-system-login.json','modules\locales\en-system-login-ui.json','Проверки\Проверка протокола браузера.ps1','Проверки\Проверка языка системы.ps1','Проверки\Проверка кнопок H2O.ps1','Проверки\Проверка окна браузера.ps1','Проверки\Проверка настроек браузера.ps1')){
+        if(-not(Test-Path -LiteralPath (Join-Path $stage $required))){throw "В staging нет $required"}
+    }
     if (-not (Test-Path -LiteralPath $stamp) -or [IO.File]::ReadAllText($stamp).Trim() -ne $Version) {
         throw 'Скриншоты не соответствуют версии. Сначала выполни tools\Capture-Docs.ps1.'
     }

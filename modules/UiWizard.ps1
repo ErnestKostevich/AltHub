@@ -49,6 +49,8 @@ function Invoke-RamFirstRun {
         }
     }
 
+    $oldUiLanguage = Get-RamUiLanguage
+    $oldTheme = [string]$script:Settings.Theme
     $step = 0
     while ($true) {
         $r = Show-RamFirstRun -StartStep $step
@@ -62,13 +64,18 @@ function Invoke-RamFirstRun {
 
     $script:Settings.FirstRunDone = $true
     Save-RamSettings -Settings $script:Settings
+    if (($oldUiLanguage -ne (Get-RamUiLanguage) -or $oldTheme -ne [string]$script:Settings.Theme) -and
+        $null -ne $script:UI.Form -and -not $script:UI.Form.IsDisposed) {
+        $script:RebuildUi = $true
+        $script:UI.Form.Close()
+    }
 }
 
 function Show-RamFirstRun {
     <#
       Само окно. Возвращает:
         $null                       — закрыли крестиком или прошли до конца
-        @{ Action='restyle'; Step } — сменили тему, окно надо пересобрать
+        @{ Action='restyle'; Step } — сменили тему или язык, окно надо пересобрать
     #>
     param(
         [int]$StartStep = 0,
@@ -177,6 +184,21 @@ function Show-RamFirstRun {
 
     # ============================================================ 1. знакомство
     $p1 = & $newPage 'hello'
+    $cbLanguage = New-RamCombo -X 0 -Y 0 -Width $p1.Width -Items @(
+        [pscustomobject]@{ Text = 'Русский (Russian)'; Value = 'ru' },
+        [pscustomobject]@{ Text = 'English'; Value = 'en' }
+    ) -Value (Get-RamUiLanguage)
+    $cbLanguage.Name = 'ramWizLanguage'
+    [void](Add-RamField -Layout $p1 -Caption (Get-RamText -Text 'Язык интерфейса') -Control $cbLanguage)
+    [void](& $addText $p1 (Get-RamText -Text 'Выбери язык — мастер сразу переключится. Язык Roblox настраивается отдельно.') $t.FontSmall $t.Muted)
+    $cbLanguage.Add_SelectedIndexChanged({
+        $language = Get-RamComboValue $this
+        if ($language -notin @('ru','en') -or $language -eq (Get-RamUiLanguage)) { return }
+        $form = $this.FindForm()
+        $form.Tag = [pscustomobject]@{ Action = 'restyle'; Step = [int]$form.Controls.Find('ramWizStep', $true)[0].Tag; UiLanguage = $language }
+        $form.Close()
+    })
+    [void](Add-RamGap -Layout $p1 -Height $m.GapSm)
     [void](& $addText $p1 (Get-RamText -Text 'AltHub держит несколько аккаунтов Roblox открытыми одновременно и раскладывает их окна по экрану. Пароли ему не нужны — он работает с уже выполненным входом.') $t.FontBody $t.Text)
     [void](Add-RamGap -Layout $p1 -Height $m.Gap)
 
@@ -364,6 +386,7 @@ function Show-RamFirstRun {
     $btnSkip = New-RamButton -Text (Get-RamText -Text 'Пропустить настройку') -Width 1 -Height $m.RowH -Kind 'ghost' -OnClick {
         $this.FindForm().Close()
     }
+    $btnSkip.Name = 'ramWizSkip'
     $btnBack = New-RamButton -Text (Get-RamText -Text 'Назад') -Width 1 -Height $m.RowH -OnClick {
         Step-RamWizard -Form $this.FindForm() -Delta -1
     }
@@ -391,9 +414,14 @@ function Show-RamFirstRun {
     $dlg.Dispose()
 
     if ($null -ne $res -and [string]$res.Action -eq 'restyle') {
-        $script:Settings.Theme = [string]$res.ThemeKey
+        if ($res.PSObject.Properties.Name -contains 'UiLanguage') {
+            if ([string]$res.UiLanguage -notin @('ru','en')) { return $null }
+            $script:Settings.UiLanguage = [string]$res.UiLanguage
+        } else {
+            $script:Settings.Theme = [string]$res.ThemeKey
+            Set-RamTheme -Name $script:Settings.Theme | Out-Null
+        }
         Save-RamSettings -Settings $script:Settings
-        Set-RamTheme -Name $script:Settings.Theme | Out-Null
         return $res
     }
     return $null

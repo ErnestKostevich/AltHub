@@ -1,0 +1,14 @@
+[
+  {
+    "Source": "Chrome for Testing уже скачан и используется для входа через окно браузера. Капчу, если она появится, нужно пройти самостоятельно.",
+    "Translation": "Chrome for Testing is installed and used for browser-window sign-in. Complete any CAPTCHA yourself."
+  },
+  {
+    "Source": "Перед входом можно выбрать Chrome for Testing или системный браузер. Chrome for Testing поддерживает загрузку расширения AltHub; системный браузер может ограничивать её. Скачивание (~150 МБ) начинается только после подтверждения.",
+    "Translation": "Before signing in, choose Chrome for Testing or your system browser. Chrome for Testing supports loading the AltHub extension; your system browser may restrict it. The download (about 150 MB) starts only after confirmation."
+  },
+  {
+    "Source": "Зачем. AltHub открывает отдельное окно браузера, где ты входишь сам.\nChrome for Testing поддерживает загрузку расширения-моста. Наличие и\nсложность капчи определяет Roblox; AltHub её не обходит и не решает.\n\nЧто качается. Chrome for Testing — официальная сборка Chromium, которую\nвыпускает сама Google. Примерно 150 МБ, один раз, в папку data\\chrome-for-testing\nрядом с программой. Твой обычный Chrome или Edge при этом не трогаются.\n\nОткуда качается. Список сборок — с googlechromelabs.github.io, сам архив — с\nstorage.googleapis.com. Скачивание с этих адресов начинается только после\nтвоего подтверждения. Другие сетевые запросы AltHub описаны в README.\n\nМожно и не качать. Системный Edge или Chrome можно выбрать отдельно, но\nподключение расширения зависит от версии и политик браузера. Если оно не\nподключится, вход не будет получен. Другие способы добавления доступны без\nэтого скачивания.",
+    "Translation": "Why. AltHub opens a separate browser window for you to sign in yourself.\nChrome for Testing supports loading the bridge extension. Roblox controls\nwhether a CAPTCHA appears and how difficult it is; AltHub does not bypass\nor solve it.\n\nWhat is downloaded. Chrome for Testing is Google's official Chromium build.\nAbout 150 MB, downloaded once into data\\chrome-for-testing next to AltHub.\nYour regular Chrome or Edge is not changed.\n\nWhere it comes from. The build list is at googlechromelabs.github.io and\nthe archive is at storage.googleapis.com. This download starts only after\nyour confirmation. Other AltHub network requests are described in README.\n\nYou can skip it. You may select your installed Edge or Chrome instead,\nbut extension support depends on its version and policies. If the\nextension does not connect, AltHub cannot receive the login. Other ways\nto add accounts are available without this download."
+  }
+]

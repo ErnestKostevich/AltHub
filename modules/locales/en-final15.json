@@ -1,0 +1,6 @@
+[
+  {"Source":"Компактное окно браузера завершилось с кодом {0}; пробую обычное окно один раз.","Translation":"The compact browser window exited with code {0}; trying a normal window once."},
+  {"Source":"Окно входа уже закрыто: удалить локальную куку через браузер не удалось. Следующий вход очистит её до открытия Roblox.","Translation":"The sign-in window is already closed, so its local cookie could not be removed through the browser. The next sign-in clears it before opening Roblox."},
+  {"Source":"Локальная кука окна входа не очищена. Следующий вход очистит её до открытия Roblox.","Translation":"The sign-in window's local cookie was not cleared. The next sign-in clears it before opening Roblox."},
+  {"Source":"Окно подписывается «Roblox — Имя». Для макроса с точным заголовком «Roblox» выключи эту опцию: обычные заголовки вернутся без перезапуска клиентов.","Translation":"Windows are titled “Roblox — Name”. For a macro that matches the exact title “Roblox”, turn this off: original titles are restored without restarting clients."}
+]

@@ -62,6 +62,22 @@ namespace Ram {
         [StructLayout(LayoutKind.Sequential)]
         public struct RECT { public int Left, Top, Right, Bottom; }
 
+        [StructLayout(LayoutKind.Sequential)]
+        public struct POINT { public int X, Y; }
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct WINDOWPLACEMENT {
+            public int length, flags, showCmd;
+            public POINT ptMinPosition, ptMaxPosition;
+            public RECT rcNormalPosition;
+        }
+
+        [DllImport("user32.dll", SetLastError = true)]
+        public static extern bool GetWindowPlacement(IntPtr hWnd, ref WINDOWPLACEMENT placement);
+
+        [DllImport("user32.dll", SetLastError = true)]
+        public static extern bool SetWindowPlacement(IntPtr hWnd, ref WINDOWPLACEMENT placement);
+
         [DllImport("user32.dll")]
         public static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
 
@@ -107,6 +123,61 @@ namespace Ram {
 $script:SWP_NOZORDER   = 0x0004
 $script:SWP_NOACTIVATE = 0x0010
 $script:SWP_SHOWWINDOW = 0x0040
+$script:TwinkWindowSnapshot = @()
+
+function Invoke-RamToggleTwinkWindows {
+    <# Only tracked AltHub windows; minimizing is not process suspension. #>
+    if (@($script:TwinkWindowSnapshot).Count -gt 0) {
+        $retry = @()
+        foreach ($saved in @($script:TwinkWindowSnapshot)) {
+            $inst = $script:Instances[$saved.Id]
+            $same = $null -ne $inst -and [object]::ReferenceEquals($inst,$saved.Instance) -and
+                [int]$inst.ProcessId -eq $saved.ProcessId -and [IntPtr]$inst.Handle -eq $saved.Handle
+            $windowPid = [uint32]0
+            if ($same -and [Ram.Native]::IsWindow($saved.Handle)) {
+                [void][Ram.Native]::GetWindowThreadProcessId($saved.Handle,[ref]$windowPid)
+                try { $same = [int]$windowPid -eq $saved.ProcessId -and
+                    [Diagnostics.Process]::GetProcessById($saved.ProcessId).StartTime.ToUniversalTime().Ticks -eq $saved.StartTicks
+                } catch { $same=$false }
+            } else { $same=$false }
+            if ($same) {
+                $placement = $saved.Placement
+                if (-not [Ram.Native]::SetWindowPlacement($saved.Handle,[ref]$placement)) {
+                    $retry += $saved
+                    continue
+                }
+            }
+        }
+        $script:TwinkWindowSnapshot = $retry
+        if ($retry.Count) { Write-RamLog (Get-RamText -Text 'Не все окна удалось вернуть. Нажми «Твинки» ещё раз.') 'warn' }
+        return
+    }
+
+    $mainId = [string]$script:Settings.MainAccountId
+    if (-not $mainId -or -not @($script:Accounts | Where-Object {[string]$_.Id -eq $mainId}).Count) {
+        [void](Show-RamMessage -Message (Get-RamText -Text 'Сначала выбери основной аккаунт: правый клик по «Окна» → «Основной аккаунт». Окна не изменены.') -Kind warn)
+        return
+    }
+    foreach ($id in @($script:Instances.Keys)) {
+        if ([string]$id -eq $mainId) { continue }
+        $inst=$script:Instances[$id]
+        $handle=[IntPtr]$inst.Handle
+        if ($handle -eq [IntPtr]::Zero -or -not [Ram.Native]::IsWindow($handle) -or
+            -not [Ram.Native]::IsWindowVisible($handle) -or [Ram.Native]::IsIconic($handle)) { continue }
+        $windowPid=[uint32]0
+        [void][Ram.Native]::GetWindowThreadProcessId($handle,[ref]$windowPid)
+        if ([int]$windowPid -ne [int]$inst.ProcessId) { continue }
+        try { $startTicks=[Diagnostics.Process]::GetProcessById([int]$inst.ProcessId).StartTime.ToUniversalTime().Ticks } catch { continue }
+        $placement=New-Object Ram.Native+WINDOWPLACEMENT
+        $placement.length=[Runtime.InteropServices.Marshal]::SizeOf($placement)
+        if (-not [Ram.Native]::GetWindowPlacement($handle,[ref]$placement)) { continue }
+        [void][Ram.Native]::ShowWindow($handle,6)
+        if ([Ram.Native]::IsIconic($handle)) {
+            $script:TwinkWindowSnapshot += [pscustomobject]@{Id=[string]$id; Instance=$inst; Handle=$handle;
+                ProcessId=[int]$inst.ProcessId; StartTicks=$startTicks; Placement=$placement}
+        }
+    }
+}
 
 function Get-RamRobloxWindow {
     <#
@@ -145,6 +216,22 @@ function Set-RamWindowTitle {
     if ($Handle -eq [IntPtr]::Zero) { return $false }
     try { return [Ram.Native]::SetWindowText($Handle, $Title) }
     catch { return $false }
+}
+
+function Get-RamWindowTitle {
+    param([IntPtr]$Handle)
+    if ($Handle -eq [IntPtr]::Zero) { return '' }
+    try { return [Ram.Native]::TitleOf($Handle) } catch { return '' }
+}
+
+function Get-RamWindowProcessId {
+    param([IntPtr]$Handle)
+    if ($Handle -eq [IntPtr]::Zero) { return 0 }
+    try {
+        $windowPid=[uint32]0
+        [void][Ram.Native]::GetWindowThreadProcessId($Handle,[ref]$windowPid)
+        return [int]$windowPid
+    } catch { return 0 }
 }
 
 function Get-RamWindowRect {

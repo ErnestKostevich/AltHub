@@ -293,47 +293,51 @@ function Save-RamAccounts {
     # напрямую, минуя Save-RamState. Один пропущенный вызов — и проверочный
     # запуск затрёт настоящие аккаунты, поэтому замок стоит на самой записи.
     if ($script:ReadOnly) { return }
+    if ($script:AccountsWriteBlocked) {
+        throw (Get-RamText -Text 'Сохранение аккаунтов заблокировано: исходное хранилище не было успешно прочитано.')
+    }
 
     $json  = ConvertTo-Json -InputObject @($Accounts) -Depth 6 -Compress
     $bytes = [System.Text.Encoding]::UTF8.GetBytes($json)
-    $envelope = Protect-RamBytes -Data $bytes -Password $Password
-
-    $path = Get-RamAccountsPath
-    $tmp  = "$path.tmp"
-    ConvertTo-Json -InputObject $envelope -Depth 4 | Set-Content -LiteralPath $tmp -Encoding UTF8 -Force
-
-    # Никогда не заменяем рабочее хранилище файлом, который сами же не можем
-    # прочитать. Так обрезанная запись или неверная кодировка обнаруживается
-    # до потери последней рабочей копии.
+    $tmp = $null
+    $probeBytes = $null
     try {
-        $probeEnvelope = ConvertFrom-Json -InputObject (Get-Content -LiteralPath $tmp -Raw -Encoding UTF8)
-        $probeBytes = Unprotect-RamBytes -Envelope $probeEnvelope -Password $Password
-        $probeJson = [System.Text.Encoding]::UTF8.GetString($probeBytes)
-        [void](ConvertFrom-Json -InputObject $probeJson)
-        [Array]::Clear($probeBytes, 0, $probeBytes.Length)
-    } catch {
-        Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
-        throw "Проверка нового файла accounts.dat не прошла: $($_.Exception.Message)"
-    }
+        $envelope = Protect-RamBytes -Data $bytes -Password $Password
 
-    # Ротационные копии содержат тот же зашифрованный envelope, а не открытые
-    # куки. Храним пять последних успешно заменённых версий.
-    if (Test-Path -LiteralPath $path) {
-        $backupDir = Join-Path (Get-RamDataDir) 'backups\accounts'
-        if (-not (Test-Path -LiteralPath $backupDir)) {
-            [void](New-Item -ItemType Directory -Path $backupDir -Force)
+        $path = Get-RamAccountsPath
+        $tmp  = "$path.$([guid]::NewGuid().ToString('N')).tmp"
+        ConvertTo-Json -InputObject $envelope -Depth 4 | Set-Content -LiteralPath $tmp -Encoding UTF8 -Force -ErrorAction Stop
+
+        # Проверяем новый envelope до замены последней рабочей копии.
+        try {
+            $probeEnvelope = ConvertFrom-Json -InputObject (Get-Content -LiteralPath $tmp -Raw -Encoding UTF8)
+            $probeBytes = Unprotect-RamBytes -Envelope $probeEnvelope -Password $Password
+            $probeJson = [System.Text.Encoding]::UTF8.GetString($probeBytes)
+            [void](ConvertFrom-Json -InputObject $probeJson)
+        } catch {
+            throw "Проверка нового файла accounts.dat не прошла: $($_.Exception.Message)"
         }
-        $stamp = Get-Date -Format 'yyyyMMdd-HHmmss-fff'
-        Copy-Item -LiteralPath $path -Destination (Join-Path $backupDir "accounts-$stamp.dat") -Force
-        @(Get-ChildItem -LiteralPath $backupDir -Filter 'accounts-*.dat' -File |
-            Sort-Object LastWriteTime -Descending | Select-Object -Skip 5) |
-            ForEach-Object { Remove-Item -LiteralPath $_.FullName -Force -ErrorAction SilentlyContinue }
+
+        # Ротационные копии содержат зашифрованный envelope, а не открытые куки.
+        if (Test-Path -LiteralPath $path) {
+            $backupDir = Join-Path (Get-RamDataDir) 'backups\accounts'
+            if (-not (Test-Path -LiteralPath $backupDir)) {
+                [void](New-Item -ItemType Directory -Path $backupDir -Force)
+            }
+            $stamp = (Get-Date -Format 'yyyyMMdd-HHmmss-fff') + '-' + [guid]::NewGuid().ToString('N')
+            # Замена и резервная копия выполняются атомарно, без удаления оригинала.
+            [System.IO.File]::Replace($tmp, $path, (Join-Path $backupDir "accounts-$stamp.dat"))
+            @(Get-ChildItem -LiteralPath $backupDir -Filter 'accounts-*.dat' -File |
+                Sort-Object LastWriteTime -Descending | Select-Object -Skip 5) |
+                ForEach-Object { Remove-Item -LiteralPath $_.FullName -Force -ErrorAction SilentlyContinue }
+        } else {
+            [System.IO.File]::Move($tmp, $path)
+        }
+    } finally {
+        [Array]::Clear($bytes, 0, $bytes.Length)
+        if ($null -ne $probeBytes) { [Array]::Clear($probeBytes, 0, $probeBytes.Length) }
+        if ($tmp -and (Test-Path -LiteralPath $tmp)) { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }
     }
-
-    Move-Item -LiteralPath $tmp -Destination $path -Force
-
-    # Затираем открытый текст в памяти, насколько это возможно в .NET.
-    [Array]::Clear($bytes, 0, $bytes.Length)
 }
 
 function Load-RamAccounts {
@@ -388,7 +392,8 @@ function Get-RamDefaultSettings {
         LaunchDelaySec  = 8      # пауза между запусками аккаунтов
         LaunchMinimized = $true  # новые окна Roblox появляются свёрнутыми
         Locale          = 'ru_ru'
-        UiLanguage      = 'ru'   # язык AltHub, независимо от языка клиента Roblox
+        UiLanguage      = (Get-RamDefaultUiLanguage) # язык AltHub, независимо от языка клиента Roblox
+        BrowserLoginBrowser = 'system' # system | cft; загрузка только отдельно по согласию
         Theme           = 'dark' # ключ темы (стоковой или своей)
         MenuStyle       = 'wide' # classic | water | wide; новое меню для чистой установки
         SettingsSchemaVersion = 14
@@ -508,7 +513,8 @@ function Load-RamSettings {
     # Мусор в файле не должен превращаться в непонятное поведение окна.
     if ($s.OnClose -notin @('exit', 'tray')) { $s.OnClose = 'exit' }
     if ($s.MenuStyle -notin @('classic','water','wide')) { $s.MenuStyle = 'classic' }
-    if ($s.UiLanguage -notin @('ru','en')) { $s.UiLanguage = 'ru' }
+    if ($s.UiLanguage -notin @('ru','en')) { $s.UiLanguage = Get-RamDefaultUiLanguage }
+    if ($s.BrowserLoginBrowser -notin @('system','cft')) { $s.BrowserLoginBrowser = 'system' }
     if ([string]::IsNullOrWhiteSpace([string]$s.BridgeHotkey)) { $s.BridgeHotkey = 'F10' }
     if ($s.BridgeHotkey -notin (Get-RamBridgeHotkeyChoices)) { $s.BridgeHotkey = 'F10' }
     return $s

@@ -4,16 +4,17 @@ $ErrorActionPreference='Stop'
 . (Join-Path (Split-Path -Parent $PSScriptRoot) 'AltHub.ps1') -NoAutoStart
 function Assert-Language {param([bool]$Value,[string]$Message) if(-not $Value){throw $Message}}
 $script:Settings=Get-RamDefaultSettings
-Assert-Language ($script:Settings.UiLanguage -eq 'ru') 'Новая установка должна использовать русский интерфейс'
+$script:Settings.UiLanguage='ru'
 Assert-Language ((Get-RamText -Text 'Настройки') -eq 'Настройки') 'Русская подпись изменилась'
 $locale=$script:Settings.Locale
 $script:Settings.UiLanguage='en'
 Assert-Language ((Get-RamText -Text 'Настройки') -eq 'Settings') 'Нет английского перевода настроек'
 Assert-Language ((Get-RamText -Text 'отмечено: {0} из {1}' -Arguments @(1,13)) -eq 'selected: 1 of 13') 'Подстановки потерялись'
 Assert-Language ($script:Settings.Locale -eq $locale) 'Язык AltHub изменил язык Roblox'
-'PASS: separate UI language, Russian default and safe English formatting'
+'PASS: separate UI language, explicit Russian fixture and safe English formatting'
 $script:Settings.UiLanguage='unknown'
-Assert-Language ((Get-RamText -Text 'Настройки') -eq 'Настройки') 'Неизвестный язык не откатился на русский'
+$fallbackCaption=if((Get-RamDefaultUiLanguage) -eq 'ru'){'Настройки'}else{'Settings'}
+Assert-Language ((Get-RamText -Text 'Настройки') -eq $fallbackCaption) 'Invalid language did not use the system UI default'
 Assert-Language ((Get-RamText -Text 'CUSTOM USER VALUE') -eq 'CUSTOM USER VALUE') 'Неизвестный текст не сохранился'
 'PASS: missing or invalid translations fall back without altering user text'
 
@@ -82,10 +83,10 @@ try {
     foreach($invalid in @('unknown','', $null)){
         $script:Settings.UiLanguage=$invalid
         Save-RamSettings -Settings $script:Settings
-        Assert-Language ((Load-RamSettings).UiLanguage -eq 'ru') 'Invalid persisted UI language did not fall back to Russian'
+        Assert-Language ((Load-RamSettings).UiLanguage -eq (Get-RamDefaultUiLanguage)) 'Invalid persisted UI language did not use the system default'
     }
     [IO.File]::WriteAllText((Get-RamSettingsPath),'{"Locale":"en-us"}',[Text.Encoding]::UTF8)
-    Assert-Language ((Load-RamSettings).UiLanguage -eq 'ru') 'Legacy settings without UI language did not retain Russian default'
+    Assert-Language ((Load-RamSettings).UiLanguage -eq (Get-RamDefaultUiLanguage)) 'Legacy settings without UI language did not use the system default'
     $script:ReadOnly=$true
     'PASS: independent language JSON roundtrip and legacy/invalid defaults in private storage'
 
@@ -120,6 +121,7 @@ try {
     'PASS: English catalog preserves every format placeholder and formats translated templates'
 
     $script:Settings=Get-RamDefaultSettings
+    $script:Settings.UiLanguage='ru'
     $script:Settings.ConfirmOnExit=$false;$script:Settings.OnClose='exit'
     $script:Settings.Locale='en_us'
     $a=New-RamAccount -Alias 'Настройки' -Cookie 'LANGUAGE TEST FIXTURE'

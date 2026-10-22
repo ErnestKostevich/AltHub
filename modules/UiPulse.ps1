@@ -238,12 +238,15 @@ function New-RamMainFormClassic {
     [void](Add-RamMenuItem -Menu $selMenu -Text (Get-RamText -Text 'Назначить игру')      -OnClick { Invoke-RamAssignGame })
     [void](Add-RamMenuItem -Menu $selMenu -Text (Get-RamText -Text 'Собрать в набор')     -OnClick { Invoke-RamAssignGroup })
     [void](Add-RamMenuItem -Menu $selMenu -Text (Get-RamText -Text 'Поставить метку')     -OnClick { Invoke-RamAssignColor })
+    [void](Add-RamMenuItem -Menu $selMenu -Text (Get-RamText -Text 'Снять все отметки') -OnClick { Clear-RamCheckedAccounts })
     [void](Add-RamMenuItem -Menu $selMenu -Separator)
     [void](Add-RamMenuItem -Menu $selMenu -Text (Get-RamText -Text 'Убрать из менеджера') -OnClick { Invoke-RamDeleteSelected })
     $bSel.Add_Click({ $selMenu.Show($this, (New-Object System.Drawing.Point(0, $this.Height))) }.GetNewClosure())
 
     $bTile = New-RamButton -Text (Get-RamText -Text 'Окна') -Width 1 -Height $pm.BtnH -Tooltip (Get-RamText -Text 'Левый клик — разложить, правый — выбрать раскладку') -OnClick { Invoke-RamTileWindows }
     $script:UI.BtnTile  = $bTile
+    $bTwinks = New-RamButton -Text (Get-RamText -Text 'Твинки') -Width 1 -Height $pm.BtnH -Tooltip (Get-RamText -Text 'Свернуть остальные окна, не трогая основной аккаунт; повторный клик — вернуть места') -OnClick { Invoke-RamToggleTwinkWindows }
+    $script:UI.BtnTwinks=$bTwinks
     $script:UI.TileMenu = New-RamTileWindowsMenu
     $bTile.Add_MouseUp({
         param($sender, $e)
@@ -252,12 +255,10 @@ function New-RamMainFormClassic {
     $bClose = New-RamButton -Text (Get-RamText -Text 'Закрыть') -Width 1 -Height $pm.BtnH -Tooltip (Get-RamText -Text 'Закрыть окна отмеченных') -OnClick { Invoke-RamStopSelected }
     $bLaunch = New-RamButton -Text (Get-RamText -Text 'Запустить') -Width 1 -Height $pm.BtnH -Kind 'primary' `
                              -Tooltip (Get-RamText -Text 'Запустить отмеченные свёрнутыми. Если ничего не отмечено — все, что сейчас видно в списке') -OnClick {
-        $targets = @(Get-RamTargetAccounts)
-        if ($targets.Count -eq 0) { $targets = @(Get-RamVisibleAccounts) }
-        Add-RamToLaunchQueue -Accounts $targets
+        Invoke-RamLaunchSelected
     }
     $script:UI.BtnLaunch = $bLaunch
-    foreach ($c in @($bAdd, $bAll, $bSel, $bTile, $bClose, $bLaunch)) { $pAcc.Controls.Add($c) }
+    foreach ($c in @($bAdd, $bAll, $bSel, $bTile, $bTwinks, $bClose, $bLaunch)) { $pAcc.Controls.Add($c) }
 
     $chips = New-Object System.Windows.Forms.Panel
     $chips.BackColor = $t.Bg
@@ -268,7 +269,7 @@ function New-RamMainFormClassic {
     $cards = New-RamScrollPanel -Width 100 -Height 100
     $pAcc.Controls.Add($cards)
     $script:UI.Cards = $cards
-    $sections['accounts'] = [pscustomobject]@{ Panel = $pAcc; Title = $null; Left = @($bAdd, $bAll, $bSel); Right = @($bTile, $bClose, $bLaunch); Hint = $null; Chips = $chips; Body = $cards }
+    $sections['accounts'] = [pscustomobject]@{ Panel = $pAcc; Title = $null; Left = @($bAdd, $bAll, $bSel); Right = @($bTile, $bTwinks, $bClose, $bLaunch); Hint = $null; Chips = $chips; Body = $cards }
 
     # ---------------------------------------------------------- игры --------
     $pGames = & $newSection 'games'

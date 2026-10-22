@@ -4,7 +4,7 @@
  AltHub — менеджер аккаунтов Roblox
 ================================================================================
  Автор: Эрнест Костевич (Ernest Kostevich)
- Версия: 1.5.0-rc1
+ Версия: 1.5.0
  Лицензия: MIT — см. файл LICENSE рядом. Можно свободно передавать друзьям,
  менять под себя и распространять дальше, сохраняя это указание авторства.
 
@@ -15,7 +15,7 @@
  .ps1 и .js — открой любым блокнотом и прочитай.
 
  Скачать программа может ровно одно и только если ты сам нажмёшь кнопку:
- Chrome for Testing, официальную сборку Chromium от Google (~150 МБ), для
+ Chrome for Testing, официальную сборку Chromium от Google (размер зависит от версии), для
  способа входа «окно браузера». Без этого нажатия в сеть за ним никто не
  ходит, и все остальные способы работают без него.
 
@@ -80,12 +80,12 @@ Add-Type -AssemblyName System.Drawing
 [System.Windows.Forms.Application]::EnableVisualStyles()
 
 . (Join-Path $PSScriptRoot 'modules\Localization.ps1')
-$script:RamStartupUiLanguage='ru'
+$script:RamStartupUiLanguage=Get-RamDefaultUiLanguage
 try {
     $startupSettingsPath=Join-Path $PSScriptRoot 'data\settings.json'
     if(-not $NoAutoStart -and (Test-Path -LiteralPath $startupSettingsPath)){
         $startupSettings=ConvertFrom-Json -InputObject ([IO.File]::ReadAllText($startupSettingsPath,[Text.Encoding]::UTF8))
-        if($startupSettings.UiLanguage -eq 'en'){$script:RamStartupUiLanguage='en'}
+        if($startupSettings.UiLanguage -in @('ru','en')){$script:RamStartupUiLanguage=[string]$startupSettings.UiLanguage}
     }
 } catch { }
 
@@ -125,7 +125,7 @@ $moduleFiles = @(
     'modules\Theme.ps1','modules\Layout.ps1',
     'modules\menus\Classic.ps1','modules\menus\Water.ps1','modules\menus\Wide.ps1','modules\MenuStyles.ps1',
     'modules\Storage.ps1','modules\RobloxApi.ps1','modules\CookieImport.ps1','modules\CookieBridge.ps1',
-    'modules\ExternalBrowserLogin.ps1','modules\Hotkeys.ps1','modules\RobloxSettings.ps1','modules\Presets.ps1',
+    'modules\BrowserLoginCdp.ps1','modules\ExternalBrowserLogin.ps1','modules\Hotkeys.ps1','modules\RobloxSettings.ps1','modules\Presets.ps1',
     'modules\Launcher.ps1','modules\WindowTools.ps1','modules\UiWizard.ps1','modules\UiDialogs.ps1',
     'modules\Accounts.ps1','modules\UiMain.ps1','modules\UiModern.ps1','modules\UiPulse.ps1'
 )
@@ -209,7 +209,7 @@ $script:ReadOnly = [bool]$NoAutoStart
 $Global:RamNoDialogs = [bool]$NoAutoStart
 
 $script:AppName    = 'AltHub'
-$script:AppVersion = '1.5.0-rc1'
+$script:AppVersion = '1.5.0'
 $script:AppAuthor  = (Get-RamText -Text 'Эрнест Костевич')
 
 function Get-RamAvatarDir { Join-Path (Get-RamDataDir) 'avatars' }
@@ -460,6 +460,8 @@ function Update-RamStatusLine {
     $parts = @()
     if ($all -eq 0) { $parts += (Get-RamText -Text 'аккаунтов пока нет — нажми «Добавить»') }
     else            { $parts += (Get-RamText -Text 'отмечено: {0} из {1}' -Arguments @([string]($checked),[string]($all))) }
+    $hidden = Get-RamHiddenSelectionCount
+    if ($hidden -gt 0) { $parts += (Get-RamText -Text 'скрытых отметок: {0}' -Arguments @($hidden)) }
 
     if ($running -gt 0) { $parts += (Get-RamText -Text 'в игре: {0}' -Arguments @([string]($running))) }
     if ($queued  -gt 0) {

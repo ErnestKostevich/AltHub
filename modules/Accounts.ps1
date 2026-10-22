@@ -641,7 +641,10 @@ function Get-RamActionTargets {
     param([string]$What = (Get-RamText -Text 'это действие'))
 
     $checked = @(Get-RamTargetAccounts)
-    if ($checked.Count -gt 0) { return $checked }
+    if ($checked.Count -gt 0) {
+        if (Confirm-RamHiddenSelection -Accounts $checked -What $What) { return $checked }
+        return @()
+    }
 
     $visible = @(Get-RamVisibleAccounts)
     if ($visible.Count -eq 0) {
@@ -712,6 +715,22 @@ function Save-RamSettingsNow {
     Save-RamSettings -Settings $script:Settings
 }
 
+function Get-RamHiddenSelectionCount {
+    param([object[]]$Accounts = @(Get-RamTargetAccounts))
+    $visibleIds = @{}
+    foreach ($a in @(Get-RamVisibleAccounts)) { $visibleIds[[string]$a.Id] = $true }
+    return @($Accounts | Where-Object { -not $visibleIds.ContainsKey([string]$_.Id) }).Count
+}
+
+function Confirm-RamHiddenSelection {
+    param([object[]]$Accounts, [string]$What = (Get-RamText -Text 'это действие'))
+    $hidden = Get-RamHiddenSelectionCount -Accounts $Accounts
+    if ($hidden -eq 0) { return $true }
+    return (Confirm-Ram (Get-RamText -Text 'Отмечено аккаунтов: {0}. Из них скрыто текущим набором или поиском: {1}.
+
+Применить «{2}» ко всем отмеченным, включая скрытые? Отмена ничего не изменит.' -Arguments @($Accounts.Count, $hidden, $What)))
+}
+
 function Get-RamTargetAccounts {
     <#
       Отмеченные галочками — В ТОМ ЖЕ ПОРЯДКЕ, В КАКОМ ОНИ В СПИСКЕ.
@@ -762,6 +781,7 @@ function Export-RamSetup {
             LaunchDelaySec = $script:Settings.LaunchDelaySec
             Locale         = $script:Settings.Locale
             UiLanguage     = $script:Settings.UiLanguage
+            BrowserLoginBrowser = $script:Settings.BrowserLoginBrowser
             Theme          = $script:Settings.Theme
             TileMode       = $script:Settings.TileMode
             TileColumns    = $script:Settings.TileColumns
@@ -794,10 +814,11 @@ function Import-RamSetup {
 
     $applied = 0
     if ($obj.settings) {
-        foreach ($k in @('LaunchDelaySec','Locale','UiLanguage','Theme','TileMode','TileColumns',
+        foreach ($k in @('LaunchDelaySec','Locale','UiLanguage','BrowserLoginBrowser','Theme','TileMode','TileColumns',
                          'RenameWindows','AutoTile','AutoRestart')) {
             if ($obj.settings.PSObject.Properties.Name -contains $k) {
                 if($k -eq 'UiLanguage' -and $obj.settings.$k -notin @('ru','en')){continue}
+                if($k -eq 'BrowserLoginBrowser' -and $obj.settings.$k -notin @('system','cft')){continue}
                 $script:Settings.$k = $obj.settings.$k
                 $applied++
             }
@@ -858,6 +879,18 @@ function Set-RamAllChecked {
         $script:Cards[$id].Check.Invalidate()
     }
     Update-RamStatusLine
+}
+
+function Clear-RamCheckedAccounts {
+    $script:CheckedIds.Clear()
+    Set-RamAllChecked $false
+}
+
+function Invoke-RamLaunchSelected {
+    $targets = @(Get-RamTargetAccounts)
+    if ($targets.Count -eq 0) { $targets = @(Get-RamVisibleAccounts) }
+    elseif (-not (Confirm-RamHiddenSelection -Accounts $targets -What (Get-RamText -Text 'Запустить'))) { return }
+    if ($targets.Count -gt 0) { Add-RamToLaunchQueue -Accounts $targets }
 }
 
 # ----------------------------------------------------------- запуск ---------
@@ -1640,6 +1673,44 @@ function Invoke-RamTileWindows {
     Write-RamLog (Get-RamText -Text 'Окна разложены {0}: {1} шт.' -Arguments @([string]($($names[$tileMode])),[string]($($live.Count)))) 'ok'
 }
 
+function Update-RamInstanceWindowTitle {
+    param([Parameter(Mandatory)][string]$Id, [Parameter(Mandatory)]$Instance)
+    try {
+        if (-not $script:Instances.ContainsKey($Id) -or
+            -not [object]::ReferenceEquals($Instance, $script:Instances[$Id])) { return }
+        $handle = [IntPtr]$Instance.Handle
+        if ($handle -eq [IntPtr]::Zero -or -not (Test-RamWindowAlive -Handle $handle) -or
+            (Get-RamWindowProcessId -Handle $handle) -ne [int]$Instance.ProcessId) { return }
+        $account = Get-RamAccountById -Id $Id
+        if ($null -eq $account) { return }
+        $current = Get-RamWindowTitle -Handle $handle
+        if ([string]::IsNullOrEmpty($current)) { return }
+        $want = "Roblox — $($account.Alias)"
+        $state = $null
+        if ($Instance.PSObject.Properties.Name -contains 'WindowTitleState') { $state = $Instance.WindowTitleState }
+        if ($null -ne $state -and ($state.Handle -ne $handle -or $state.ProcessId -ne $Instance.ProcessId)) {
+            # Старый заголовок принадлежал другому окну: не восстанавливаем его здесь.
+            if (-not $script:Settings.RenameWindows) { return }
+            $state = $null
+        }
+        if ($script:Settings.RenameWindows) {
+            if ($null -eq $state) {
+                $state = [pscustomobject]@{Handle=$handle;ProcessId=$Instance.ProcessId;
+                    Original=$(if ($current -ceq $want) {'Roblox'} else {$current});Applied=$null}
+                $Instance | Add-Member -NotePropertyName WindowTitleState -NotePropertyValue $state -Force
+            } elseif (($state.Applied -and $current -cne $state.Applied) -or
+                      (-not $state.Applied -and $current -cne $state.Original)) { return }
+            if ($current -ceq $want -or (Set-RamWindowTitle -Handle $handle -Title $want)) { $state.Applied = $want }
+        } elseif ($null -ne $state) {
+            if ($state.Applied -and $current -ceq $state.Applied -and
+                (Set-RamWindowTitle -Handle $handle -Title $state.Original)) { $state.Applied = $null }
+        } elseif ($current -ceq $want) {
+            # Точная старая подпись AltHub, созданная до появления снимка оригинала.
+            [void](Set-RamWindowTitle -Handle $handle -Title 'Roblox')
+        }
+    } catch { return }
+}
+
 function Update-RamInstances {
     <# Ищем появившиеся окна, подписываем заголовки, убираем закрывшиеся. #>
     if ($script:UpdatingInstances) { return }
@@ -1685,15 +1756,7 @@ function Update-RamInstances {
             }
         }
 
-        if ($inst.Handle -ne [IntPtr]::Zero -and $script:Settings.RenameWindows) {
-            $a = Get-RamAccountById -Id $id
-            if ($null -ne $a) {
-                $want = "Roblox — $($a.Alias)"
-                if ([Ram.Native]::TitleOf($inst.Handle) -ne $want) {
-                    [void](Set-RamWindowTitle -Handle $inst.Handle -Title $want)
-                }
-            }
-        }
+        Update-RamInstanceWindowTitle -Id $id -Instance $inst
     }
 
     foreach ($id in $dead) {
@@ -1834,10 +1897,7 @@ function Update-RamFreshRobloxWindow {
             [void][Ram.Native]::ShowWindow($handle, 7) # SW_SHOWMINNOACTIVE
             $inst.MinimizeOnShow = $false
             $inst.WindowStateRecheckAt = (Get-Date).AddSeconds(2)
-            $a = Get-RamAccountById -Id $id
-            if ($null -ne $a -and $script:Settings.RenameWindows) {
-                [void](Set-RamWindowTitle -Handle $handle -Title ("Roblox — " + $a.Alias))
-            }
+            Update-RamInstanceWindowTitle -Id $id -Instance $inst
             Update-RamCardStates
         }
         # Не обходим рабочий стол по одному разу на каждый аккаунт за тик.
@@ -2173,7 +2233,7 @@ function Start-RamCookieCheckBatch {
         return
     }
     $queue = New-Object System.Collections.ArrayList
-    foreach ($a in $Accounts) { [void]$queue.Add([pscustomobject]@{ Account=$a; Attempts=0 }) }
+    foreach ($a in $Accounts) { [void]$queue.Add([pscustomobject]@{ Account=$a; Cookie=$null; Attempts=0 }) }
     $script:CookieCheckState = [pscustomobject]@{
         Queue=$queue; Job=$null; InfoJob=$null; Current=$null; Ok=0; Bad=0; Unknown=0
         Dead=(New-Object System.Collections.ArrayList)
@@ -2198,6 +2258,10 @@ function Invoke-RamCookieCheckPump {
         $info = Complete-RamAccountInfoAsync -Job $st.InfoJob
         $st.InfoJob = $null
         $a = $st.Current.Account
+        if (-not [object]::ReferenceEquals($a, (Get-RamAccountById -Id $a.Id)) -or [string]$a.Cookie -cne [string]$st.Current.Cookie) {
+            $st.Current=$null; $st.NextAt=(Get-Date).AddMilliseconds(350)
+            return
+        }
         if ($info.Robux -ge 0) { $a.Robux=$info.Robux }
         if ($info.Premium) { $a.Premium=$info.Premium }
         if ($info.Created) { $a.Created=$info.Created }
@@ -2217,7 +2281,8 @@ function Invoke-RamCookieCheckPump {
             $st.Current=$null; $st.NextAt=(Get-Date).AddMilliseconds(350)
             return
         }
-        $st.Job = Start-RamAuthCheckAsync -Cookie $st.Current.Account.Cookie
+        $st.Current.Cookie = [string]$st.Current.Account.Cookie
+        $st.Job = Start-RamAuthCheckAsync -Cookie $st.Current.Cookie
         return
     }
 
@@ -2226,6 +2291,11 @@ function Invoke-RamCookieCheckPump {
         $result = Complete-RamAuthCheckAsync -Job $st.Job
         $st.Job = $null
         $a = $st.Current.Account
+        # Результат старой куки не должен перечеркнуть повторный вход или Undo.
+        if (-not [object]::ReferenceEquals($a, (Get-RamAccountById -Id $a.Id)) -or [string]$a.Cookie -cne [string]$st.Current.Cookie) {
+            $st.Unknown++; $st.Current=$null; $st.NextAt=(Get-Date).AddMilliseconds(350)
+            return
+        }
         if ($result.State -eq 'valid') {
             $a.Username=$result.User.Name; $a.UserId=$result.User.Id
             $a.CookieOk='yes'; $a.CookieCheckedAt=(Get-Date).ToString('s'); $st.Ok++
@@ -2355,6 +2425,7 @@ function Invoke-RamStopSelected {
         Show-RamMessage -Kind 'warn' -Message (Get-RamText -Text 'Отметь галочками окна, которые нужно закрыть. AltHub не закрывает все аккаунты молча.')
         return
     }
+    if (-not (Confirm-RamHiddenSelection -Accounts $targets -What (Get-RamText -Text 'Закрыть'))) { return }
     $n = 0; $failed = 0; $notRunning = 0
     foreach ($a in $targets) {
         $inst = $script:Instances[$a.Id]

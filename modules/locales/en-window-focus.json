@@ -1,0 +1,8 @@
+[
+  {"Source":"Твинки","Translation":"Alts"},
+  {"Source":"  Твинки","Translation":"  Alts"},
+  {"Source":"Основной аккаунт","Translation":"Main account"},
+  {"Source":"Свернуть остальные окна, не трогая основной аккаунт; повторный клик — вернуть места","Translation":"Minimize other windows, leaving the main account untouched; click again to restore positions"},
+  {"Source":"Сначала выбери основной аккаунт: правый клик по «Окна» → «Основной аккаунт». Окна не изменены.","Translation":"First choose the main account: right-click Windows → Main account. No windows were changed."},
+  {"Source":"Не все окна удалось вернуть. Нажми «Твинки» ещё раз.","Translation":"Some windows could not be restored. Click Alts again."}
+]

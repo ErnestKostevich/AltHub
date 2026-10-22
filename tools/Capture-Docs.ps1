@@ -73,6 +73,7 @@ function Find-RamDocsButton {
 
 # Полностью искусственная витрина: ни одного настоящего имени или входа.
 $script:Settings = Get-RamDefaultSettings
+function Test-RamChromeForTestingReady { return $false } # documentation shows a fresh install
 $script:Settings.UiLanguage=$UiLanguage
 $script:Settings.OnClose = 'exit'
 $script:Settings.ConfirmOnExit = $false
@@ -128,6 +129,12 @@ foreach ($shot in @(
     Update-RamProfilesPanel
     Update-RamStatsPanel
     Save-RamDocsForm -Form $main -Name $shot.File
+    if ($shot.Key -eq 'water') {
+        $script:UI = @{}; $script:Cards = @{}
+        $narrowWater = New-RamMainForm
+        Build-RamCards
+        Save-RamDocsForm -Form $narrowWater -Name 'water-narrow.png' -ClientWidth (Get-RamScaled 850) -ClientHeight (Get-RamScaled 620)
+    }
     $script:UI = @{}; $script:Cards = @{}
     $scenarios = New-RamMainForm
     Build-RamCards
@@ -175,19 +182,21 @@ Save-RamDocsForm -Form $settingsForm -Name 'settings.png'
 # «Сохранить». Для второго кадра гарантируем допустимую задержку даже при
 # запуске генератора поверх настроек от очень старой версии.
 $script:Settings | Add-Member -NotePropertyName LaunchDelaySec -NotePropertyValue 3 -Force
-$appearance = Show-RamSettingsDialog -BuildOnly
-$appearance.ShowInTaskbar = $false
-$appearance.Show()
-[Windows.Forms.Application]::DoEvents()
-foreach ($c in $appearance.Controls) {
-    if ([string]$c.Name -like 'ramPage_*') {
-        $c.Visible = ([string]$c.Name -eq 'ramPage_look')
-    } elseif ($c.Tag -and $c.Tag.PSObject.Properties.Name -contains 'PageKey') {
-        Set-RamButtonKind -Button $c -Kind $(if ([string]$c.Tag.PageKey -eq 'look') { 'primary' } else { 'ghost' })
+foreach ($settingsShot in @(@{Page='look';File='themes.png'},@{Page='bridge';File='browser-login.png'})) {
+    $settingsShotForm = Show-RamSettingsDialog -BuildOnly
+    $settingsShotForm.ShowInTaskbar = $false
+    $settingsShotForm.Show()
+    [Windows.Forms.Application]::DoEvents()
+    foreach ($c in $settingsShotForm.Controls) {
+        if ([string]$c.Name -like 'ramPage_*') {
+            $c.Visible = ([string]$c.Name -eq ('ramPage_'+$settingsShot.Page))
+        } elseif ($c.Tag -and $c.Tag.PSObject.Properties.Name -contains 'PageKey') {
+            Set-RamButtonKind -Button $c -Kind $(if ([string]$c.Tag.PageKey -eq $settingsShot.Page) { 'primary' } else { 'ghost' })
+        }
     }
+    [Windows.Forms.Application]::DoEvents()
+    Save-RamDocsForm -Form $settingsShotForm -Name $settingsShot.File
 }
-[Windows.Forms.Application]::DoEvents()
-Save-RamDocsForm -Form $appearance -Name 'themes.png'
 
 Write-Host 'Скриншоты документации обновлены.' -ForegroundColor Green
 Copy-Item -LiteralPath (Join-Path $OutputDir 'menu-dashboard.png') -Destination (Join-Path $OutputDir 'screenshot-dark.png') -Force
