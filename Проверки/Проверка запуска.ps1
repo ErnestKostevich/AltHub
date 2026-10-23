@@ -29,6 +29,7 @@ param(
     # Папка со сборкой. По умолчанию — на уровень выше папки «Проверки».
     [string]$Path = (Split-Path -Parent $PSScriptRoot),
     [ValidateSet('ru','en')][string]$UiLanguage='ru',
+    [ValidateSet('classic','water','wide')][string]$MenuStyle='wide',
     # Не удалять временную копию после прогона (чтобы посмотреть журнал).
     [switch]$Keep,
     [switch]$NoPause
@@ -231,7 +232,7 @@ $seed = [pscustomobject]@{
     # первый раз. Без этого поля программа честно спрашивает «выбери меню»
     # (так встречают обновившихся с 1.3), главное окно ждёт ответа, и стенд
     # докладывал «окно так и не появилось» — хотя появилось окно вопроса.
-    MenuStyle             = 'wide'
+    MenuStyle             = $MenuStyle
     UiLanguage            = $UiLanguage
     SettingsSchemaVersion = 14
 }
@@ -301,14 +302,25 @@ Step 'Минус сворачивает окно, а не прячет его' {
 
 Step 'Второй запуск возвращает окно, а не открывает копию' {
     if ($null -eq $script:app) { throw 'пропущено: окна нет' }
-    # Считаем ОКНА, а не процессы. Процесс второй копии живёт несколько секунд,
-    # пока подгружает модули, и только потом понимает, что программа уже
-    # запущена, и уходит. Человека же волнует одно: не появилось ли второе окно.
+    # Иначе уже видимое окно давало ложный успех, пока дубликат ещё грузился.
+    $h = $script:app.Win.Handle
+    [void][RamCheck.Win]::PostMessageW($h, 0x0112, [IntPtr]0xF060, [IntPtr]::Zero)
+    $until = [datetime]::UtcNow.AddSeconds(10)
+    while ([RamCheck.Win]::IsWindowVisible($h) -and [datetime]::UtcNow -lt $until) { Start-Sleep -Milliseconds 100 }
+    if ([RamCheck.Win]::IsWindowVisible($h)) { throw 'перед повторным запуском крестик не скрыл окно' }
     Start-Process wscript.exe -ArgumentList $vbs
-    Start-Sleep -Seconds 14
+    $until = [datetime]::UtcNow.AddSeconds(30)
+    do {
+        $own = @(Get-RamOurProcesses -Before $before)
+        $duplicates = @($own | Where-Object {$_.Id -ne $script:app.Proc.Id})
+        $restored = [RamCheck.Win]::IsWindowVisible($h)
+        if ($restored -and $duplicates.Count -eq 0) { break }
+        Start-Sleep -Milliseconds 100
+    } while ([datetime]::UtcNow -lt $until)
+    if (-not $restored -or $duplicates.Count) { throw 'повторный запуск не вернул скрытое окно или его процесс ещё не завершился' }
 
     $windows = 0
-    foreach ($p in (Get-RamOurProcesses -Before $before)) {
+    foreach ($p in $own) {
         if ($null -ne (Get-RamAppWindow -ProcessId $p.Id)) { $windows++ }
     }
     if ($windows -gt 1) {

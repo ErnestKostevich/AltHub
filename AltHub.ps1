@@ -61,6 +61,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+$script:RamActivationStartedAt = [Diagnostics.Stopwatch]::GetTimestamp()
 
 # AltHub сам масштабирует метрики, поэтому процесс должен знать системный DPI
 # до создания первого WinForms-объекта.
@@ -650,24 +651,22 @@ AltHub не будет открывать пустой список и не пе
     # не появится. Рисование одноразовое: если файлы уже есть, ничего не делает.
     Invoke-RamSafe -What (Get-RamText -Text 'значки расширения') -Body { [void](Save-RamExtensionIcons) }
 
-    # Окно горячих клавиш нужно и для Ctrl+1..9, и для клавиши приёма из
-    # браузера, поэтому создаём его, если включено хоть что-то из двух.
-    if ($script:Settings.HotkeySwitch -or $script:Settings.BridgeEnabled) {
-        $cnt = Register-RamHotkeys -OnPressed {
-            param($sender, $e)
-            if ($e.Id -eq 20) {
-                Invoke-RamSafe -What (Get-RamText -Text 'приём входа из браузера') -Body { [void](Invoke-RamBrowserGrab) }
-            } else {
-                Invoke-RamFocusAccountByIndex -Index $e.Id
-            }
-        } -SkipSwitchKeys:(-not $script:Settings.HotkeySwitch)
+    # Этот приёмник также сериализует повторный запуск с крестиком окна.
+    # При выключенных сочетаниях он не занимает ни одной клавиши.
+    $cnt = Register-RamHotkeys -OnPressed {
+        param($sender, $e)
+        if ($e.Id -eq 20) {
+            Invoke-RamSafe -What (Get-RamText -Text 'приём входа из браузера') -Body { [void](Invoke-RamBrowserGrab) }
+        } else {
+            Invoke-RamFocusAccountByIndex -Index $e.Id
+        }
+    } -SkipSwitchKeys:(-not $script:Settings.HotkeySwitch)
 
-        if ($script:Settings.HotkeySwitch) {
-            if ($cnt -gt 0) {
-                Write-RamLog (Get-RamText -Text 'Горячие клавиши Ctrl+1..Ctrl+{0} переключают окна аккаунтов — работают и из игры.' -Arguments @([string]($cnt))) 'ok'
-            } else {
-                Write-RamLog (Get-RamText -Text 'Глобальные горячие клавиши занял кто-то другой — Ctrl+1..9 работать не будут.') 'warn'
-            }
+    if ($script:Settings.HotkeySwitch) {
+        if ($cnt -gt 0) {
+            Write-RamLog (Get-RamText -Text 'Горячие клавиши Ctrl+1..Ctrl+{0} переключают окна аккаунтов — работают и из игры.' -Arguments @([string]($cnt))) 'ok'
+        } else {
+            Write-RamLog (Get-RamText -Text 'Глобальные горячие клавиши занял кто-то другой — Ctrl+1..9 работать не будут.') 'warn'
         }
     }
 

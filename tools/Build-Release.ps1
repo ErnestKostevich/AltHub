@@ -58,6 +58,7 @@ try {
     foreach($required in @('modules\locales\en-close-fixes.json','Проверки\Проверка автораскладки.ps1','Проверки\Проверка закрытия аккаунтов.ps1')){
         if(-not(Test-Path -LiteralPath (Join-Path $stage $required))){throw "В staging нет $required"}
     }
+    if(-not(Test-Path -LiteralPath (Join-Path $stage 'Проверки\Проверка крестика.ps1'))){throw 'В staging нет проверки крестика'}
     $stamp = Join-Path $stage 'docs\screenshots-version.txt'
     foreach($required in @('modules\locales\en-final15.json','modules\locales\en-window-focus.json','Проверки\Проверка сохранности входов.ps1','Проверки\Проверка выхода из трея.ps1','Проверки\Проверка заголовков окон.ps1','Проверки\Проверка сворачивания твинков.ps1')){
         if(-not(Test-Path -LiteralPath (Join-Path $stage $required))){throw "В staging нет $required"}

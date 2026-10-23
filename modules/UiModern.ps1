@@ -979,9 +979,7 @@ function Register-RamMainFormRuntime {
             $e.CloseReason -eq [System.Windows.Forms.CloseReason]::UserClosing) {
             if (Confirm-RamTrayVisible) {
                 $e.Cancel = $true
-                Invoke-RamSafe -What (Get-RamText -Text 'запоминание размера окна') -Body { Save-RamMainWindowGeometry -Form $sender }
-                $sender.Hide()
-                Show-RamTrayHint
+                Hide-RamMainWindow -Form $sender
                 return
             }
         }

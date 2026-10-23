@@ -3294,6 +3294,13 @@ Check 'Явный выход из трея не превращается в ск
     'Три меню: крестик, Выход, отмена, подтверждение, пересборка и перезапуск'
 }
 
+Check 'Крестик побеждает устаревший повторный запуск, но не новый' {
+    $runner=Join-Path $PSScriptRoot 'Проверка крестика.ps1'
+    $output=@(& powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File $runner -NoPause 2>&1)
+    if($LASTEXITCODE -ne 0 -or @($output | Where-Object {[string]$_ -like 'PASS:*'}).Count -ne 41){throw ($output -join ' | ')}
+    '41 сценарий: UI-сообщения, порядок запросов, три меню, Maximized, Exit/Cancel, изоляция и отказ приёмника'
+}
+
 Check 'Отключение подписи возвращает заголовки окон без перезапуска клиента' {
     $output=@(& powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'Проверка заголовков окон.ps1') -NoPause 2>&1)
     if($LASTEXITCODE -ne 0 -or @($output | Where-Object {[string]$_ -like 'PASS:*'}).Count -ne 7){throw ($output -join ' | ')}

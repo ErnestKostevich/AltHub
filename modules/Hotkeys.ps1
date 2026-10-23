@@ -23,6 +23,7 @@
 if (-not ('Ram.HotkeyWindow' -as [type])) {
 @'
 using System;
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
 
@@ -31,6 +32,11 @@ namespace Ram {
     public class HotkeyEventArgs : EventArgs {
         public int Id;
         public HotkeyEventArgs(int id) { Id = id; }
+    }
+
+    public class ActivationEventArgs : EventArgs {
+        public long Timestamp;
+        public ActivationEventArgs(long timestamp) { Timestamp = timestamp; }
     }
 
     // Невидимое окно, которому Windows шлёт WM_HOTKEY.
@@ -43,11 +49,56 @@ namespace Ram {
         private static extern bool UnregisterHotKey(IntPtr hWnd, int id);
 
         private const int WM_HOTKEY = 0x0312;
+        private const string ActivationMarker = "AltHub.Activation.Receiver.v1";
+        private static readonly uint ActivationMessage = RegisterWindowMessage("AltHub.Activate.v1");
+
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+        private static extern uint RegisterWindowMessage(string name);
+        [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        private static extern bool SetProp(IntPtr window, string name, IntPtr value);
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+        private static extern IntPtr GetProp(IntPtr window, string name);
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+        private static extern IntPtr RemoveProp(IntPtr window, string name);
+        [DllImport("user32.dll")]
+        private static extern uint GetWindowThreadProcessId(IntPtr window, out uint processId);
+        [DllImport("user32.dll", SetLastError = true)]
+        private static extern bool PostMessage(IntPtr window, uint message, IntPtr low, IntPtr high);
+        [DllImport("user32.dll")]
+        private static extern bool AllowSetForegroundWindow(uint processId);
 
         public event EventHandler<HotkeyEventArgs> Pressed;
+        public event EventHandler<ActivationEventArgs> ActivationRequested;
 
         public HotkeyWindow() {
             CreateHandle(new CreateParams());
+            if (ActivationMessage == 0) {
+                DestroyHandle();
+                throw new System.ComponentModel.Win32Exception();
+            }
+        }
+
+        public void EnableActivation() {
+            if (!SetProp(Handle, ActivationMarker, new IntPtr(Process.GetCurrentProcess().Id))) {
+                throw new System.ComponentModel.Win32Exception();
+            }
+        }
+
+        public static bool IsActivationWindow(IntPtr window) {
+            uint processId;
+            GetWindowThreadProcessId(window, out processId);
+            return processId != 0 && GetProp(window, ActivationMarker).ToInt64() == processId;
+        }
+
+        public static bool RequestShow(IntPtr window, long timestamp) {
+            if (timestamp <= 0 || !IsActivationWindow(window)) { return false; }
+            uint processId;
+            GetWindowThreadProcessId(window, out processId);
+            AllowSetForegroundWindow(processId);
+            // Two fixed-width words work across both 32-bit and 64-bit processes.
+            return PostMessage(window, ActivationMessage,
+                new IntPtr(unchecked((int)(uint)timestamp)),
+                new IntPtr(unchecked((int)(uint)((ulong)timestamp >> 32))));
         }
 
         public bool Register(int id, uint modifiers, uint virtualKey) {
@@ -59,6 +110,14 @@ namespace Ram {
         }
 
         protected override void WndProc(ref Message m) {
+            if ((uint)m.Msg == ActivationMessage) {
+                long timestamp = unchecked((long)(((ulong)(uint)m.LParam.ToInt64() << 32) | (uint)m.WParam.ToInt64()));
+                if (timestamp > 0 && timestamp <= Stopwatch.GetTimestamp()) {
+                    EventHandler<ActivationEventArgs> h = ActivationRequested;
+                    if (h != null) { h(this, new ActivationEventArgs(timestamp)); }
+                }
+                return;
+            }
             if (m.Msg == WM_HOTKEY) {
                 EventHandler<HotkeyEventArgs> h = Pressed;
                 if (h != null) { h(this, new HotkeyEventArgs(m.WParam.ToInt32())); }
@@ -67,6 +126,7 @@ namespace Ram {
         }
 
         public void Dispose() {
+            RemoveProp(Handle, ActivationMarker);
             DestroyHandle();
         }
     }
@@ -86,6 +146,10 @@ namespace Ram {
 
 $Global:RamHotkeyWindow = $null
 $Global:RamHotkeyIds    = @()
+$script:RamLastMainHideAt = 0L
+$script:RamLastMainShowAt = 0L
+$script:RamMainHideInProgress = $false
+$script:RamPendingMainShowAt = 0L
 
 function Register-RamHotkeys {
     <#
@@ -107,12 +171,18 @@ function Register-RamHotkeys {
 
     try {
         $Global:RamHotkeyWindow = New-Object Ram.HotkeyWindow
+        if (-not $script:ReadOnly) { $Global:RamHotkeyWindow.EnableActivation() }
     } catch {
+        if ($null -ne $Global:RamHotkeyWindow) { $Global:RamHotkeyWindow.Dispose() }
         $Global:RamHotkeyWindow = $null
-        return 0
+        throw
     }
 
     $Global:RamHotkeyWindow.Add_Pressed($OnPressed)
+    $Global:RamHotkeyWindow.Add_ActivationRequested({
+        param($sender, $e)
+        Invoke-RamSafe -What 'AltHub' -Body { Show-RamMainWindow -RequestedAt $e.Timestamp }
+    })
 
     $MOD_CONTROL = 0x0002
     $ok = 0
@@ -288,7 +358,9 @@ function Test-RamAlreadyRunning {
 }
 
 function Show-RamRunningInstance {
-    <# Поднимает окно уже запущенной копии: ищем его по заголовку и классу. #>
+    <# Не управляем чужой формой напрямую: один запрос в её UI-поток. #>
+    param([long]$RequestedAt = $script:RamActivationStartedAt)
+    if ($RequestedAt -le 0) { $RequestedAt = [Diagnostics.Stopwatch]::GetTimestamp() }
     $me = $PID
     $script:RamFoundRunningWindow = $false
     $cb = [Ram.Native+EnumWindowsProc]{
@@ -296,13 +368,8 @@ function Show-RamRunningInstance {
         $q = 0
         [void][Ram.Native]::GetWindowThreadProcessId($h, [ref]$q)
         if ($q -ne $me) {
-            $title = [Ram.Native]::TitleOf($h)
-            $cls   = [Ram.Native]::ClassOf($h)
-            if ($title -eq 'AltHub' -and $cls -like 'WindowsForms*') {
-                [void][Ram.Native]::ShowWindow($h, 9)   # SW_RESTORE
-                [void][Ram.Native]::ShowWindow($h, 1)   # SW_SHOWNORMAL
-                [void][Ram.Native]::SetForegroundWindow($h)
-                $script:RamFoundRunningWindow = $true
+            if ([Ram.HotkeyWindow]::IsActivationWindow($h)) {
+                $script:RamFoundRunningWindow = [Ram.HotkeyWindow]::RequestShow($h, $RequestedAt)
                 return $false
             }
         }

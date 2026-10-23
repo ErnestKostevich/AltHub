@@ -1176,14 +1176,43 @@ function Save-RamMainWindowGeometry {
 function Show-RamMainWindow {
     <# Вернуть главное окно из часов. Одно место на все способы: значок,
        его меню, повторный запуск программы. #>
+    param([long]$RequestedAt = 0)
+    $now = [Diagnostics.Stopwatch]::GetTimestamp()
+    if ($RequestedAt -eq 0) { $RequestedAt = $now }
+    if ($RequestedAt -le $script:RamLastMainHideAt -or $RequestedAt -le $script:RamLastMainShowAt -or $RequestedAt -gt $now) { return }
+    if ($script:RamMainHideInProgress) {
+        $script:RamPendingMainShowAt = [Math]::Max($script:RamPendingMainShowAt, $RequestedAt)
+        return
+    }
     $f = $script:UI.Form
-    if ($null -eq $f) { return }
+    if ($null -eq $f -or $f.IsDisposed) { return }
+    $script:RamLastMainShowAt = $RequestedAt
     try {
         $f.Show()
-        if ($f.WindowState -eq 'Minimized') { $f.WindowState = 'Normal' }
-        [void]$f.Activate()
-        $f.BringToFront()
+        if ($RequestedAt -gt $script:RamLastMainHideAt -and $f.WindowState -eq 'Minimized') { $f.WindowState = 'Normal' }
+        if ($RequestedAt -gt $script:RamLastMainHideAt) {
+            [void]$f.Activate()
+            $f.BringToFront()
+        }
+        if ($RequestedAt -le $script:RamLastMainHideAt) { $f.Hide() }
     } catch { }
+}
+
+function Hide-RamMainWindow {
+    param([Parameter(Mandatory)]$Form)
+    $script:RamLastMainHideAt = [Diagnostics.Stopwatch]::GetTimestamp()
+    if ($script:RamMainHideInProgress) { return }
+    $script:RamMainHideInProgress = $true
+    try {
+        Invoke-RamSafe -What (Get-RamText -Text 'запоминание размера окна') -Body { Save-RamMainWindowGeometry -Form $Form }
+        $Form.Hide()
+        Show-RamTrayHint
+    } finally {
+        $script:RamMainHideInProgress = $false
+        $pending = $script:RamPendingMainShowAt
+        $script:RamPendingMainShowAt = 0L
+        if ($pending -gt $script:RamLastMainHideAt) { Show-RamMainWindow -RequestedAt $pending }
+    }
 }
 
 function Confirm-RamTrayVisible {
@@ -3547,9 +3576,7 @@ function New-RamMainFormWater {
 
             if (Confirm-RamTrayVisible) {
                 $e.Cancel = $true
-                Invoke-RamSafe -What (Get-RamText -Text 'запоминание размера окна') -Body { Save-RamMainWindowGeometry -Form $sender }
-                $sender.Hide()
-                Show-RamTrayHint
+                Hide-RamMainWindow -Form $sender
                 return
             }
             # Не подтвердил — крестик закрывает, как раньше. Настройка уже
