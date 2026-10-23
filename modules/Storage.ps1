@@ -438,7 +438,7 @@ function Get-RamDefaultSettings {
         AutoRestart     = $false # поднимать аккаунт заново, если клиент вылетел
         AutoRestartMax  = 3      # сколько раз подряд пытаться
         RenameWindows   = $true  # писать имя аккаунта в заголовок окна
-        AutoTile        = $true  # раскладывать окна сеткой после запуска
+        AutoTile        = $false # автораскладка только по явному выбору пользователя
         TileColumns     = 0      # 0 = подобрать автоматически
         TileMargin      = 4
         KeepMutex       = $true  # держать мьютекс мультизапуска

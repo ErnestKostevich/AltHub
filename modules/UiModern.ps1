@@ -1082,29 +1082,19 @@ function Invoke-RamCardEdit {
 
 function Invoke-RamCardStop {
     param([string]$Id)
-    $inst = $script:Instances[$Id]
     $acc  = Get-RamAccountById -Id $Id
-    if ($null -eq $inst) {
-        Set-RamStatus ((Get-RamText -Text 'Окно «{0}» сейчас не запущено — закрывать нечего.') -f $acc.Alias)
-        return
-    }
-    # Закрытие руками — не вылет: счётчик вылетов не трогаем.
-    $inst | Add-Member -NotePropertyName ClosedByUser -NotePropertyValue $true -Force
-    if ($null -eq $script:Stopping) { $script:Stopping = @{} }
-    $script:Stopping[$Id] = $true
-    Update-RamCardStates
-    try {
-        if (Stop-RamRobloxInstance -ProcessId $inst.ProcessId) {
-            $script:Instances.Remove($Id)
+    switch (Stop-RamAccountLaunch -Id $Id) {
+        'closed' {
             Write-RamLog (Get-RamText -Text '''{0}'' закрыт.' -Arguments @([string]($($acc.Alias)))) 'ok'
-        } else {
+        }
+        'failed' {
             Write-RamLog (Get-RamText -Text 'Не удалось закрыть ''{0}'' — окно остаётся под контролем менеджера.' -Arguments @([string]($($acc.Alias)))) 'warn'
             Show-RamMessage -Kind 'warn' -Message ((Get-RamText -Text 'Окно «{0}» закрыть не вышло. Оно по-прежнему под присмотром AltHub — попробуй ещё раз или закрой его вручную.' -Arguments @([string]($($acc.Alias)))))
         }
-    } finally {
-        $script:Stopping.Remove($Id)
-        Update-RamCardStates
+        'cancelled' { Set-RamStatus (Get-RamText -Text 'Отменено запусков: {0}.' -Arguments @('1')) }
+        default { Set-RamStatus ((Get-RamText -Text 'Окно «{0}» сейчас не запущено — закрывать нечего.') -f $acc.Alias) }
     }
+    Update-RamCardStates
 }
 
 function Get-RamCardAtScreenPoint {

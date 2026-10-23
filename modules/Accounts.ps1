@@ -918,6 +918,7 @@ function Add-RamToLaunchQueue {
     $Accounts = @($Accounts | Where-Object {
         $null -ne $_ -and -not $script:Instances.ContainsKey([string]$_.Id) -and
         $script:LaunchQueue -notcontains [string]$_.Id -and
+        $script:LaunchingAccountId -ne [string]$_.Id -and
         (-not $Unattended -or -not $script:LaunchSuppressedIds.ContainsKey([string]$_.Id))
     })
     if ($Accounts.Count -eq 0) {
@@ -1064,7 +1065,7 @@ function Add-RamToLaunchQueue {
             Write-RamLog (Get-RamText -Text 'Пропуск ''{0}'': уже запущен.' -Arguments @([string]($($a.Alias)))) 'warn'
             continue
         }
-        if ($script:LaunchQueue -contains $a.Id) { continue }
+        if ($script:LaunchQueue -contains $a.Id -or $script:LaunchingAccountId -eq [string]$a.Id) { continue }
         [void]$script:LaunchQueue.Add($a.Id)
         [void]$addedIds.Add([string]$a.Id)
         if (-not $Unattended) { $script:LaunchSuppressedIds.Remove([string]$a.Id) }
@@ -1122,6 +1123,10 @@ function Remove-RamQueuedAccount {
 function Stop-RamLaunchQueue {
     $count = $script:LaunchQueue.Count
     foreach ($id in @($script:LaunchQueue)) { $script:LaunchSuppressedIds[[string]$id] = $true }
+    if ($script:LaunchingAccountId) {
+        if ($script:LaunchQueue -notcontains $script:LaunchingAccountId) { $count++ }
+        $script:LaunchSuppressedIds[[string]$script:LaunchingAccountId] = $true
+    }
     $script:LaunchQueue.Clear()
     $script:LaunchTries = @{}
     $script:LaunchFailed = @{}
@@ -1448,6 +1453,8 @@ function Invoke-RamNextLaunch {
 
     $a = Get-RamAccountById -Id $id
     if ($null -eq $a) { return }
+    if ($script:LaunchSuppressedIds.ContainsKey([string]$id)) { return }
+    $script:LaunchingAccountId = [string]$id
 
     $tries = 0
     if ($script:LaunchTries.ContainsKey($id)) { $tries = [int]$script:LaunchTries[$id] }
@@ -1481,8 +1488,16 @@ function Invoke-RamNextLaunch {
             throw "Настройки клиента для '$($a.Alias)' не применились: $settingsError Запуск отменён, чтобы не открыть аккаунт с неверной графикой или звуком."
         }
 
+        if ($script:LaunchSuppressedIds.ContainsKey([string]$id)) {
+            Restore-RamOwnClientSettings -Reason (Get-RamText -Text 'запуск не состоялся')
+            return
+        }
         $proc = Start-RamRobloxInstance -Account $a -PlayerPath $script:PlayerPath -Locale $script:Settings.Locale `
                                         -Minimized:([bool]$script:Settings.LaunchMinimized)
+        if ($null -eq $proc -and $script:LaunchSuppressedIds.ContainsKey([string]$id)) {
+            Restore-RamOwnClientSettings -Reason (Get-RamText -Text 'запуск не состоялся')
+            return
+        }
         $script:LastLaunchAt = Get-Date
 
         $script:Instances[$a.Id] = [pscustomobject]@{
@@ -1493,21 +1508,26 @@ function Invoke-RamNextLaunch {
             DesiredFullscreen = [string]$a.Fullscreen
             WindowStateRecheckAt = [datetime]::MinValue
         }
+        Set-RamSettingsWait -Launched $a
+        if ($script:LaunchSuppressedIds.ContainsKey([string]$id)) {
+            [void](Stop-RamAccountLaunch -Id $id)
+            return
+        }
         $a.LastUsed    = (Get-Date).ToString('s')
         $a.LaunchCount = [int]$a.LaunchCount + 1
         $script:RestartCount[$a.Id] = 0
         Write-RamLog (Get-RamText -Text '''{0}'' стартовал (PID {1}).' -Arguments @([string]($($a.Alias)),[string]($($proc.Id)))) 'ok'
 
-        Set-RamSettingsWait -Launched $a
     } catch {
         $err = $_
         $msg = $err.Exception.Message
-        Write-RamLog "'$($a.Alias)': $msg" 'err'
 
         # Запуск сорвался, а настройки графики мы в общий файл уже записали.
         # Оставлять их нельзя: откроешь Roblox вручную — и получишь графику
         # твина вместо своей.
         Restore-RamOwnClientSettings -Reason (Get-RamText -Text 'запуск не состоялся')
+        if ($script:LaunchSuppressedIds.ContainsKey([string]$id)) { return }
+        Write-RamLog "'$($a.Alias)': $msg" 'err'
 
         # «Слишком часто» — это не отказ, а просьба подождать. Возвращаем
         # аккаунт в НАЧАЛО очереди и просто сдвигаем время следующей попытки.
@@ -1530,6 +1550,7 @@ function Invoke-RamNextLaunch {
         # повторим запуск. Спрашивать в середине пачки запусков некогда.
         if ($msg -match 'недействительна|протухла') {
             if (Invoke-RamRepairCookie -Account $a -Quiet) {
+                if ($script:LaunchSuppressedIds.ContainsKey([string]$id)) { return }
                 Write-RamLog (Get-RamText -Text '''{0}'': вход починен, пробую запустить снова.' -Arguments @([string]($($a.Alias)))) 'ok'
                 [void]$script:LaunchQueue.Insert(0, $a.Id)
                 $script:NextLaunchTime = (Get-Date).AddSeconds([int]$script:Settings.LaunchDelaySec)
@@ -1551,7 +1572,7 @@ function Invoke-RamNextLaunch {
 
     $script:NextLaunchTime = (Get-Date).AddSeconds([int]$script:Settings.LaunchDelaySec)
     Update-RamCardStates
-    } finally { $script:LaunchTickActive = $false }
+    } finally { $script:LaunchingAccountId = ''; $script:LaunchTickActive = $false; Update-RamCardStates }
 }
 
 function Invoke-RamPendingTile {
@@ -1564,6 +1585,10 @@ function Invoke-RamPendingTile {
       и держать из-за него остальных незачем.
     #>
     if ($script:PendingTileUntil -eq [datetime]::MinValue) { return }
+    if (-not $script:Settings.AutoTile) {
+        $script:PendingTileUntil = [datetime]::MinValue
+        return
+    }
 
     $total = $script:Instances.Count
     if ($total -eq 0) {
@@ -1817,7 +1842,7 @@ function Update-RamInstances {
             $script:SingletonKills = 0
         }
 
-        if (-not $script:Settings.AutoRestart) { continue }
+        if ($byUser -or $script:LaunchSuppressedIds.ContainsKey([string]$id) -or -not $script:Settings.AutoRestart) { continue }
 
         # Окно, прожившее меньше 20 секунд, скорее всего не «вылетело», а не
         # смогло стартовать — гонять его по кругу бессмысленно.
@@ -2418,6 +2443,27 @@ function Complete-RamCookieCheckBatch {
     }
 }
 
+function Stop-RamAccountLaunch {
+    param([Parameter(Mandatory)][string]$Id)
+    $script:LaunchSuppressedIds[$Id] = $true
+    $queued = ($script:LaunchQueue -contains $Id -or $script:LaunchingAccountId -eq $Id)
+    while ($script:LaunchQueue -contains $Id) { $script:LaunchQueue.Remove($Id) }
+    $script:LaunchTries.Remove($Id)
+    $script:LaunchFailed.Remove($Id)
+    $script:LastLaunchFailures.Remove($Id)
+    if ($script:LaunchQueue.Count -eq 0) { $script:LaunchPaused = $false }
+    $inst = $script:Instances[$Id]
+    if ($null -eq $inst) { if ($queued) { return 'cancelled' }; return 'idle' }
+    $inst | Add-Member -NotePropertyName ClosedByUser -NotePropertyValue $true -Force
+    if ($null -eq $script:Stopping) { $script:Stopping = @{} }
+    $script:Stopping[$Id] = $true
+    Update-RamCardStates
+    try {
+        if (Stop-RamRobloxInstance -ProcessId $inst.ProcessId) { return 'closed' }
+        return 'failed'
+    } finally { $script:Stopping.Remove($Id); Update-RamCardStates }
+}
+
 function Invoke-RamStopSelected {
     <# Закрыть окна отмеченных аккаунтов. #>
     $targets = @(Get-RamTargetAccounts)
@@ -2426,24 +2472,29 @@ function Invoke-RamStopSelected {
         return
     }
     if (-not (Confirm-RamHiddenSelection -Accounts $targets -What (Get-RamText -Text 'Закрыть'))) { return }
-    $n = 0; $failed = 0; $notRunning = 0
+    foreach ($a in $targets) { $script:LaunchSuppressedIds[[string]$a.Id] = $true }
+    $n = 0; $failed = 0; $notRunning = 0; $cancelled = 0
     foreach ($a in $targets) {
-        $inst = $script:Instances[$a.Id]
-        if ($null -eq $inst) { $notRunning++; continue }
-        # Закрытие руками — не вылет, счётчик вылетов не трогаем.
-        $inst | Add-Member -NotePropertyName ClosedByUser -NotePropertyValue $true -Force
-        if (Stop-RamRobloxInstance -ProcessId $inst.ProcessId) { $n++ } else { $failed++ }
+        switch (Stop-RamAccountLaunch -Id $a.Id) {
+            'closed' { $n++ }
+            'failed' { $failed++ }
+            'cancelled' { $cancelled++ }
+            default { $notRunning++ }
+        }
     }
     Write-RamLog (Get-RamText -Text 'Закрыто клиентов: {0}; не удалось: {1}; не были запущены: {2}.' -Arguments @([string]($n),[string]($failed),[string]($notRunning))) $(if($failed){'warn'}else{'ok'})
     Update-RamCardStates
 
     # Отсутствие работы — тоже ответ. Раньше при нечего-закрывать кнопка
     # молчала, и это было неотличимо от поломки.
+    if ($cancelled -gt 0) {
+        Set-RamStatus (Get-RamText -Text 'Отменено запусков: {0}.' -Arguments @([string]$cancelled))
+    }
     if ($n -gt 0) {
         Set-RamStatus ((Get-RamText -Text 'Закрыто окон: {0}') -f $n)
     } elseif ($failed -gt 0) {
         Show-RamMessage -Kind 'warn' -Message (Get-RamText -Text 'Не удалось закрыть окон: {0}. Они остаются под контролем AltHub; попробуй ещё раз или закрой их вручную.' -Arguments @([string]($failed)))
-    } else {
+    } elseif ($cancelled -eq 0) {
         Show-RamMessage -Message (Get-RamText -Text 'Закрывать нечего: сейчас ни одно окно Roblox не запущено через AltHub.')
     }
 }
@@ -2659,6 +2710,7 @@ function Invoke-RamWatchCheck {
     foreach ($a in $targets) {
         if ($script:Instances.ContainsKey($a.Id)) { continue }
         if ($script:LaunchQueue -contains $a.Id)  { continue }
+        if ($script:LaunchSuppressedIds.ContainsKey([string]$a.Id)) { continue }
         $missing += $a
     }
     if ($missing.Count -eq 0) { return }

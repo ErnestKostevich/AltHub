@@ -22,7 +22,7 @@
 ================================================================================
 #>
 
-param([string]$Only = '')
+param([string]$Only = '', [switch]$NoPause)
 
 $ErrorActionPreference = 'Stop'
 # Скрипт лежит в папке «Проверки», программа — на уровень выше.
@@ -982,7 +982,9 @@ Check 'Графика не перетирается соседним запус�
 Check 'Раскладка ждёт появления окон' {
     $keepInst = $script:Instances
     $keepTile = $script:PendingTileUntil
+    $keepAutoTile = $script:Settings.AutoTile
     try {
+        $script:Settings.AutoTile = $true
         # Режим «основной крупно» обязан доживать до раскладки: его ставит
         # «Быстрая настройка», а раньше он молча подменялся сеткой.
         $src = Get-RamAllSource
@@ -1023,6 +1025,7 @@ Check 'Раскладка ждёт появления окон' {
     } finally {
         $script:Instances        = $keepInst
         $script:PendingTileUntil = $keepTile
+        $script:Settings.AutoTile = $keepAutoTile
     }
     'раскладка ждёт окна, не висит по таймауту, режим «основной крупно» доживает'
 }
@@ -3089,7 +3092,11 @@ Check 'Центр запуска управляет только очередь�
             try {
                 Build-RamCards
                 if($script:Cards[$a.Id].Play.Tag.PrimaryMode -ne 'show' -or $script:Cards[$b.Id].Play.Tag.PrimaryMode -ne 'paused'){throw "$($style.Title): кнопки не отражают состояние сеанса"}
-                if(-not $script:Cards[$a.Id].Stop.Enabled -or $script:Cards[$b.Id].Stop.Enabled){throw "$($style.Title): закрытие доступно для незапущенного аккаунта"}
+                if(-not $script:Cards[$a.Id].Stop.Enabled -or -not $script:Cards[$b.Id].Stop.Enabled){throw "$($style.Title): закрытие недоступно для рабочего окна или ожидающего запуска"}
+                $script:LaunchQueue.Remove($b.Id)
+                Update-RamCardStates
+                if($script:Cards[$b.Id].Stop.Enabled){throw "$($style.Title): закрытие доступно для аккаунта без окна и ожидающего запуска"}
+                [void]$script:LaunchQueue.Add($b.Id)
             } finally { Dispose-RamFormRuntime; $form.Dispose() }
         }
     } finally {
@@ -3216,6 +3223,20 @@ Check 'Русский и английский сохраняются и рабо
     '6 групп: JSON, переводы, CRLF, три меню и диалоги на четырёх DPI, Save/Cancel RU ↔ EN без изменения аккаунтов и очереди'
 }
 
+Check 'Автораскладка включается только явно и отменяется вместе с настройкой' {
+    $runner=Join-Path $PSScriptRoot 'Проверка автораскладки.ps1'
+    $output=@(& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $runner -NoPause 2>&1)
+    if($LASTEXITCODE -ne 0 -or @($output | Where-Object {[string]$_ -like 'PASS:*'}).Count -ne 7){throw ($output -join ' | ')}
+    '7 изолированных сценариев: безопасное умолчание, старые настройки, явный выбор, отмена ожидания и раскладка по согласию'
+}
+
+Check 'Закрытие отменяет запуск и не возвращает аккаунт автоматикой' {
+    $runner=Join-Path $PSScriptRoot 'Проверка закрытия аккаунтов.ps1'
+    $output=@(& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $runner -NoPause 2>&1)
+    if($LASTEXITCODE -ne 0 -or @($output | Where-Object {[string]$_ -like 'PASS:*'}).Count -ne 16){throw ($output -join ' | ')}
+    '16 групп: очередь, запуск без окна, отмена подготовки, поздний процесс, автоперезапуск, присмотр и кнопки трёх меню'
+}
+
 Check 'Отказ браузерного входа не считается кукой и не ломает импорт' {
     $runner=Join-Path $PSScriptRoot 'Проверка отказа входа.ps1'
     $output=@(& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $runner -NoPause 2>&1)
@@ -3231,8 +3252,8 @@ Check 'Язык новой установки выбирается по язык
 
 Check 'Браузерный протокол ограничен локальным соединением и Roblox' {
     $output=@(& powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'Проверка протокола браузера.ps1') -NoPause 2>&1)
-    if($LASTEXITCODE -ne 0 -or @($output | Where-Object {[string]$_ -like 'PASS:*'}).Count -ne 12){throw ($output -join ' | ')}
-    '12 групп: WebSocket, границы адресов/размера/времени, app-bootstrap, старый вход и точечная очистка'
+    if($LASTEXITCODE -ne 0 -or @($output | Where-Object {[string]$_ -like 'PASS:*'}).Count -ne 14){throw ($output -join ' | ')}
+    '14 групп: WebSocket, границы адресов/размера/времени, app-bootstrap, точные домены куки и проверка очистки до навигации'
 }
 
 Check 'Кнопки H2O перестраиваются в два ряда на узкой карточке' {
@@ -3313,5 +3334,8 @@ if ($passed -eq $total) {
     Write-Host "Пройдено $passed из $total — есть проблемы, смотри красное выше." -ForegroundColor Yellow
 }
 Write-Host ''
-Write-Host 'Нажми Enter, чтобы закрыть.' -ForegroundColor DarkGray
-[void](Read-Host)
+if (-not $NoPause) {
+    Write-Host 'Нажми Enter, чтобы закрыть.' -ForegroundColor DarkGray
+    [void](Read-Host)
+}
+if ($passed -ne $total) { exit 1 }

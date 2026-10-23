@@ -30,7 +30,8 @@ param(
     [string]$Path = (Split-Path -Parent $PSScriptRoot),
     [ValidateSet('ru','en')][string]$UiLanguage='ru',
     # Не удалять временную копию после прогона (чтобы посмотреть журнал).
-    [switch]$Keep
+    [switch]$Keep,
+    [switch]$NoPause
 )
 
 $ErrorActionPreference = 'Stop'
@@ -192,14 +193,14 @@ if ($busy) {
     Write-Host '  Закрой AltHub и запусти проверку заново.' -ForegroundColor Yellow
     Write-Host ''
     Write-Host 'Нажми Enter, чтобы закрыть.' -ForegroundColor DarkGray
-    [void](Read-Host)
-    return
+    if (-not $NoPause) { [void](Read-Host) }
+    exit 1
 }
 
 $src = (Resolve-Path $Path).Path
 if (-not (Test-Path -LiteralPath (Join-Path $src 'AltHub.ps1'))) {
     Write-Host "  В папке нет AltHub.ps1: $src" -ForegroundColor Red
-    Read-Host 'Enter — выход'; exit 1
+    if (-not $NoPause) { [void](Read-Host 'Enter — выход') }; exit 1
 }
 
 # Работаем во временной копии: настоящие данные не трогаем.
@@ -317,7 +318,8 @@ Step 'Второй запуск возвращает окно, а не откр�
     if (-not [RamCheck.Win]::IsWindowVisible($script:app.Win.Handle)) {
         throw 'повторный запуск не вернул окно'
     }
-    'копия не появилась, окно на месте'
+    $remaining = @(Get-RamOurProcesses -Before $before | ForEach-Object {$_.Id})
+    'копия не появилась, окно на месте; процессы этого прогона: ' + ($remaining -join ', ')
 }
 
 Step 'Крестик не оставляет программу без следа' {
@@ -343,7 +345,9 @@ Step 'Крестик не оставляет программу без след�
     if ($alive -and -not $winVis) {
         return 'крестик убрал в часы: процесс жив, окно скрыто, вернуть можно значком или повторным запуском'
     }
-    throw 'после крестика окно осталось на экране — ни закрылось, ни ушло в часы'
+    $ownedWindows = @(Get-RamWindowsOf -ProcessId $script:app.Proc.Id | Where-Object {$_.Visible} | ForEach-Object {"$($_.Title) [$($_.Class)]"})
+    $remaining = @(Get-RamOurProcesses -Before $before | ForEach-Object {$_.Id})
+    throw ('после крестика окно осталось на экране — ни закрылось, ни ушло в часы. Видимые окна процесса: ' + ($ownedWindows -join '; ') + '. Процессы этого прогона: ' + ($remaining -join ', '))
 }
 
 # --------------------------------------------------------------- уборка -----
@@ -367,4 +371,6 @@ if ($script:passed -eq $script:total) {
     Write-Host ("Пройдено {0} из {1} — есть проблемы, смотри красное выше." -f $script:passed, $script:total) -ForegroundColor Red
 }
 Write-Host ''
-Read-Host 'Enter — закрыть'
+if (-not $NoPause) { [void](Read-Host 'Enter — закрыть') }
+if ($script:passed -ne $script:total) { exit 1 }
+exit 0

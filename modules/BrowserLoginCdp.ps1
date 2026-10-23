@@ -54,7 +54,8 @@ function Invoke-RamLoginCdpCommand {
     param(
         [ValidateRange(1,65535)][int]$Port,
         [string]$Target,
-        [ValidateSet('Network.getCookies','Network.deleteCookies','Page.navigate')][string]$Method
+        [ValidateSet('Network.getCookies','Network.deleteCookies','Page.navigate')][string]$Method,
+        [ValidateSet('.roblox.com','roblox.com','www.roblox.com')][string]$CookieDomain = '.roblox.com'
     )
     $uri = $null
     if (-not [uri]::TryCreate($Target,[UriKind]::Absolute,[ref]$uri) -or
@@ -72,7 +73,7 @@ function Invoke-RamLoginCdpCommand {
         [void](Wait-RamBrowserCdpTask -Task ($socket.ConnectAsync($uri,$cancel.Token)) -Deadline $deadline)
         $parameters = switch ($Method) {
             'Network.getCookies' { @{ urls = @('https://www.roblox.com/') } }
-            'Network.deleteCookies' { @{ name = '.ROBLOSECURITY'; url = 'https://www.roblox.com/' } }
+            'Network.deleteCookies' { @{ name = '.ROBLOSECURITY'; domain = $CookieDomain } }
             'Page.navigate' { @{ url = 'https://www.roblox.com/login' } }
         }
         $request = [Text.Encoding]::UTF8.GetBytes((@{id=1;method=$Method;params=$parameters} | ConvertTo-Json -Compress -Depth 4))
@@ -126,7 +127,7 @@ function Initialize-RamLoginCdpSession {
             break
         }
     }
-    [void](Invoke-RamLoginCdpCommand -Port $Port -Target $target -Method 'Network.deleteCookies')
+    if (-not (Clear-RamBrowserLoginCookie -Port $Port)) { throw 'Browser retained the previous sign-in cookie.' }
     $navigation = Invoke-RamLoginCdpCommand -Port $Port -Target $target -Method 'Page.navigate'
     if ($navigation.errorText) { throw 'Browser could not open the sign-in page.' }
     return [pscustomobject]@{ PreviousCookie = $previousCookie }
@@ -136,7 +137,13 @@ function Clear-RamBrowserLoginCookie {
     param([ValidateRange(1,65535)][int]$Port)
     $target = Get-RamLoginCdpTarget -Port $Port -AllowBlank
     if (-not $target) { return $false }
-    # Remove the local copy, not the server session saved by AltHub or device cookies.
-    [void](Invoke-RamLoginCdpCommand -Port $Port -Target $target -Method 'Network.deleteCookies')
+    # URL deletion can leave a parent-domain cookie; use exact domains and verify.
+    foreach ($domain in @('.roblox.com','roblox.com','www.roblox.com')) {
+        [void](Invoke-RamLoginCdpCommand -Port $Port -Target $target -Method 'Network.deleteCookies' -CookieDomain $domain)
+    }
+    $result = Invoke-RamLoginCdpCommand -Port $Port -Target $target -Method 'Network.getCookies'
+    foreach ($cookie in $result.cookies) {
+        if ($cookie.name -ceq '.ROBLOSECURITY' -and $cookie.domain -in @('.roblox.com','roblox.com','www.roblox.com')) { return $false }
+    }
     return $true
 }

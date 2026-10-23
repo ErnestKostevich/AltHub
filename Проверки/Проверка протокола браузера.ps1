@@ -21,6 +21,7 @@ function Start-CdpFixture {
         param($Listener,$Port,$Mode,$PageUrl,$Commands)
         try {
             $connections = 0
+            $authDeleted = $false
             while ($Listener.IsListening) {
                 $context = $Listener.GetContext()
                 if (-not $context.Request.IsWebSocketRequest) {
@@ -47,7 +48,11 @@ function Start-CdpFixture {
                         break
                     }
                     $domain = if ($Mode -eq 'domain') { '.roblox.com.evil.invalid' } else { '.roblox.com' }
-                    $response = @{id=1;result=@{note=[string][char]0x00E9;cookies=@(@{name='.ROBLOSECURITY';domain=$domain;value='synthetic-test-value'},@{name='other';domain='.roblox.com';value='ignored'})}} | ConvertTo-Json -Depth 5 -Compress
+                    $parsedRequest=$request|ConvertFrom-Json
+                    if($parsedRequest.method -ceq 'Network.deleteCookies' -and $Mode -ne 'retained'){$authDeleted=$true}
+                    $cookies=@(@{name='other';domain='.roblox.com';value='ignored'})
+                    if(-not $authDeleted){$cookies+=@{name='.ROBLOSECURITY';domain=$domain;value='synthetic-test-value'}}
+                    $response = @{id=1;result=@{note=[string][char]0x00E9;cookies=$cookies}} | ConvertTo-Json -Depth 5 -Compress
                     if ($Mode -eq 'error') { $response='{"id":1,"error":{"code":-1,"message":"fixture error"}}' }
                     if ($Mode -eq 'invalid') { $response='private-synthetic-token-not-json' }
                     if ($Mode -eq 'large') { $response='x' * 1048577 }
@@ -68,7 +73,7 @@ function Start-CdpFixture {
                     $connections++
                     $socket.CloseOutputAsync([Net.WebSockets.WebSocketCloseStatus]::NormalClosure,'',[Threading.CancellationToken]::None).GetAwaiter().GetResult()
                     [Threading.Thread]::Sleep(100)
-                    if ($Mode -ne 'init' -or $connections -ge 3) { break }
+                    if ($Mode -notin @('init','cleanup','retained')) { break }
                 } finally { $socket.Dispose() }
             }
         } catch {
@@ -126,23 +131,44 @@ foreach ($url in @('data:text/html,AltHub','data:text/html,other')) {
     } finally { Stop-CdpFixture $fixture }
 }
 'PASS: exact non-secret app bootstrap target only during initialization'
-$fixture = Start-CdpFixture
+$fixture = Start-CdpFixture -Mode cleanup
 try {
     Assert-Cdp (Clear-RamBrowserLoginCookie -Port $fixture.Port) 'Final cookie cleanup did not run.'
-    $command=$fixture.Commands.ToArray()[0] | ConvertFrom-Json
-    Assert-Cdp ($command.method -ceq 'Network.deleteCookies' -and $command.params.name -ceq '.ROBLOSECURITY' -and $command.params.url -ceq 'https://www.roblox.com/') 'Final cookie cleanup widened scope.'
-    'PASS: final local auth deletion is name and URL scoped without server logout'
+    $commands=@($fixture.Commands.ToArray()|ForEach-Object {$_|ConvertFrom-Json})
+    Assert-Cdp (($commands.method -join ',') -ceq 'Network.deleteCookies,Network.deleteCookies,Network.deleteCookies,Network.getCookies') 'Final deletion was not verified.'
+    Assert-Cdp (($commands[0..2].params.domain -join ',') -ceq '.roblox.com,roblox.com,www.roblox.com') 'Final cookie cleanup domain scope changed.'
+    foreach($command in $commands[0..2]){Assert-Cdp ($command.params.name -ceq '.ROBLOSECURITY' -and -not $command.params.url -and -not $command.params.path) 'Final cookie cleanup widened name scope or retained path restrictions.'}
+    'PASS: final local auth deletion uses exact known domains and verifies absence without server logout'
 } finally { Stop-CdpFixture $fixture }
 $fixture = Start-CdpFixture -PageUrl 'about:blank' -Mode init
 try {
     $result = Initialize-RamLoginCdpSession -Port $fixture.Port
     Assert-Cdp ($result.PreviousCookie -eq 'synthetic-test-value') 'Previous cookie not captured.'
     $commands = @($fixture.Commands.ToArray() | ForEach-Object { $_ | ConvertFrom-Json })
-    Assert-Cdp (($commands.method -join ',') -eq 'Network.getCookies,Network.deleteCookies,Page.navigate') 'Preparation order incorrect.'
-    Assert-Cdp ($commands[1].params.name -ceq '.ROBLOSECURITY' -and $commands[1].params.url -ceq 'https://www.roblox.com/') 'Deletion scope widened.'
-    Assert-Cdp ($commands[2].params.url -ceq 'https://www.roblox.com/login') 'Navigation scope widened.'
+    Assert-Cdp (($commands.method -join ',') -eq 'Network.getCookies,Network.deleteCookies,Network.deleteCookies,Network.deleteCookies,Network.getCookies,Page.navigate') 'Preparation order incorrect.'
+    Assert-Cdp (($commands[1..3].params.domain -join ',') -ceq '.roblox.com,roblox.com,www.roblox.com') 'Deletion scope widened.'
+    Assert-Cdp ($commands[5].params.url -ceq 'https://www.roblox.com/login') 'Navigation scope widened.'
     'PASS: blank preparation, previous cookie, scoped deletion and navigation'
 } finally { Stop-CdpFixture $fixture }
+
+$fixture = Start-CdpFixture -Mode retained -PageUrl 'about:blank'
+try {
+    Assert-Cdp (-not (Clear-RamBrowserLoginCookie -Port $fixture.Port)) 'Cleanup falsely confirmed deletion of a retained cookie.'
+    'PASS: retained cookie is not reported as cleared'
+} finally { Stop-CdpFixture $fixture }
+$fixture = Start-CdpFixture -Mode retained -PageUrl 'about:blank'
+try {
+    $failed=$false
+    try{[void](Initialize-RamLoginCdpSession -Port $fixture.Port)}catch{$failed=$_.Exception.Message -ceq 'Browser retained the previous sign-in cookie.'}
+    Assert-Cdp $failed 'Navigation accepted an uncleared old login.'
+    $commands=@($fixture.Commands.ToArray()|ForEach-Object {$_|ConvertFrom-Json})
+    Assert-Cdp (@($commands|Where-Object {$_.method -ceq 'Page.navigate'}).Count -eq 0) 'Roblox opened before verified cleanup.'
+    'PASS: retained previous login blocks navigation'
+} finally { Stop-CdpFixture $fixture }
+
+$failed=$false
+try{Invoke-RamLoginCdpCommand -Port 12345 -Target 'ws://127.0.0.1:12345/devtools/page/a' -Method Network.deleteCookies -CookieDomain 'evil.invalid'}catch{$failed=$true}
+Assert-Cdp $failed 'Foreign cookie deletion domain accepted.'
 
 foreach ($target in @('ws://localhost:12345/devtools/page/a','ws://127.0.0.1:12346/devtools/page/a','wss://127.0.0.1:12345/devtools/page/a','ws://127.0.0.1:12345/devtools/browser/a','ws://user@127.0.0.1:12345/devtools/page/a','ws://127.0.0.1:12345/devtools/page/a?extra=1')) {
     $failed=$false

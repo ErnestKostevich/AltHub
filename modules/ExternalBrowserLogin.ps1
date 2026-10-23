@@ -518,6 +518,7 @@ function Show-RamExternalBrowserLoginWindow {
         'Browser returned an invalid protocol response.' = 'protocol-json'
         'Browser rejected the cookie request.' = 'protocol-rejected'
         'Browser could not open the sign-in page.' = 'navigation-failed'
+        'Browser retained the previous sign-in cookie.' = 'cookie-cleanup-failed'
     }
     try {
         $browserKind = 'system'

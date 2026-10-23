@@ -329,6 +329,11 @@ function Start-RamRobloxInstance {
     # записано Fullscreen=false. Настоящее окно ловит частый таймер и
     # сворачивает через SW_SHOWMINNOACTIVE, не меняя RestoreBounds.
 
+    # A queued Close may have been handled while the auth request pumped UI events.
+    if ($null -ne $script:LaunchSuppressedIds -and $script:LaunchSuppressedIds.ContainsKey([string]$Account.Id)) {
+        $ticket = $null; $uri = $null
+        return $null
+    }
     $proc = [System.Diagnostics.Process]::Start($psi)
 
     # Билет одноразовый; в памяти он больше не нужен.

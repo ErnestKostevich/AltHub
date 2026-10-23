@@ -943,32 +943,7 @@ function Build-RamCardsWater {
             $card.Controls.Add($bEdit)
 
             $bStop = New-RamButton -Text '' -Icon 'stop' -IconOnly -Width $icoW -Height $btnH -Fixed -Tooltip (Get-RamText -Text 'Закрыть окно этого аккаунта') -OnClick {
-                $id   = [string]$this.Tag.AccountId
-                $inst = $script:Instances[$id]
-                $acc  = Get-RamAccountById -Id $id
-                if ($null -eq $inst) {
-                    # Ответ и на «делать нечего»: молчащая кнопка неотличима от сломанной.
-                    Set-RamStatus ((Get-RamText -Text 'Окно «{0}» сейчас не запущено — закрывать нечего.') -f $acc.Alias)
-                    return
-                }
-                # Закрытие руками — не вылет: счётчик вылетов не трогаем.
-                $inst | Add-Member -NotePropertyName ClosedByUser -NotePropertyValue $true -Force
-                if ($null -eq $script:Stopping) { $script:Stopping = @{} }
-                $script:Stopping[$id] = $true
-                Update-RamCardStates
-                try {
-                    if (Stop-RamRobloxInstance -ProcessId $inst.ProcessId) {
-                        $script:Instances.Remove($id)
-                        Write-RamLog (Get-RamText -Text '''{0}'' закрыт.' -Arguments @([string]($($acc.Alias)))) 'ok'
-                    } else {
-                        Write-RamLog (Get-RamText -Text 'Не удалось закрыть ''{0}'' — окно остаётся под контролем менеджера.' -Arguments @([string]($($acc.Alias)))) 'warn'
-                        Show-RamMessage -Kind 'warn' -Message ((Get-RamText -Text 'Окно «{0}» закрыть не вышло. Оно по-прежнему под присмотром AltHub — попробуй ещё раз или закрой его вручную.' -Arguments @([string]($($acc.Alias)))))
-                    }
-                } finally {
-                    # Иначе при сбое закрытия карточка навсегда застревала в «выход...».
-                    $script:Stopping.Remove($id)
-                    Update-RamCardStates
-                }
+                Invoke-RamCardStop -Id ([string]$this.Tag.AccountId)
             }
             $bStop.Tag | Add-Member -NotePropertyName AccountId -NotePropertyValue $a.Id -Force
             $bStop.Location = New-Object System.Drawing.Point($stopX, $lowY)
@@ -1477,32 +1452,10 @@ function Build-RamCardMenuItems {
                 [void](Set-RamWindowForeground -Handle $inst.Handle)
             }
         })
+    }
+    if ($running -or $script:LaunchQueue -contains $id -or $script:LaunchingAccountId -eq $id) {
         [void](Add-RamMenuItem -Menu $m -Text (Get-RamText -Text '■  Закрыть окно') -Tag $id -OnClick {
-            $id2  = [string]$this.Tag
-            $inst = $script:Instances[$id2]
-            if ($null -eq $inst) {
-                Set-RamStatus (Get-RamText -Text 'Окно этого аккаунта сейчас не запущено — закрывать нечего.')
-                return
-            }
-            $acc2 = Get-RamAccountById -Id $id2
-            if ($null -eq $script:Stopping) { $script:Stopping = @{} }
-            $inst | Add-Member -NotePropertyName ClosedByUser -NotePropertyValue $true -Force
-            $script:Stopping[$id2] = $true
-            Update-RamCardStates
-            try {
-                if (Stop-RamRobloxInstance -ProcessId $inst.ProcessId) {
-                    $script:Instances.Remove($id2)
-                    Write-RamLog (Get-RamText -Text '''{0}'' закрыт.' -Arguments @([string]($($acc2.Alias)))) 'ok'
-                } else {
-                    Write-RamLog (Get-RamText -Text 'Не удалось закрыть ''{0}'' — окно остаётся под контролем менеджера.' -Arguments @([string]($($acc2.Alias)))) 'warn'
-                    Show-RamMessage -Kind 'warn' -Message ((Get-RamText -Text 'Окно «{0}» закрыть не вышло. Попробуй ещё раз или закрой его вручную.' -Arguments @([string]($($acc2.Alias)))))
-                }
-            } finally {
-                # Раньше при сбое здесь стоял return, и карточка навсегда
-                # застревала в «выход...».
-                $script:Stopping.Remove($id2)
-                Update-RamCardStates
-            }
+            Invoke-RamCardStop -Id ([string]$this.Tag)
         })
     }
 
@@ -2594,8 +2547,16 @@ function Update-RamTrayMenu {
 
     $mStop = New-Object System.Windows.Forms.ToolStripMenuItem((Get-RamText -Text 'Закрыть все окна Roblox'))
     $mStop.Add_Click({
-        foreach ($pr in (Get-RamRobloxProcesses)) { [void](Stop-RamRobloxInstance -ProcessId $pr.Id) }
-        $script:Instances.Clear()
+        Stop-RamLaunchQueue
+        $trackedPids = @{}
+        foreach ($id in @($script:Instances.Keys)) { $script:LaunchSuppressedIds[[string]$id] = $true }
+        foreach ($id in @($script:Instances.Keys)) {
+            $trackedPids[[int]$script:Instances[$id].ProcessId] = $true
+            [void](Stop-RamAccountLaunch -Id $id)
+        }
+        foreach ($pr in (Get-RamRobloxProcesses)) {
+            if (-not $trackedPids.ContainsKey([int]$pr.Id)) { [void](Stop-RamRobloxInstance -ProcessId $pr.Id) }
+        }
         Update-RamCardStates
     })
     [void]$m.Items.Add($mStop)
@@ -3825,6 +3786,7 @@ function Update-RamCardPrimaryButton {
     $closing = (($null -ne $script:Stopping -and $script:Stopping.ContainsKey($id)) -or
         ($null -ne $inst -and $inst.PSObject.Properties.Name -contains 'ClosingByOs' -and [bool]$inst.ClosingByOs))
     $mode = if ($closing) { 'closing' } elseif ($null -ne $inst) { if ($inst.Handle -eq [IntPtr]::Zero) { 'loading' } else { 'show' } }
+            elseif ($script:LaunchingAccountId -eq $id) { 'loading' }
             elseif ($script:LaunchQueue -contains $id) { if ($script:LaunchPaused) { 'paused' } else { 'queued' } }
             elseif ([string]$Account.CookieOk -eq 'no') { 'dead' } else { 'start' }
     if ($button.Tag.PSObject.Properties.Name -contains 'PrimaryMode' -and $button.Tag.PrimaryMode -eq $mode) { return }
@@ -3842,7 +3804,7 @@ function Update-RamCardPrimaryButton {
     }
     Set-RamButtonKind -Button $button -Kind $(if ($mode -eq 'dead') {'danger'} elseif ($mode -eq 'start') {'primary'} elseif ($mode -eq 'show') {'normal'} else {'ghost'})
     Set-RamButtonEnabled -Button $button -Enabled ($mode -notin @('loading','closing'))
-    Set-RamButtonEnabled -Button $Entry.Stop -Enabled ($null -ne $inst -and -not $closing)
+    Set-RamButtonEnabled -Button $Entry.Stop -Enabled (($null -ne $inst -or $script:LaunchQueue -contains $id -or $script:LaunchingAccountId -eq $id) -and -not $closing)
     if ($button.Tag.PSObject.Properties.Name -contains 'ToolTipOwner') { $button.Tag.ToolTipOwner.SetToolTip($button,$tip) }
     $button.AccessibleName = $tip
 }
